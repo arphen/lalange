@@ -4,7 +4,7 @@ import { IngestionScheduler, type IngestionTask } from './scheduler';
 import { useSettingsStore } from '../store/settings';
 import { useAIStore } from '../store/ai';
 import { initDB } from '../sync/db';
-import { analyzeDensityRange } from './pipeline';
+import { analyzeDensityRange } from './analysis';
 import { generateUnifiedCompletion } from '../ai/service';
 
 // Mocks
@@ -24,8 +24,13 @@ vi.mock('../sync/db', () => ({
     initDB: vi.fn()
 }));
 
-vi.mock('./pipeline', () => ({
-    analyzeDensityRange: vi.fn()
+vi.mock('./analysis', () => ({
+    analyzeDensityRange: vi.fn(),
+    analysisQueue: {
+        add: vi.fn(async (fn) => fn()),
+        pending: 0,
+        size: 0
+    }
 }));
 
 vi.mock('../ai/service', () => ({

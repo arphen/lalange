@@ -1,9 +1,8 @@
 import { useSettingsStore } from '../store/settings';
 import { useAIStore } from '../store/ai';
 import { initDB } from '../sync/db';
-import { analyzeDensityRange } from './pipeline';
+import { analyzeDensityRange, analysisQueue } from './analysis';
 import { generateUnifiedCompletion } from '../ai/service';
-import PQueue from 'p-queue';
 
 export type TaskType = 'DENSITY' | 'SUMMARY';
 
@@ -28,7 +27,8 @@ export class IngestionScheduler {
     private currentWordIndex: number = 0;
     
     // Queue for LLM processing (concurrency: 1 to enforce Single Model Policy)
-    private llmQueue = new PQueue({ concurrency: 1 });
+    // We use the shared analysisQueue from analysis.ts to coordinate with other analysis tasks
+    private llmQueue = analysisQueue;
 
     constructor() {
         // potentially load saved state? For now, in-memory.
@@ -75,8 +75,10 @@ export class IngestionScheduler {
     private wakeUpDormantTasks() {
         if (!this.currentBookId || !this.currentChapterId) return;
 
-        // Look ahead window (e.g., next 3 chunks or ~5000 words)
-        const LOOKAHEAD_WORDS = 5000;
+        // Look ahead window (e.g., next 2 chunks)
+        const settings = useSettingsStore.getState();
+        const chunkSize = settings.summaryChunkSize || 2500;
+        const LOOKAHEAD_WORDS = chunkSize * 2;
         
         this.tasks.forEach(task => {
             if (task.status !== 'dormant') return;
@@ -85,16 +87,15 @@ export class IngestionScheduler {
             // If in current chapter
             if (task.chapterId === this.currentChapterId) {
                 const distance = task.startWordIndex - this.currentWordIndex;
-                // Wake up if it's the current chunk or within lookahead
-                // Also wake up previous chunks if we scrolled back (distance < 0)
-                if (distance < LOOKAHEAD_WORDS) {
+                
+                // Wake up if within lookahead window
+                // This ensures we only process what is immediately ahead
+                if (distance < LOOKAHEAD_WORDS && distance > -chunkSize) { // Also wake up if we are IN the chunk
                     task.status = 'pending';
-                    console.log(`[Scheduler] Waking up task: ${task.id}`);
+                    console.log(`[Scheduler] Waking up task: ${task.id} (Distance: ${distance})`);
                 }
             } 
-            // If in next chapter (simplified check: we'd need chapter order, but for now let's assume we wake up next chapter tasks if we are near end of current?)
-            // For now, let's just stick to current chapter lookahead. 
-            // Ideally we should wake up the *next* chapter's first few chunks if we are near the end.
+            // TODO: Handle next chapter lookahead
         });
     }
 
@@ -122,6 +123,8 @@ export class IngestionScheduler {
                 
                 // Distance from current word
                 const distance = task.startWordIndex - this.currentWordIndex;
+                const settings = useSettingsStore.getState();
+                const chunkSize = settings.summaryChunkSize || 2500;
                 
                 if (distance < 0) {
                     // Passed chunk. 
@@ -129,7 +132,7 @@ export class IngestionScheduler {
                     // If it's DENSITY, we might not need it as much if we already read it? 
                     // But we want to fill the map.
                     score += 100; 
-                } else if (distance === 0 || (distance > 0 && distance < 2500)) {
+                } else if (distance === 0 || (distance > 0 && distance < chunkSize)) {
                     // Current Chunk
                     score += 2000;
                 } else {
@@ -158,8 +161,14 @@ export class IngestionScheduler {
     }
 
     private async processNext() {
-        if (this.isRunning) return;
-        if (this.llmQueue.pending > 0 || this.llmQueue.size > 0) return; // Already working
+        if (this.isRunning) {
+            // console.log("[Scheduler] processNext called but already running.");
+            return;
+        }
+        if (this.llmQueue.pending > 0 || this.llmQueue.size > 0) {
+            // console.log("[Scheduler] processNext called but queue is busy.");
+            return; 
+        }
 
         const nextTask = this.tasks.find(t => t.status === 'pending');
         if (!nextTask) {

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { analyzeDensityRange } from './pipeline';
+import { analyzeDensityRange } from './analysis';
 import { getPromptLogprobs } from '../ai/service';
 
 // Mock dependencies
