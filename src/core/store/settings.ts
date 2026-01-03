@@ -171,8 +171,8 @@ export const useSettingsStore = create<SettingsState>()(
             pacingSensitivity: 50,
             setPacingSensitivity: (pacingSensitivity) => set({ pacingSensitivity }),
 
-            // Librarian Defaults
-            librarianModelTier: 'balanced',
+            // Librarian Defaults (used for density estimation)
+            librarianModelTier: 'tiny',
             setLibrarianModelTier: (librarianModelTier) => set({ librarianModelTier }),
             librarianBasePrompt: 'You are the Scansion Librarian, a knowledgeable, slightly eccentric guide to the world\'s classics. Your goal is to recommend public domain books from Project Gutenberg.',
             setLibrarianBasePrompt: (librarianBasePrompt) => set({ librarianBasePrompt }),

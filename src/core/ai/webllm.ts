@@ -110,6 +110,7 @@ export const getEngine = async (
             console.log(`[WebLLM] MLCEngine created successfully.`);
         } else {
             console.log(`[WebLLM] Reloading existing engine with model: ${modelId}`);
+            engineInstance.setInitProgressCallback(onProgress);
             await engineInstance.reload(modelId);
             console.log(`[WebLLM] Engine reloaded successfully.`);
         }

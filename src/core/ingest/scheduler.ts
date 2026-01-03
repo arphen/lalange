@@ -57,7 +57,10 @@ export class IngestionScheduler {
             t.subchapterIndex === task.subchapterIndex && 
             t.type === task.type
         );
-        if (exists) return;
+        if (exists) {
+            console.log(`[Scheduler] Task already exists: ${task.type} ${task.chapterId} ${task.subchapterIndex}`);
+            return;
+        }
 
         const newTask: IngestionTask = {
             ...task,
@@ -65,6 +68,7 @@ export class IngestionScheduler {
             status: initialStatus
         };
         this.tasks.push(newTask);
+        console.log(`[Scheduler] Added task: ${task.type} ${task.chapterId} ${task.subchapterIndex} (${initialStatus})`);
         
         if (initialStatus === 'pending') {
             this.rebalancePriorities();
@@ -100,8 +104,7 @@ export class IngestionScheduler {
     }
 
     private rebalancePriorities() {
-        if (!this.currentBookId) return;
-
+        // Note: rebalance even without currentBookId - just don't apply cursor-based scoring
         this.tasks.forEach(task => {
             if (task.status !== 'pending') return;
 
@@ -109,7 +112,7 @@ export class IngestionScheduler {
             let score = 0;
 
             // 1. Book Priority
-            if (task.bookId === this.currentBookId) {
+            if (this.currentBookId && task.bookId === this.currentBookId) {
                 score += 10000;
             }
 
@@ -118,7 +121,7 @@ export class IngestionScheduler {
             // For simplicity, we assume chapterId string comparison or we need to look up index.
             // Let's rely on the fact that we usually process one book.
             // If we are in the same chapter:
-            if (task.chapterId === this.currentChapterId) {
+            if (this.currentChapterId && task.chapterId === this.currentChapterId) {
                 score += 5000;
                 
                 // Distance from current word
@@ -140,6 +143,9 @@ export class IngestionScheduler {
                     // Max words ~100k. 
                     score += 1000 - (distance / 100);
                 }
+            } else if (!this.currentBookId) {
+                // No cursor set yet - use task order (lower subchapterIndex first)
+                score = 1000 - task.subchapterIndex;
             } else {
                 // Different chapter. 
                 // We'd need chapter indexes to know if it's next or prev.
@@ -162,17 +168,13 @@ export class IngestionScheduler {
 
     private async processNext() {
         if (this.isRunning) {
-            // console.log("[Scheduler] processNext called but already running.");
+            console.log("[Scheduler] processNext called but already running.");
             return;
-        }
-        if (this.llmQueue.pending > 0 || this.llmQueue.size > 0) {
-            // console.log("[Scheduler] processNext called but queue is busy.");
-            return; 
         }
 
         const nextTask = this.tasks.find(t => t.status === 'pending');
         if (!nextTask) {
-            // console.log("[Scheduler] No pending tasks.");
+            console.log("[Scheduler] No pending tasks.");
             return;
         }
 
@@ -186,7 +188,7 @@ export class IngestionScheduler {
 
         try {
             await this.llmQueue.add(async () => {
-                // console.log(`[Scheduler] Starting execution of task: ${nextTask.id}`);
+                console.log(`[Scheduler] Executing task: ${nextTask.id}`);
                 await this.executeTask(nextTask);
                 console.log(`[Scheduler] [Success] Task Completed: [${nextTask.type}] Ch:${nextTask.chapterId.split('_').pop()} Pt:${nextTask.subchapterIndex}`);
             });
