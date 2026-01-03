@@ -281,8 +281,10 @@ export const processChaptersInBackground = async (bookId: string) => {
                             });
 
                             // --- SCHEDULE TASKS ---
-                            // Only schedule first 3 chunks immediately. Others are dormant.
-                            const initialStatus = i < 3 ? 'pending' : 'dormant';
+                            // Only schedule first 3 chunks of the FIRST chapter immediately.
+                            // All other chapters start dormant and wake up when the user navigates there.
+                            const isFirstChapter = chapterIndex === 0;
+                            const initialStatus = (isFirstChapter && i < 3) ? 'pending' : 'dormant';
 
                             // 1. Density Estimation
                             scheduler.addTask({
@@ -308,7 +310,8 @@ export const processChaptersInBackground = async (bookId: string) => {
                                 text: chunk
                             }, initialStatus);
                         }
-                        console.log(`[Pipeline] Scheduled ${rawChunks.length * 2} tasks for chapter ${chapterId} (First 3 chunks active)`);
+                        const activeCount = chapterIndex === 0 ? Math.min(rawChunks.length, 3) * 2 : 0;
+                        console.log(`[Pipeline] Scheduled ${rawChunks.length * 2} tasks for chapter ${chapterId} (${activeCount} active, rest dormant)`);
 
                         // Final update for this chapter (Content + Placeholders)
                         const finalDoc = await db.chapters.findOne(currentDoc.id).exec();
