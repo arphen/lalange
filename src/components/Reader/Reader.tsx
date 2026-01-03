@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { type BookDocType, type ChapterDocType, type ReadingStateDocType, initDB } from '../../core/sync/db';
 import { getBionicSplit, getBionicGradientHtml } from '../../core/rsvp/bionic';
-import { getPunctuationDelay } from '../../core/rsvp/timing';
+import { getStructuralDelay } from '../../core/rsvp/timing';
 import { Sidebar } from './Sidebar';
 import { useSettingsStore } from '../../core/store/settings';
 
@@ -334,11 +334,11 @@ export const Reader: React.FC<ReaderProps> = ({ book, onOpenSettings }) => {
             // Use density if available, otherwise default to 1.0
             const currentDensity = (density !== undefined && density > 0) ? density : 1.0;
             
-            // Always calculate punctuation delay (hard rules)
+            // Always calculate structural delay (hard rules: punctuation + word shape)
             // This is now safe because pipeline.ts no longer includes punctuation multipliers in the density score.
-            const punctuationDelay = getPunctuationDelay(currentWord, baseInterval);
+            const structuralDelay = getStructuralDelay(currentWord, baseInterval);
 
-            const targetInterval = (baseInterval * currentDensity) + punctuationDelay;
+            const targetInterval = (baseInterval * currentDensity) + structuralDelay;
 
             if (accumulatorRef.current >= targetInterval) {
                 if (indexRef.current < activeWords.length - 1) {
