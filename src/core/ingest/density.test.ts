@@ -9,7 +9,7 @@ vi.mock('../ai/service', () => ({
     getPromptLogprobs: vi.fn(),
 }));
 
-describe('analyzeDensityRange (Forward Pass)', () => {
+describe('analyzeDensityRange (Percentile-Based)', () => {
     beforeEach(() => {
         vi.clearAllMocks();
     });
@@ -22,47 +22,47 @@ describe('analyzeDensityRange (Forward Pass)', () => {
         expect(densities).toEqual([1.0, 1.0]);
     });
 
-    it('should calculate density based on logprobs', async () => {
-        // Mock logprobs
-        // "hello" -> logprob -0.1 (Surprisal 0.1 -> Very Low -> Factor 0.6)
-        // "world" -> logprob -10.0 (Surprisal 10.0 -> Profound -> Factor 3.0)
+    it('should produce variation using percentile-based scoring', async () => {
+        // Mock logprobs with varying surprisal levels
+        // Word 1: "the" -> very predictable (logprob -0.1, surprisal 0.1)
+        // Word 2: "cat" -> medium (logprob -1.0, surprisal 1.0)
+        // Word 3: "ephemeral" -> surprising (logprob -5.0, surprisal 5.0)
         const mockLogprobs = [
-            { token: 'hello', logprob: -0.1 },
-            { token: ' world', logprob: -10.0 }
+            { token: 'the', logprob: -0.1 },
+            { token: ' cat', logprob: -1.0 },
+            { token: ' ephemeral', logprob: -5.0 }
         ];
         vi.mocked(getPromptLogprobs).mockResolvedValue(mockLogprobs);
 
-        const words = ['hello', 'world'];
+        const words = ['the', 'cat', 'ephemeral'];
         const densities = await analyzeDensityRange(words);
 
-        expect(densities.length).toBe(2);
-        expect(densities[0]).toBe(0.6); // Very Low surprisal
-        expect(densities[1]).toBe(3.0); // Profound surprisal
+        expect(densities.length).toBe(3);
+        // "the" should be faster than "ephemeral"
+        expect(densities[0]).toBeLessThan(densities[2]);
+        // All should be different (percentile-based guarantees variation)
+        expect(densities[0]).not.toBe(densities[1]);
     });
 
-    it('should handle structural multipliers', async () => {
-        // "hello." -> logprob -0.1 (Surprisal 0.1 -> Factor 0.6)
-        // Punctuation multipliers are REMOVED in pipeline (handled by Reader)
-        // Length < 12 -> 1.0
-        // Final = 0.6 * 1.0 = 0.6
+    it('should handle structural multipliers for long words', async () => {
+        // Two words with same surprisal but different lengths
         const mockLogprobs = [
-            { token: 'hello', logprob: -0.1 },
-            { token: '.', logprob: -0.1 }
+            { token: 'cat', logprob: -1.0 },
+            { token: ' extraordinarily', logprob: -1.0 } // 15 chars -> 1.3x multiplier
         ];
         vi.mocked(getPromptLogprobs).mockResolvedValue(mockLogprobs);
 
-        const words = ['hello.'];
+        const words = ['cat', 'extraordinarily'];
         const densities = await analyzeDensityRange(words);
 
-        expect(densities[0]).toBe(0.6);
+        // Long word should have higher density due to structural multiplier
+        expect(densities[1]).toBeGreaterThan(densities[0]);
     });
     
     it('should align tokens to words correctly', async () => {
-        // "simple text"
-        // Tokens: ["sim", "ple", " text"]
-        // "simple": logprob -1 + -1 = -2 (Surprisal 2 -> Factor 0.8)
-        // "text": logprob -0.1 (Surprisal 0.1 -> Factor 0.6)
-        
+        // "simple text" split into sub-word tokens
+        // "simple": tokens ["sim", "ple"] with logprobs -1, -1 -> surprisal 2
+        // "text": token [" text"] with logprob -0.1 -> surprisal 0.1
         const mockLogprobs = [
             { token: 'sim', logprob: -1.0 },
             { token: 'ple', logprob: -1.0 },
@@ -73,8 +73,9 @@ describe('analyzeDensityRange (Forward Pass)', () => {
         const words = ['simple', 'text'];
         const densities = await analyzeDensityRange(words);
         
-        expect(densities[0]).toBe(0.8); // simple
-        expect(densities[1]).toBe(0.6); // text
+        expect(densities.length).toBe(2);
+        // "simple" (surprisal 2.0) should be slower than "text" (surprisal 0.1)
+        expect(densities[0]).toBeGreaterThan(densities[1]);
     });
 });
 
