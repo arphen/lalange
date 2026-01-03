@@ -50,8 +50,12 @@ let currentLoadedModel: string | null = null;
 export const getEngine = async (
     tier: ModelTier
 ): Promise<MLCEngine> => {
+    if (!MODEL_MAPPING[tier]) {
+        throw new Error(`Invalid model tier: ${tier}`);
+    }
+
     const modelId = MODEL_MAPPING[tier];
-    const { setProgress, setLoading, setReady } = useAIStore.getState();
+    const { setProgress, setLoading, setReady, setError, setActiveModelName } = useAIStore.getState();
     const startTime = Date.now();
 
     const onProgress: InitProgressCallback = (report) => {
@@ -82,6 +86,7 @@ export const getEngine = async (
 
     setLoading(true, tier); // Pass tier as the loading model name
     setReady(false);
+    setError(null);
 
     try {
         if (!engineInstance) {
@@ -91,16 +96,42 @@ export const getEngine = async (
         }
         currentLoadedModel = modelId;
         setReady(true);
+        setActiveModelName(MODEL_INFO[tier].name);
         return engineInstance;
     } catch (error) {
         console.error("Failed to load WebLLM engine:", error);
+        let errorMessage = "Failed to load AI model.";
+        
         // Check for storage quota error
-        if (error instanceof Error && (error.message.includes("NS_ERROR_FILE_NO_DEVICE_SPACE") || error.message.includes("QuotaExceededError"))) {
-            throw new Error("BROWSER_STORAGE_QUOTA_EXCEEDED");
+        if (error instanceof Error) {
+            if (error.message.includes("NS_ERROR_FILE_NO_DEVICE_SPACE") || error.message.includes("QuotaExceededError")) {
+                errorMessage = "Browser storage quota exceeded. Please clear space or delete cached models.";
+            } else {
+                errorMessage = error.message;
+            }
         }
+        
+        setError(errorMessage);
         throw error;
     } finally {
         setLoading(false);
+    }
+};
+
+export const reloadModel = async (tier: ModelTier) => {
+    if (engineInstance) {
+        await engineInstance.unload();
+    }
+    engineInstance = null;
+    currentLoadedModel = null;
+    await getEngine(tier);
+};
+
+export const unloadCurrentModel = async () => {
+    if (engineInstance) {
+        await engineInstance.unload();
+        engineInstance = null;
+        currentLoadedModel = null;
     }
 };
 
@@ -108,14 +139,30 @@ export const generateWebLLMCompletion = async (
     prompt: string,
     tier: ModelTier
 ): Promise<{ response: string, usage?: Record<string, unknown> }> => {
+    const { setTPS } = useAIStore.getState();
     const engine = await getEngine(tier);
+    
+    const start = performance.now();
     const reply = await engine.chat.completions.create({
         messages: [{ role: "user", content: prompt }],
         temperature: 0.1,
     });
+    const end = performance.now();
+
+    const usage = reply.usage as Record<string, unknown> | undefined;
+    
+    // Calculate TPS
+    if (usage && typeof usage.completion_tokens === 'number') {
+        const durationSec = (end - start) / 1000;
+        if (durationSec > 0) {
+            const tps = usage.completion_tokens / durationSec;
+            setTPS(Math.round(tps * 100) / 100);
+        }
+    }
+
     return {
         response: reply.choices[0].message.content || "",
-        usage: reply.usage as Record<string, unknown> | undefined
+        usage
     };
 };
 
@@ -166,6 +213,46 @@ export const getPromptLogprobs = async (
 export const isModelCached = async (tier: ModelTier): Promise<boolean> => {
     const modelId = MODEL_MAPPING[tier];
     return await hasModelInCache(modelId);
+};
+
+export const getModelShardInfo = async (tier: ModelTier): Promise<{ completed: number, total: number }> => {
+    const modelId = MODEL_MAPPING[tier];
+    try {
+        const cacheKeys = await caches.keys();
+        // WebLLM typically uses the modelId as the cache name, or prefixed
+        const cacheName = cacheKeys.find(k => k === modelId || k === `webllm/${modelId}`);
+        
+        if (!cacheName) {
+             return { completed: 0, total: 0 };
+        }
+        
+        const cache = await caches.open(cacheName);
+        const keys = await cache.keys();
+        
+        // Look for ndarray-cache.json to determine total shards
+        const configReq = keys.find(k => k.url.endsWith("ndarray-cache.json"));
+        let total = 0;
+        
+        if (configReq) {
+            const resp = await cache.match(configReq);
+            if (resp) {
+                const data = await resp.json();
+                if (Array.isArray(data.records)) {
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    total = data.records.filter((r: any) => r.name.includes("params_shard_")).length;
+                }
+            }
+        }
+        
+        // Count how many params_shard_*.bin are in the cache
+        const completed = keys.filter(k => k.url.includes("params_shard_")).length;
+        
+        return { completed, total };
+        
+    } catch (e) {
+        console.warn("Failed to inspect cache for model", modelId, e);
+        return { completed: 0, total: 0 };
+    }
 };
 
 export const deleteModel = async (tier: ModelTier): Promise<void> => {

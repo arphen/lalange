@@ -13,6 +13,17 @@ interface ReaderProps {
     onOpenSettings?: () => void;
 }
 
+const getDensityColor = (score: number) => {
+    if (score === 0) return 'text-gray-700 opacity-50'; // Pending
+    if (score <= 0.6) return 'text-blue-400'; // Fast
+    if (score <= 0.8) return 'text-blue-300'; // Brisk
+    if (score <= 1.0) return 'text-gray-400'; // Normal
+    if (score <= 1.2) return 'text-yellow-200'; // Deliberate
+    if (score <= 1.5) return 'text-yellow-500'; // Slow
+    if (score <= 2.0) return 'text-orange-500'; // Very Slow
+    return 'text-red-500 font-bold'; // Profound
+};
+
 export const Reader: React.FC<ReaderProps> = ({ book, onOpenSettings }) => {
     const [isPlaying, setIsPlaying] = useState(false);
     const { wpm } = useSettingsStore();
@@ -95,9 +106,12 @@ export const Reader: React.FC<ReaderProps> = ({ book, onOpenSettings }) => {
                 const isEnd = /[.!?]$/.test(w);
                 const breakHtml = isEnd ? '<div class="w-full h-2"></div>' : '';
 
+                const density = densitiesRef.current[actualIndex] || 1.0;
+                const colorClass = getDensityColor(density);
+
                 return `
                     <span 
-                        class="word-span inline-block mr-1.5 mb-1 transition-all duration-300 cursor-pointer text-gray-500 opacity-40 hover:opacity-100 hover:text-white"
+                        class="word-span inline-block mr-1.5 mb-1 transition-all duration-300 cursor-pointer ${colorClass} opacity-60 hover:opacity-100 hover:text-white"
                         data-index="${actualIndex}"
                     >
                         <span class="font-bold">${bold}</span><span class="font-light opacity-80">${light}</span>
@@ -121,9 +135,12 @@ export const Reader: React.FC<ReaderProps> = ({ book, onOpenSettings }) => {
                 const isEnd = /[.!?]$/.test(w);
                 const breakHtml = isEnd ? '<div class="w-full h-2"></div>' : '';
 
+                const density = densitiesRef.current[actualIndex] || 1.0;
+                const colorClass = getDensityColor(density);
+
                 return `
                     <span 
-                        class="word-span inline-block mr-1.5 mb-1 transition-all duration-300 cursor-pointer text-gray-500 opacity-40 hover:opacity-100 hover:text-white"
+                        class="word-span inline-block mr-1.5 mb-1 transition-all duration-300 cursor-pointer ${colorClass} opacity-60 hover:opacity-100 hover:text-white"
                         data-index="${actualIndex}"
                     >
                         <span class="font-bold">${bold}</span><span class="font-light opacity-80">${light}</span>
@@ -313,11 +330,13 @@ export const Reader: React.FC<ReaderProps> = ({ book, onOpenSettings }) => {
 
             const currentWord = activeWords[indexRef.current] || '';
             const density = activeDensities[indexRef.current];
-            // Treat 0 as 1.0 (Pending Analysis) for speed purposes
+            
+            // Use density if available, otherwise default to 1.0
             const currentDensity = (density !== undefined && density > 0) ? density : 1.0;
-            // If density is 0 (junk/pending), we ignore punctuation delay to ensure it's skipped instantly if junk, or normal if pending
-            // Actually, if it's pending (0), we want normal flow. If it's junk (we don't have a junk flag here, junk is removed in pipeline), so 0 just means pending.
-            const punctuationDelay = currentDensity === 0 ? 0 : getPunctuationDelay(currentWord, baseInterval);
+            
+            // Always calculate punctuation delay (hard rules)
+            // This is now safe because pipeline.ts no longer includes punctuation multipliers in the density score.
+            const punctuationDelay = getPunctuationDelay(currentWord, baseInterval);
 
             const targetInterval = (baseInterval * currentDensity) + punctuationDelay;
 
@@ -426,6 +445,22 @@ export const Reader: React.FC<ReaderProps> = ({ book, onOpenSettings }) => {
         };
     }, [isPlaying, saveProgress, loop]);
 
+    // Auto-save progress every 5 seconds while playing
+    useEffect(() => {
+        if (!isPlaying) return;
+        const interval = setInterval(() => {
+            saveProgress();
+        }, 5000);
+        return () => clearInterval(interval);
+    }, [isPlaying, saveProgress]);
+
+    // Save on unmount
+    useEffect(() => {
+        return () => {
+            saveProgress();
+        };
+    }, [saveProgress]);
+
     // Load initial state & Subscribe to chapters
     useEffect(() => {
         let sub: { unsubscribe: () => void };
@@ -488,14 +523,6 @@ export const Reader: React.FC<ReaderProps> = ({ book, onOpenSettings }) => {
         }
     }, [loading, currentChapter, currentWordIndex, renderWord]);
 
-    const getDensityColor = (score: number) => {
-        if (score === 0) return 'text-gray-700 opacity-50'; // Pending
-        if (score < 0.8) return 'text-gray-500';
-        if (score < 1.5) return 'text-gray-300';
-        if (score < 2.5) return 'text-yellow-500';
-        return 'text-red-500 font-bold';
-    };
-
     if (loading && !currentChapter) {
         return <div className="flex items-center justify-center h-full font-mono text-dune-gold animate-pulse">INITIALIZING COCKPIT...</div>;
     }
@@ -503,10 +530,16 @@ export const Reader: React.FC<ReaderProps> = ({ book, onOpenSettings }) => {
     // Calculate Subchapter Progress
     const currentSubchapter = currentChapter?.subchapters?.find(s => currentWordIndex >= s.startWordIndex && currentWordIndex < s.endWordIndex);
     let subchapterProgress = 0;
+    let timeLeftStr = '';
+    
     if (currentSubchapter) {
         const total = currentSubchapter.endWordIndex - currentSubchapter.startWordIndex;
         const current = currentWordIndex - currentSubchapter.startWordIndex;
         subchapterProgress = Math.min(1, Math.max(0, current / total));
+
+        const wordsLeft = currentSubchapter.endWordIndex - currentWordIndex;
+        const minutesLeft = wordsLeft / wpm;
+        timeLeftStr = minutesLeft < 1 ? '< 1m' : `${Math.round(minutesLeft)}m`;
     }
 
     return (
@@ -597,16 +630,21 @@ export const Reader: React.FC<ReaderProps> = ({ book, onOpenSettings }) => {
 
                         {/* Subchapter Progress Lights */}
                         {currentSubchapter && (
-                            <div className="absolute bottom-6 flex gap-3 pointer-events-none">
-                                {[...Array(5)].map((_, i) => {
-                                    const isLit = subchapterProgress >= (i / 5);
-                                    return (
-                                        <div
-                                            key={i}
-                                            className={`w-1.5 h-1.5 rounded-full transition-all duration-500 ${isLit ? 'bg-dune-gold shadow-[0_0_8px_var(--color-dune-gold)]' : 'bg-white/10'}`}
-                                        />
-                                    );
-                                })}
+                            <div className="absolute bottom-6 flex flex-col items-center gap-2 pointer-events-none">
+                                <div className="flex gap-3">
+                                    {[...Array(5)].map((_, i) => {
+                                        const isLit = subchapterProgress >= (i / 5);
+                                        return (
+                                            <div
+                                                key={i}
+                                                className={`w-1.5 h-1.5 rounded-full transition-all duration-500 ${isLit ? 'bg-dune-gold shadow-[0_0_8px_var(--color-dune-gold)]' : 'bg-white/10'}`}
+                                            />
+                                        );
+                                    })}
+                                </div>
+                                <div className="text-[10px] font-mono text-white/30 tracking-widest uppercase animate-pulse">
+                                    {timeLeftStr} REMAINING
+                                </div>
                             </div>
                         )}
 
@@ -676,10 +714,10 @@ export const Reader: React.FC<ReaderProps> = ({ book, onOpenSettings }) => {
                             })}
                         </div>
                         <div className="p-4 border-t border-white/10 flex gap-6 text-xs font-mono flex-wrap uppercase tracking-wider bg-black/20">
-                            <div className="flex items-center gap-2"><span className="w-2 h-2 bg-gray-500 rounded-full"></span> Flow (&lt;0.8)</div>
-                            <div className="flex items-center gap-2"><span className="w-2 h-2 bg-gray-300 rounded-full"></span> Normal</div>
-                            <div className="flex items-center gap-2"><span className="w-2 h-2 bg-yellow-500 rounded-full"></span> Complex (1.5-2.5)</div>
-                            <div className="flex items-center gap-2"><span className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></span> Anchor (&gt;2.5)</div>
+                            <div className="flex items-center gap-2"><span className="w-2 h-2 bg-blue-400 rounded-full"></span> Fast (&lt;0.8)</div>
+                            <div className="flex items-center gap-2"><span className="w-2 h-2 bg-gray-400 rounded-full"></span> Normal</div>
+                            <div className="flex items-center gap-2"><span className="w-2 h-2 bg-yellow-500 rounded-full"></span> Slow (1.2-1.5)</div>
+                            <div className="flex items-center gap-2"><span className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></span> Profound (&gt;2.0)</div>
                         </div>
                     </div>
                 </div>

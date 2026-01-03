@@ -24,7 +24,7 @@ describe('analyzeDensityRange (Forward Pass)', () => {
 
     it('should calculate density based on logprobs', async () => {
         // Mock logprobs
-        // "hello" -> logprob -0.1 (Surprisal 0.1 -> Low -> Factor 0.8)
+        // "hello" -> logprob -0.1 (Surprisal 0.1 -> Very Low -> Factor 0.6)
         // "world" -> logprob -10.0 (Surprisal 10.0 -> High -> Factor 2.0)
         const mockLogprobs = [
             { token: 'hello', logprob: -0.1 },
@@ -36,14 +36,15 @@ describe('analyzeDensityRange (Forward Pass)', () => {
         const densities = await analyzeDensityRange(words);
 
         expect(densities.length).toBe(2);
-        expect(densities[0]).toBe(0.8); // Low surprisal
+        expect(densities[0]).toBe(0.6); // Very Low surprisal
         expect(densities[1]).toBe(2.0); // High surprisal
     });
 
     it('should handle structural multipliers', async () => {
-        // "hello." -> logprob -0.1 (Surprisal 0.1 -> Factor 0.8)
-        // Multiplier for "." is 3.0
-        // Final = 0.8 * 3.0 = 2.4
+        // "hello." -> logprob -0.1 (Surprisal 0.1 -> Factor 0.6)
+        // Punctuation multipliers are REMOVED in pipeline (handled by Reader)
+        // Length < 12 -> 1.0
+        // Final = 0.6 * 1.0 = 0.6
         const mockLogprobs = [
             { token: 'hello', logprob: -0.1 },
             { token: '.', logprob: -0.1 }
@@ -53,14 +54,14 @@ describe('analyzeDensityRange (Forward Pass)', () => {
         const words = ['hello.'];
         const densities = await analyzeDensityRange(words);
 
-        expect(densities[0]).toBeCloseTo(2.4, 1);
+        expect(densities[0]).toBe(0.6);
     });
     
     it('should align tokens to words correctly', async () => {
         // "simple text"
         // Tokens: ["sim", "ple", " text"]
-        // "simple": logprob -1 + -1 = -2 (Surprisal 2 -> Factor 1.0)
-        // "text": logprob -0.1 (Surprisal 0.1 -> Factor 0.8)
+        // "simple": logprob -1 + -1 = -2 (Surprisal 2 -> Factor 0.8)
+        // "text": logprob -0.1 (Surprisal 0.1 -> Factor 0.6)
         
         const mockLogprobs = [
             { token: 'sim', logprob: -1.0 },
@@ -72,8 +73,8 @@ describe('analyzeDensityRange (Forward Pass)', () => {
         const words = ['simple', 'text'];
         const densities = await analyzeDensityRange(words);
         
-        expect(densities[0]).toBe(1.0); // simple
-        expect(densities[1]).toBe(0.8); // text
+        expect(densities[0]).toBe(0.8); // simple
+        expect(densities[1]).toBe(0.6); // text
     });
 });
 

@@ -1,4 +1,4 @@
-import { generateWebLLMCompletion, getEngine, type ModelTier, getPromptLogprobs as getWebLLMPromptLogprobs, type LogprobItem } from './webllm';
+import { generateWebLLMCompletion, getEngine, type ModelTier, getPromptLogprobs as getWebLLMPromptLogprobs, type LogprobItem, reloadModel as reloadWebLLM } from './webllm';
 import { useSettingsStore } from '../store/settings';
 
 export const checkAIHealth = async (modelTier?: ModelTier): Promise<boolean> => {
@@ -15,6 +15,12 @@ export const checkAIHealth = async (modelTier?: ModelTier): Promise<boolean> => 
         console.error("WebLLM Health Check Failed:", e);
         return false;
     }
+};
+
+export const reloadModel = async (modelTier?: ModelTier): Promise<void> => {
+    const { llmModel } = useSettingsStore.getState();
+    const targetModel = modelTier || (llmModel as ModelTier);
+    await reloadWebLLM(targetModel);
 };
 
 export interface AICompletionResult {

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { type ChapterDocType } from '../../core/sync/db';
 import { formatReadingTime } from '../../hooks/useReadingTimeEstimate';
+import { useAIStore } from '../../core/store/ai';
 import { clsx } from 'clsx';
 
 interface SidebarProps {
@@ -25,6 +26,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     now
 }) => {
     const [expandedSummary, setExpandedSummary] = useState<string | null>(null);
+    const aiState = useAIStore();
 
     // Calculate total stats
     const totalWords = chapters.reduce((acc, c) => acc + (c.content?.length || 0), 0);
@@ -264,14 +266,37 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </div>
 
             {/* Telemetry Footer */}
-            <div className="p-4 border-t border-white/10 bg-black/40">
-                <div className="text-[10px] text-gray-500 tracking-widest mb-1">SYSTEM VELOCITY</div>
-                <div className="text-2xl font-mono text-dune-gold flex items-baseline gap-2">
-                    {ingestSpeed > 0 ? ingestSpeed : "IDLE"} <span className="text-xs text-gray-600">TPM</span>
+            <div className="p-4 border-t border-white/10 bg-black/40 space-y-3">
+                {/* AI Status */}
+                <div>
+                    <div className="flex justify-between items-center mb-1">
+                        <div className="text-[10px] text-gray-500 tracking-widest">NEURAL ENGINE</div>
+                        {aiState.error && <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" title={aiState.error} />}
+                        {!aiState.error && aiState.isLoading && <div className="w-2 h-2 rounded-full bg-yellow-500 animate-pulse" title="Loading..." />}
+                        {!aiState.error && !aiState.isLoading && aiState.isReady && <div className="w-2 h-2 rounded-full bg-green-500" title="Ready" />}
+                    </div>
+                    <div className="text-xs font-mono text-dune-gold truncate" title={aiState.activeModelName || 'None'}>
+                        {aiState.activeModelName || 'OFFLINE'}
+                    </div>
+                    <div className="flex justify-between items-center mt-1">
+                        <div className="text-[10px] text-gray-600">
+                            {aiState.tps > 0 ? `${aiState.tps.toFixed(1)} TPS` : 'IDLE'}
+                        </div>
+                        {aiState.activity && (
+                            <div className="text-[10px] text-magma-vent animate-pulse truncate max-w-[100px]">
+                                {aiState.activity}
+                            </div>
+                        )}
+                    </div>
                 </div>
+
+                {/* Pipeline Status */}
                 {ingestSpeed > 0 && (
-                    <div className="text-[10px] text-gray-600 mt-1">
-                        ~{(ingestSpeed / 60).toFixed(1)} TPS
+                    <div className="pt-2 border-t border-white/5">
+                        <div className="text-[10px] text-gray-500 tracking-widest mb-1">PIPELINE VELOCITY</div>
+                        <div className="text-xs font-mono text-gray-400 flex items-baseline gap-2">
+                            {ingestSpeed} <span className="text-[10px] text-gray-600">TPM</span>
+                        </div>
                     </div>
                 )}
             </div>

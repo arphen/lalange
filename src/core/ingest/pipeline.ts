@@ -1,7 +1,7 @@
 import JSZip from 'jszip';
 import * as cheerio from 'cheerio';
 import PQueue from 'p-queue';
-import { checkAIHealth, getPromptLogprobs } from '../ai/service';
+import { getPromptLogprobs } from '../ai/service';
 import { initDB, type BookDocType, type ChapterDocType, type ImageDocType, type RawFileDocType } from '../sync/db';
 import { removeLicenseText } from './license';
 import { useSettingsStore } from '../store/settings';
@@ -40,16 +40,9 @@ export const initialIngest = async (file: File, onProgress?: (msg: string) => vo
     const bookId = generateUUID();
     const zip = await JSZip.loadAsync(file);
 
-    // 1. Health Check
-    onProgress?.('Checking AI service...');
-    console.log('[Pipeline] Checking AI service health...');
-    const isAIUp = await checkAIHealth();
-    if (!isAIUp) {
-        console.error('[Pipeline] AI service check failed.');
-        throw new Error("WebLLM engine failed to initialize. Please check your internet connection or try reloading.");
-    }
-    console.log('[Pipeline] AI service is healthy.');
-
+    // 1. (Skipped) Health Check - We don't block ingestion on AI readiness anymore.
+    // The AI is only needed for background processing (summaries/density).
+    
     // 2. Find OPF to get metadata and spine
     const opfFile = Object.keys(zip.files).find(path => path.endsWith('.opf'));
     if (!opfFile) throw new Error('Invalid EPUB: No OPF file found');
@@ -414,20 +407,22 @@ export const analyzeDensityRange = async (words: string[]): Promise<number[]> =>
             // Higher surprisal = more unexpected = slower reading
             const surprisal = -wordLogprob;
 
-            // Map surprisal to density factor
-            // Low surprisal (< 2) -> Simple -> Factor < 1 (Faster)
-            // High surprisal (> 5) -> Dense -> Factor > 1 (Slower)
+            // Map surprisal to density factor (Granular)
+            // We want more variation around the "normal" range (3-5)
             let densityFactor = 1.0;
-            if (surprisal < 2) densityFactor = 0.8;
-            else if (surprisal < 5) densityFactor = 1.0;
-            else if (surprisal < 10) densityFactor = 1.5;
-            else densityFactor = 2.0;
+            if (surprisal < 1.5) densityFactor = 0.6;       // Very common (the, a) -> Fast
+            else if (surprisal < 3.0) densityFactor = 0.8;  // Common -> Brisk
+            else if (surprisal < 4.5) densityFactor = 1.0;  // Normal -> Base Speed
+            else if (surprisal < 6.0) densityFactor = 1.2;  // Slightly complex -> Deliberate
+            else if (surprisal < 8.0) densityFactor = 1.5;  // Complex -> Slow
+            else if (surprisal < 12.0) densityFactor = 2.0; // Very Complex -> Very Slow
+            else densityFactor = 3.0;                       // Profound -> Crawl
 
-            // Apply structural multipliers
+            // Apply structural multipliers (Length only)
+            // We removed punctuation multipliers because the Reader handles them dynamically.
+            // This prevents double-counting pauses.
             let structuralMultiplier = 1.0;
-            if (word.match(/[.!?]["']?$/)) structuralMultiplier = 3.0;
-            else if (word.match(/[,;]["']?$/)) structuralMultiplier = 1.5;
-            else if (word.length > 8) structuralMultiplier = 1.2;
+            if (word.length > 12) structuralMultiplier = 1.2;
 
             const finalScore = structuralMultiplier * densityFactor;
             const clamped = Math.max(0.5, Math.min(5.0, finalScore));

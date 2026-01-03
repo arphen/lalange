@@ -10,9 +10,18 @@ export const ModelDownloadModal: React.FC = () => {
     const [isOpen, setIsOpen] = useState(false);
     const [selectedTier, setSelectedTier] = useState<ModelTier>(editorModel);
     const [error, setError] = useState<string | null>(null);
+    const [isStarting, setIsStarting] = useState(false);
+
+    const isValidSelection = selectedTier in MODEL_INFO;
 
     useEffect(() => {
         const checkCache = async () => {
+            // If the current model is invalid, don't check cache, just open modal
+            if (!(editorModel in MODEL_INFO)) {
+                setIsOpen(true);
+                return;
+            }
+            
             const cached = await isModelCached(editorModel);
             if (!cached) {
                 setIsOpen(true);
@@ -22,6 +31,11 @@ export const ModelDownloadModal: React.FC = () => {
     }, [editorModel]);
 
     const handleDownload = async () => {
+        if (!isValidSelection) return;
+
+        console.log("Initializing download for tier:", selectedTier);
+        setIsStarting(true);
+
         // Update all models to the selected tier for consistency
         setEditorModel(selectedTier);
         setLibrarianModelTier(selectedTier);
@@ -30,18 +44,23 @@ export const ModelDownloadModal: React.FC = () => {
 
         try {
             await getEngine(selectedTier);
+            console.log("Engine initialized successfully");
             setIsOpen(false);
         } catch (error) {
             console.error("Download failed", error);
-            if (error instanceof Error && error.message === "BROWSER_STORAGE_QUOTA_EXCEEDED") {
+            if (error instanceof Error && (error.message.includes("QuotaExceeded") || error.message.includes("NS_ERROR_FILE_NO_DEVICE_SPACE"))) {
                 setError("BROWSER STORAGE QUOTA EXCEEDED. Please clear site data or check browser settings.");
             } else {
-                setError("Download failed. Please check your connection and try again.");
+                setError(`Download failed: ${error instanceof Error ? error.message : String(error)}`);
             }
+        } finally {
+            setIsStarting(false);
         }
     };
 
-    if (!isOpen && !isLoading) return null;
+    const showProgress = isLoading || isStarting;
+
+    if (!isOpen && !showProgress) return null;
 
     // If loading, we show the progress bar (even if modal was closed, but usually it stays open)
     // Actually, if it's loading, we should probably show the modal or a loading indicator.
@@ -52,10 +71,10 @@ export const ModelDownloadModal: React.FC = () => {
             <div className="bg-basalt border border-white/10 rounded-lg max-w-2xl w-full shadow-2xl overflow-hidden">
                 <div className="p-6 border-b border-white/10 bg-black/20">
                     <h2 className="text-xl font-mono font-bold text-dune-gold tracking-widest uppercase">
-                        {isLoading ? 'INITIALIZING NEURAL ENGINE' : 'SELECT NEURAL ENGINE'}
+                        {showProgress ? 'INITIALIZING NEURAL ENGINE' : 'SELECT NEURAL ENGINE'}
                     </h2>
                     <p className="text-xs text-gray-400 mt-2 font-mono">
-                        {isLoading 
+                        {showProgress 
                             ? 'Downloading model parameters to local storage. This happens only once.' 
                             : 'Arphen runs entirely on your device. Select a model to download.'}
                     </p>
@@ -67,10 +86,10 @@ export const ModelDownloadModal: React.FC = () => {
                             <span className="font-bold">ERROR:</span> {error}
                         </div>
                     )}
-                    {isLoading ? (
+                    {showProgress ? (
                         <div className="space-y-2">
                             <div className="flex justify-between text-xs font-mono text-dune-gold uppercase">
-                                <span>{progress || 'Preparing...'}</span>
+                                <span>{progress || 'Preparing Neural Engine...'}</span>
                                 <span>{Math.round(progressValue * 100)}%</span>
                             </div>
                             <div className="w-full h-2 bg-white/10 rounded-full overflow-hidden">
@@ -114,13 +133,19 @@ export const ModelDownloadModal: React.FC = () => {
                     )}
                 </div>
 
-                {!isLoading && (
+                {!showProgress && (
                     <div className="p-6 border-t border-white/10 bg-black/20 flex justify-end">
                         <button
                             onClick={handleDownload}
-                            className="px-6 py-2 bg-dune-gold text-black font-mono font-bold uppercase tracking-widest hover:bg-white transition-colors text-xs"
+                            disabled={!isValidSelection}
+                            className={clsx(
+                                "px-6 py-2 font-mono font-bold uppercase tracking-widest transition-colors text-xs",
+                                isValidSelection 
+                                    ? "bg-dune-gold text-black hover:bg-white" 
+                                    : "bg-gray-700 text-gray-500 cursor-not-allowed"
+                            )}
                         >
-                            Initialize System
+                            {isValidSelection ? 'Initialize System' : 'Select a Model'}
                         </button>
                     </div>
                 )}
