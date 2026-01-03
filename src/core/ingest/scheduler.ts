@@ -79,26 +79,48 @@ export class IngestionScheduler {
     private wakeUpDormantTasks() {
         if (!this.currentBookId || !this.currentChapterId) return;
 
-        // Look ahead window (e.g., next 2 chunks)
-        const settings = useSettingsStore.getState();
-        const chunkSize = settings.summaryChunkSize || 2500;
-        const LOOKAHEAD_WORDS = chunkSize * 2;
-        
-        this.tasks.forEach(task => {
+        // We wake tasks using chunk indices rather than word-distance so that
+        // books with many small chunks don't accidentally wake a large number at once.
+        const DENSITY_LOOKAHEAD_CHUNKS = 5;
+        const SUMMARY_LOOKAHEAD_CHUNKS = 1;
+        const REWIND_CHUNKS = 1;
+
+        const chapterTasks = this.tasks.filter(
+            (t) => t.bookId === this.currentBookId && t.chapterId === this.currentChapterId
+        );
+
+        // Prefer using DENSITY tasks to locate the current chunk (they share indices with SUMMARY).
+        const locatorTasks = chapterTasks.filter((t) => t.type === 'DENSITY');
+        const tasksForIndex = locatorTasks.length > 0 ? locatorTasks : chapterTasks;
+
+        let currentChunkIndex = 0;
+        const containing = tasksForIndex.find(
+            (t) => t.startWordIndex <= this.currentWordIndex && t.endWordIndex > this.currentWordIndex
+        );
+        if (containing) {
+            currentChunkIndex = containing.subchapterIndex;
+        } else {
+            // Fallback: pick the last chunk that starts before the cursor.
+            const started = tasksForIndex
+                .filter((t) => t.startWordIndex <= this.currentWordIndex)
+                .sort((a, b) => b.startWordIndex - a.startWordIndex)[0];
+            if (started) currentChunkIndex = started.subchapterIndex;
+        }
+
+        this.tasks.forEach((task) => {
             if (task.status !== 'dormant') return;
             if (task.bookId !== this.currentBookId) return;
 
-            // If in current chapter
             if (task.chapterId === this.currentChapterId) {
-                const distance = task.startWordIndex - this.currentWordIndex;
-                
-                // Wake up if within lookahead window
-                // This ensures we only process what is immediately ahead
-                if (distance < LOOKAHEAD_WORDS && distance > -chunkSize) { // Also wake up if we are IN the chunk
+                const lookahead = task.type === 'DENSITY' ? DENSITY_LOOKAHEAD_CHUNKS : SUMMARY_LOOKAHEAD_CHUNKS;
+                const minIndex = Math.max(0, currentChunkIndex - REWIND_CHUNKS);
+                const maxIndex = currentChunkIndex + lookahead;
+
+                if (task.subchapterIndex >= minIndex && task.subchapterIndex <= maxIndex) {
                     task.status = 'pending';
-                    console.log(`[Scheduler] Waking up task: ${task.id} (Distance: ${distance})`);
+                    console.log(`[Scheduler] Waking up task: ${task.id} (Chunk: ${task.subchapterIndex}, Current: ${currentChunkIndex})`);
                 }
-            } 
+            }
             // TODO: Handle next chapter lookahead
         });
     }

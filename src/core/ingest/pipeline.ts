@@ -276,10 +276,14 @@ export const processChaptersInBackground = async (bookId: string) => {
                             });
 
                             // --- SCHEDULE TASKS ---
-                        // Only schedule first 2 chunks of the FIRST chapter immediately.
-                        // All other chapters start dormant and wake up when the user navigates there.
-                        const isFirstChapter = chapterIndex === 0;
-                        const initialStatus = (isFirstChapter && i < 2) ? 'pending' : 'dormant';
+                            // Only schedule an initial window for the FIRST chapter.
+                            // Density is lightweight (tiny model) so we can do more up-front than summaries.
+                            // All other chapters start dormant and wake up when the user navigates there.
+                            const isFirstChapter = chapterIndex === 0;
+                            const INITIAL_DENSITY_CHUNKS = 5;
+                            const INITIAL_SUMMARY_CHUNKS = 1;
+                            const densityInitialStatus = (isFirstChapter && i < INITIAL_DENSITY_CHUNKS) ? 'pending' : 'dormant';
+                            const summaryInitialStatus = (isFirstChapter && i < INITIAL_SUMMARY_CHUNKS) ? 'pending' : 'dormant';
 
                             // 1. Density Estimation
                             scheduler.addTask({
@@ -291,7 +295,7 @@ export const processChaptersInBackground = async (bookId: string) => {
                                 endWordIndex,
                                 type: 'DENSITY',
                                 text: chunk
-                            }, initialStatus);
+                            }, densityInitialStatus);
 
                             // 2. Summarization
                             scheduler.addTask({
@@ -303,9 +307,13 @@ export const processChaptersInBackground = async (bookId: string) => {
                                 endWordIndex,
                                 type: 'SUMMARY',
                                 text: chunk
-                            }, initialStatus);
+                            }, summaryInitialStatus);
                         }
-                        const activeCount = chapterIndex === 0 ? Math.min(rawChunks.length, 2) * 2 : 0;
+                        const INITIAL_DENSITY_CHUNKS = 5;
+                        const INITIAL_SUMMARY_CHUNKS = 1;
+                        const activeDensity = chapterIndex === 0 ? Math.min(rawChunks.length, INITIAL_DENSITY_CHUNKS) : 0;
+                        const activeSummary = chapterIndex === 0 ? Math.min(rawChunks.length, INITIAL_SUMMARY_CHUNKS) : 0;
+                        const activeCount = activeDensity + activeSummary;
                         console.log(`[Pipeline] Scheduled ${rawChunks.length * 2} tasks for chapter ${chapterId} (${activeCount} active, rest dormant)`);
 
                         // Final update for this chapter (Content + Placeholders)
