@@ -26,7 +26,8 @@ const getDensityColor = (score: number) => {
 
 export const Reader: React.FC<ReaderProps> = ({ book, onOpenSettings }) => {
     const [isPlaying, setIsPlaying] = useState(false);
-    const { wpm } = useSettingsStore();
+    const { wpm, setWpm, summaryWpm } = useSettingsStore();
+    const [isHoveringDial, setIsHoveringDial] = useState(false);
 
     // State for current chapter and reading position
     const [currentChapter, setCurrentChapter] = useState<ChapterDocType | null>(null);
@@ -361,7 +362,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onOpenSettings }) => {
                             indexRef.current = 0;
 
                             // Slow down WPM
-                            wpmRef.current = 100;
+                            wpmRef.current = summaryWpm;
 
                             // Force render first word of summary
                             renderWord(0, summaryWordsRef.current);
@@ -542,6 +543,18 @@ export const Reader: React.FC<ReaderProps> = ({ book, onOpenSettings }) => {
         timeLeftStr = minutesLeft < 1 ? '< 1m' : `${Math.round(minutesLeft)}m`;
     }
 
+    // WPM Dial Logic
+    const dialColor = wpm < 300 ? 'text-blue-400' : wpm < 500 ? 'text-dune-gold' : 'text-red-500';
+    const dialGlow = isHoveringDial ? 'drop-shadow-[0_0_10px_rgba(255,255,255,0.5)]' : 'opacity-30 hover:opacity-100';
+
+    // Calculate word to render for React (to avoid stale content on re-renders)
+    // When playing, the loop updates the DOM directly.
+    // When paused or when state changes (like isSummaryActive), React re-renders.
+    // We need to ensure React renders the correct word so it doesn't overwrite the loop's work with stale data.
+    const wordToRender = isSummaryActive 
+        ? (summaryWordsRef.current[indexRef.current] || '')
+        : (wordsRef.current[currentWordIndex] || '');
+
     return (
         <div className="relative w-full h-screen bg-basalt text-white overflow-hidden flex">
             {/* Floating Header / Controls */}
@@ -622,9 +635,9 @@ export const Reader: React.FC<ReaderProps> = ({ book, onOpenSettings }) => {
                         onClick={() => setIsPlaying(!isPlayingRef.current)}
                     >
                         {/* Bionic Word */}
-                        <div ref={rsvpRef} className={`text-6xl md:text-8xl font-mono tracking-tight whitespace-nowrap drop-shadow-[0_0_15px_rgba(255,255,255,0.5)] ${isSummaryActive ? 'text-orange-500' : 'text-white'}`}>
-                            {wordsRef.current[currentWordIndex] && (
-                                <span dangerouslySetInnerHTML={{ __html: getBionicGradientHtml(wordsRef.current[currentWordIndex]) }} />
+                        <div ref={rsvpRef} className={`text-6xl md:text-8xl font-mono tracking-tight whitespace-nowrap drop-shadow-[0_0_15px_rgba(255,255,255,0.5)] ${isSummaryActive ? 'text-amber-400 italic' : 'text-white'}`}>
+                            {wordToRender && (
+                                <span dangerouslySetInnerHTML={{ __html: getBionicGradientHtml(wordToRender) }} />
                             )}
                         </div>
 
@@ -685,6 +698,42 @@ export const Reader: React.FC<ReaderProps> = ({ book, onOpenSettings }) => {
                         </svg>
                     </div>
 
+                </div>
+            </div>
+
+            {/* WPM Dial Overlay */}
+            <div 
+                className={`absolute bottom-8 right-8 z-[70] flex flex-col items-center transition-all duration-500 ${dialGlow}`}
+                onMouseEnter={() => setIsHoveringDial(true)}
+                onMouseLeave={() => setIsHoveringDial(false)}
+            >
+                <div className="relative w-24 h-24 flex items-center justify-center">
+                    {/* Dial Ring */}
+                    <svg className="w-full h-full transform -rotate-90" viewBox="0 0 100 100">
+                        <circle cx="50" cy="50" r="45" fill="none" stroke="currentColor" strokeWidth="2" className="text-white/10" />
+                        <circle 
+                            cx="50" cy="50" r="45" fill="none" stroke="currentColor" strokeWidth="2" 
+                            className={`${dialColor} transition-all duration-300`}
+                            strokeDasharray="283"
+                            strokeDashoffset={283 - (283 * (wpm / 1000))}
+                        />
+                    </svg>
+                    
+                    {/* Value Display */}
+                    <div className="absolute inset-0 flex flex-col items-center justify-center">
+                        <span className={`text-2xl font-mono font-bold ${dialColor}`}>{wpm}</span>
+                        <span className="text-[8px] text-gray-500 tracking-widest">WPM</span>
+                    </div>
+
+                    {/* Invisible Range Input for Interaction */}
+                    <input 
+                        type="range" 
+                        min="100" max="1000" step="10"
+                        value={wpm}
+                        onChange={(e) => setWpm(parseInt(e.target.value))}
+                        className="absolute inset-0 w-full h-full opacity-0 cursor-ns-resize"
+                        title="Adjust Speed"
+                    />
                 </div>
             </div>
 

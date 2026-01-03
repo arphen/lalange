@@ -298,6 +298,25 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                                 </div>
                             </div>
 
+                            <div className="bg-black/20 p-8 rounded-lg border border-white/10">
+                                <div className="flex justify-between text-sm text-gray-400 mb-4">
+                                    <span>SUMMARY VELOCITY</span>
+                                    <span className="text-dune-gold font-bold">{settings.summaryWpm} WPM</span>
+                                </div>
+                                <input
+                                    type="range" aria-label="Summary WPM" min="50"
+                                    max="500"
+                                    step="10"
+                                    value={settings.summaryWpm}
+                                    onChange={(e) => settings.setSummaryWpm(parseInt(e.target.value))}
+                                    className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-dune-gold"
+                                />
+                                <div className="flex justify-between text-[10px] text-gray-600 mt-2 uppercase tracking-widest">
+                                    <span>Contemplative</span>
+                                    <span>Brisk</span>
+                                </div>
+                            </div>
+
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                                 <div>
                                     <label className="block text-sm text-dune-gold mb-4 uppercase tracking-widest">Analysis Granularity</label>

@@ -19,6 +19,8 @@ interface SettingsState {
     // Reading
     wpm: number;
     setWpm: (wpm: number) => void;
+    summaryWpm: number;
+    setSummaryWpm: (wpm: number) => void;
     fontScale: number;
     setFontScale: (scale: number) => void;
 
@@ -115,6 +117,9 @@ export const useSettingsStore = create<SettingsState>()(
 
             wpm: 300,
             setWpm: (wpm) => set({ wpm }),
+
+            summaryWpm: 200,
+            setSummaryWpm: (summaryWpm) => set({ summaryWpm }),
 
             fontScale: 1,
             setFontScale: (fontScale) => set({ fontScale }),

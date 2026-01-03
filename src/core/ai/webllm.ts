@@ -1,4 +1,4 @@
-import { CreateMLCEngine, MLCEngine, type InitProgressCallback, hasModelInCache, deleteModelAllInfoInCache } from "@mlc-ai/web-llm";
+import { CreateMLCEngine, MLCEngine, type InitProgressCallback, hasModelInCache, deleteModelAllInfoInCache, prebuiltAppConfig } from "@mlc-ai/web-llm";
 import { useAIStore } from "../store/ai";
 
 export const MODEL_INFO = {
@@ -89,8 +89,20 @@ export const getEngine = async (
     setError(null);
 
     try {
+        // Check if model is already in cache to update UI state immediately
+        const isCached = await hasModelInCache(modelId);
+        if (isCached) {
+            setProgress(`[${MODEL_INFO[tier].name}] Verifying cache...`, 0);
+        }
+
         if (!engineInstance) {
-            engineInstance = await CreateMLCEngine(modelId, { initProgressCallback: onProgress });
+            engineInstance = await CreateMLCEngine(modelId, { 
+                initProgressCallback: onProgress,
+                appConfig: {
+                    ...prebuiltAppConfig,
+                    useIndexedDBCache: true,
+                }
+            });
         } else {
             await engineInstance.reload(modelId);
         }
