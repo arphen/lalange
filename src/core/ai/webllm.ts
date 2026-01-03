@@ -55,10 +55,13 @@ export const getEngine = async (
     }
 
     const modelId = MODEL_MAPPING[tier];
+    console.log(`[WebLLM] Requesting engine for tier: ${tier} (Model ID: ${modelId})`);
+    
     const { setProgress, setLoading, setReady, setError, setActiveModelName } = useAIStore.getState();
     const startTime = Date.now();
 
     const onProgress: InitProgressCallback = (report) => {
+        console.log(`[WebLLM] Init Progress: ${report.text} (${report.progress})`);
         const info = MODEL_INFO[tier];
         let timeInfo = "";
 
@@ -96,6 +99,7 @@ export const getEngine = async (
         }
 
         if (!engineInstance) {
+            console.log(`[WebLLM] Creating new MLCEngine instance...`);
             engineInstance = await CreateMLCEngine(modelId, { 
                 initProgressCallback: onProgress,
                 appConfig: {
@@ -103,8 +107,11 @@ export const getEngine = async (
                     useIndexedDBCache: true,
                 }
             });
+            console.log(`[WebLLM] MLCEngine created successfully.`);
         } else {
+            console.log(`[WebLLM] Reloading existing engine with model: ${modelId}`);
             await engineInstance.reload(modelId);
+            console.log(`[WebLLM] Engine reloaded successfully.`);
         }
         currentLoadedModel = modelId;
         setReady(true);

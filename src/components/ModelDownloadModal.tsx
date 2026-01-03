@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useSettingsStore } from '../core/store/settings';
 import { useAIStore } from '../core/store/ai';
-import { MODEL_INFO, type ModelTier, isModelCached, getEngine } from '../core/ai/webllm';
+import { MODEL_INFO, type ModelTier, isModelCached, getEngine, deleteModel } from '../core/ai/webllm';
 import { clsx } from 'clsx';
 
 export const ModelDownloadModal: React.FC = () => {
@@ -11,11 +11,21 @@ export const ModelDownloadModal: React.FC = () => {
     const [selectedTier, setSelectedTier] = useState<ModelTier>(editorModel);
     const [error, setError] = useState<string | null>(null);
     const [isStarting, setIsStarting] = useState(false);
+    const [cachedModels, setCachedModels] = useState<Record<string, boolean>>({});
 
     const isValidSelection = selectedTier in MODEL_INFO;
 
+    const checkCache = React.useCallback(async () => {
+        const status: Record<string, boolean> = {};
+        for (const tier of Object.keys(MODEL_INFO) as ModelTier[]) {
+            status[tier] = await isModelCached(tier);
+        }
+        setCachedModels(status);
+    }, []);
+
     useEffect(() => {
-        const checkCache = async () => {
+        const init = async () => {
+            await checkCache();
             // If the current model is invalid, don't check cache, just open modal
             if (!(editorModel in MODEL_INFO)) {
                 setIsOpen(true);
@@ -27,8 +37,8 @@ export const ModelDownloadModal: React.FC = () => {
                 setIsOpen(true);
             }
         };
-        checkCache();
-    }, [editorModel]);
+        init();
+    }, [editorModel, checkCache]);
 
     const handleDownload = async () => {
         if (!isValidSelection) return;
@@ -49,12 +59,23 @@ export const ModelDownloadModal: React.FC = () => {
         } catch (error) {
             console.error("Download failed", error);
             if (error instanceof Error && (error.message.includes("QuotaExceeded") || error.message.includes("NS_ERROR_FILE_NO_DEVICE_SPACE"))) {
-                setError("BROWSER STORAGE QUOTA EXCEEDED. Please clear site data or check browser settings.");
+                setError("BROWSER STORAGE QUOTA EXCEEDED. Please delete unused models to free up space.");
             } else {
                 setError(`Download failed: ${error instanceof Error ? error.message : String(error)}`);
             }
         } finally {
             setIsStarting(false);
+        }
+    };
+
+    const handleDelete = async (tier: ModelTier, e: React.MouseEvent) => {
+        e.stopPropagation();
+        if (!confirm(`Delete ${MODEL_INFO[tier].name} from cache?`)) return;
+        try {
+            await deleteModel(tier);
+            await checkCache();
+        } catch (e) {
+            console.error("Failed to delete model", e);
         }
     };
 
@@ -104,31 +125,48 @@ export const ModelDownloadModal: React.FC = () => {
                         </div>
                     ) : (
                         <div className="grid gap-4">
-                            {(Object.entries(MODEL_INFO) as [ModelTier, typeof MODEL_INFO[ModelTier]][]).map(([tier, info]) => (
-                                <button
-                                    key={tier}
-                                    onClick={() => setSelectedTier(tier)}
-                                    className={clsx(
-                                        "flex items-center justify-between p-4 border rounded transition-all text-left group",
-                                        selectedTier === tier 
-                                            ? "border-dune-gold bg-dune-gold/10" 
-                                            : "border-white/10 hover:border-white/30 hover:bg-white/5"
-                                    )}
-                                >
-                                    <div>
-                                        <div className={clsx(
-                                            "font-mono font-bold uppercase tracking-wider",
-                                            selectedTier === tier ? "text-dune-gold" : "text-gray-300"
-                                        )}>
-                                            {info.name}
+                            {(Object.entries(MODEL_INFO) as [ModelTier, typeof MODEL_INFO[ModelTier]][]).map(([tier, info]) => {
+                                const isCached = cachedModels[tier];
+                                return (
+                                    <button
+                                        key={tier}
+                                        onClick={() => setSelectedTier(tier)}
+                                        className={clsx(
+                                            "flex items-center justify-between p-4 border rounded transition-all text-left group relative",
+                                            selectedTier === tier 
+                                                ? "border-dune-gold bg-dune-gold/10" 
+                                                : "border-white/10 hover:border-white/30 hover:bg-white/5"
+                                        )}
+                                    >
+                                        <div>
+                                            <div className={clsx(
+                                                "font-mono font-bold uppercase tracking-wider flex items-center gap-2",
+                                                selectedTier === tier ? "text-dune-gold" : "text-gray-300"
+                                            )}>
+                                                {info.name}
+                                                {isCached && <span className="text-[10px] bg-green-900/50 text-green-400 px-1.5 py-0.5 rounded border border-green-800">CACHED</span>}
+                                            </div>
+                                            <div className="text-xs text-gray-500 mt-1">{info.description}</div>
                                         </div>
-                                        <div className="text-xs text-gray-500 mt-1">{info.description}</div>
-                                    </div>
-                                    <div className="text-xs font-mono text-gray-400 bg-black/30 px-2 py-1 rounded border border-white/5">
-                                        {info.size}
-                                    </div>
-                                </button>
-                            ))}
+                                        <div className="flex items-center gap-3">
+                                            <div className="text-xs font-mono text-gray-400 bg-black/30 px-2 py-1 rounded border border-white/5">
+                                                {info.size}
+                                            </div>
+                                            {isCached && (
+                                                <div
+                                                    onClick={(e) => handleDelete(tier, e)}
+                                                    className="p-1.5 text-gray-500 hover:text-red-400 hover:bg-red-900/20 rounded transition-colors z-10"
+                                                    title="Delete from cache"
+                                                >
+                                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                                    </svg>
+                                                </div>
+                                            )}
+                                        </div>
+                                    </button>
+                                );
+                            })}
                         </div>
                     )}
                 </div>

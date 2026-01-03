@@ -25,7 +25,7 @@ describe('analyzeDensityRange (Forward Pass)', () => {
     it('should calculate density based on logprobs', async () => {
         // Mock logprobs
         // "hello" -> logprob -0.1 (Surprisal 0.1 -> Very Low -> Factor 0.6)
-        // "world" -> logprob -10.0 (Surprisal 10.0 -> High -> Factor 2.0)
+        // "world" -> logprob -10.0 (Surprisal 10.0 -> Profound -> Factor 3.0)
         const mockLogprobs = [
             { token: 'hello', logprob: -0.1 },
             { token: ' world', logprob: -10.0 }
@@ -37,7 +37,7 @@ describe('analyzeDensityRange (Forward Pass)', () => {
 
         expect(densities.length).toBe(2);
         expect(densities[0]).toBe(0.6); // Very Low surprisal
-        expect(densities[1]).toBe(2.0); // High surprisal
+        expect(densities[1]).toBe(3.0); // Profound surprisal
     });
 
     it('should handle structural multipliers', async () => {

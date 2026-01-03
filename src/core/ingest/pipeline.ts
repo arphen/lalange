@@ -281,6 +281,9 @@ export const processChaptersInBackground = async (bookId: string) => {
                             });
 
                             // --- SCHEDULE TASKS ---
+                            // Only schedule first 3 chunks immediately. Others are dormant.
+                            const initialStatus = i < 3 ? 'pending' : 'dormant';
+
                             // 1. Density Estimation
                             scheduler.addTask({
                                 id: `${chapterId}_density_${i}`,
@@ -291,7 +294,7 @@ export const processChaptersInBackground = async (bookId: string) => {
                                 endWordIndex,
                                 type: 'DENSITY',
                                 text: chunk
-                            });
+                            }, initialStatus);
 
                             // 2. Summarization
                             scheduler.addTask({
@@ -303,8 +306,9 @@ export const processChaptersInBackground = async (bookId: string) => {
                                 endWordIndex,
                                 type: 'SUMMARY',
                                 text: chunk
-                            });
+                            }, initialStatus);
                         }
+                        console.log(`[Pipeline] Scheduled ${rawChunks.length * 2} tasks for chapter ${chapterId} (First 3 chunks active)`);
 
                         // Final update for this chapter (Content + Placeholders)
                         const finalDoc = await db.chapters.findOne(currentDoc.id).exec();
@@ -347,7 +351,9 @@ export const processChaptersInBackground = async (bookId: string) => {
 
 export const analyzeDensityRange = async (words: string[]): Promise<number[]> => {
     const text = words.join(' ');
-    const { librarianModelTier } = useSettingsStore.getState();
+    const { librarianModelTier, pacingSensitivity } = useSettingsStore.getState();
+
+    console.log(`[Pipeline] analyzeDensityRange called for ${words.length} words. Tier: ${librarianModelTier}`);
 
     try {
         const logprobs = await llmQueue.add(async () => {
@@ -407,25 +413,35 @@ export const analyzeDensityRange = async (words: string[]): Promise<number[]> =>
             // Higher surprisal = more unexpected = slower reading
             const surprisal = -wordLogprob;
 
+            // Apply Sensitivity Setting
+            // Default 50 -> 1.0x multiplier. 
+            // Higher sensitivity (e.g. 80) -> Higher surprisal -> Slower reading (Higher Density)
+            const sensitivityMult = (pacingSensitivity ?? 50) / 50;
+            const adjustedSurprisal = surprisal * sensitivityMult;
+
             // Map surprisal to density factor (Granular)
-            // We want more variation around the "normal" range (3-5)
+            // Tightened thresholds for modern models (Gemma 2, Llama 3) which have lower perplexity
             let densityFactor = 1.0;
-            if (surprisal < 1.5) densityFactor = 0.6;       // Very common (the, a) -> Fast
-            else if (surprisal < 3.0) densityFactor = 0.8;  // Common -> Brisk
-            else if (surprisal < 4.5) densityFactor = 1.0;  // Normal -> Base Speed
-            else if (surprisal < 6.0) densityFactor = 1.2;  // Slightly complex -> Deliberate
-            else if (surprisal < 8.0) densityFactor = 1.5;  // Complex -> Slow
-            else if (surprisal < 12.0) densityFactor = 2.0; // Very Complex -> Very Slow
-            else densityFactor = 3.0;                       // Profound -> Crawl
+            if (adjustedSurprisal < 1.0) densityFactor = 0.6;       // Very common (the, a) -> Fast
+            else if (adjustedSurprisal < 2.5) densityFactor = 0.8;  // Common -> Brisk
+            else if (adjustedSurprisal < 4.0) densityFactor = 1.0;  // Normal -> Base Speed
+            else if (adjustedSurprisal < 5.5) densityFactor = 1.2;  // Slightly complex -> Deliberate
+            else if (adjustedSurprisal < 7.5) densityFactor = 1.5;  // Complex -> Slow
+            else if (adjustedSurprisal < 10.0) densityFactor = 2.0; // Very Complex -> Very Slow
+            else densityFactor = 3.0;                               // Profound -> Crawl
 
             // Apply structural multipliers (Length only)
-            // We removed punctuation multipliers because the Reader handles them dynamically.
-            // This prevents double-counting pauses.
             let structuralMultiplier = 1.0;
-            if (word.length > 12) structuralMultiplier = 1.2;
+            if (word.length > 12) structuralMultiplier = 1.3;
+            else if (word.length > 8) structuralMultiplier = 1.1;
 
             const finalScore = structuralMultiplier * densityFactor;
             const clamped = Math.max(0.5, Math.min(5.0, finalScore));
+
+            // Debug log for tuning (sample 1%)
+            if (Math.random() < 0.01) {
+                console.log(`[Density] "${word}" Logprob: ${wordLogprob.toFixed(2)} Surp: ${surprisal.toFixed(2)} Adj: ${adjustedSurprisal.toFixed(2)} -> ${finalScore.toFixed(2)}`);
+            }
 
             densities.push(clamped);
         }

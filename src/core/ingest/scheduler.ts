@@ -16,7 +16,7 @@ export interface IngestionTask {
     endWordIndex: number;
     type: TaskType;
     priority: number;
-    status: 'pending' | 'processing' | 'completed' | 'failed';
+    status: 'pending' | 'processing' | 'completed' | 'failed' | 'dormant';
     text: string; // The text chunk to process
 }
 
@@ -38,7 +38,9 @@ export class IngestionScheduler {
         this.currentBookId = bookId;
         this.currentChapterId = chapterId;
         this.currentWordIndex = wordIndex;
+        this.wakeUpDormantTasks();
         this.rebalancePriorities();
+        this.processNext();
     }
 
     public removeTasksForBook(bookId: string) {
@@ -47,7 +49,7 @@ export class IngestionScheduler {
         console.log(`[Scheduler] Removed ${count} tasks for book ${bookId}`);
     }
 
-    public addTask(task: Omit<IngestionTask, 'priority' | 'status'>) {
+    public addTask(task: Omit<IngestionTask, 'priority' | 'status'>, initialStatus: 'pending' | 'dormant' = 'pending') {
         // Check if task already exists
         const exists = this.tasks.find(t => 
             t.bookId === task.bookId && 
@@ -60,11 +62,40 @@ export class IngestionScheduler {
         const newTask: IngestionTask = {
             ...task,
             priority: 0,
-            status: 'pending'
+            status: initialStatus
         };
         this.tasks.push(newTask);
-        this.rebalancePriorities();
-        this.processNext();
+        
+        if (initialStatus === 'pending') {
+            this.rebalancePriorities();
+            this.processNext();
+        }
+    }
+
+    private wakeUpDormantTasks() {
+        if (!this.currentBookId || !this.currentChapterId) return;
+
+        // Look ahead window (e.g., next 3 chunks or ~5000 words)
+        const LOOKAHEAD_WORDS = 5000;
+        
+        this.tasks.forEach(task => {
+            if (task.status !== 'dormant') return;
+            if (task.bookId !== this.currentBookId) return;
+
+            // If in current chapter
+            if (task.chapterId === this.currentChapterId) {
+                const distance = task.startWordIndex - this.currentWordIndex;
+                // Wake up if it's the current chunk or within lookahead
+                // Also wake up previous chunks if we scrolled back (distance < 0)
+                if (distance < LOOKAHEAD_WORDS) {
+                    task.status = 'pending';
+                    console.log(`[Scheduler] Waking up task: ${task.id}`);
+                }
+            } 
+            // If in next chapter (simplified check: we'd need chapter order, but for now let's assume we wake up next chapter tasks if we are near end of current?)
+            // For now, let's just stick to current chapter lookahead. 
+            // Ideally we should wake up the *next* chapter's first few chunks if we are near the end.
+        });
     }
 
     private rebalancePriorities() {
@@ -131,20 +162,26 @@ export class IngestionScheduler {
         if (this.llmQueue.pending > 0 || this.llmQueue.size > 0) return; // Already working
 
         const nextTask = this.tasks.find(t => t.status === 'pending');
-        if (!nextTask) return;
+        if (!nextTask) {
+            // console.log("[Scheduler] No pending tasks.");
+            return;
+        }
 
+        console.log(`[Scheduler] Processing next task: ${nextTask.id} (${nextTask.type})`);
         this.isRunning = true;
         nextTask.status = 'processing';
 
         try {
             await this.llmQueue.add(async () => {
+                console.log(`[Scheduler] Starting execution of task: ${nextTask.id}`);
                 await this.executeTask(nextTask);
+                console.log(`[Scheduler] Finished execution of task: ${nextTask.id}`);
             });
             nextTask.status = 'completed';
             // Remove completed task
             this.tasks = this.tasks.filter(t => t.id !== nextTask.id);
         } catch (e) {
-            console.error("Task failed", e);
+            console.error(`[Scheduler] Task failed: ${nextTask.id}`, e);
             nextTask.status = 'failed';
             // Move to end or retry logic?
         } finally {
