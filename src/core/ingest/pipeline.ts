@@ -345,7 +345,7 @@ export const processChaptersInBackground = async (bookId: string) => {
     } finally {
         activeJobs.delete(bookId);
         processingState.delete(bookId);
-        console.log(`[Pipeline] Background processing finished/stopped for book: ${bookId}`);
+        console.log(`[Pipeline] Ingestion preparation complete for book: ${bookId}. Tasks have been handed off to the Scheduler.`);
     }
 };
 

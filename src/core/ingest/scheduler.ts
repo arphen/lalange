@@ -167,21 +167,25 @@ export class IngestionScheduler {
             return;
         }
 
-        console.log(`[Scheduler] Processing next task: ${nextTask.id} (${nextTask.type})`);
+        const pendingCount = this.tasks.filter(t => t.status === 'pending').length;
+        const dormantCount = this.tasks.filter(t => t.status === 'dormant').length;
+        
+        console.log(`[Scheduler] [Queue: ${pendingCount} Pending, ${dormantCount} Dormant] Starting Task: [${nextTask.type}] Ch:${nextTask.chapterId.split('_').pop()} Pt:${nextTask.subchapterIndex}`);
+        
         this.isRunning = true;
         nextTask.status = 'processing';
 
         try {
             await this.llmQueue.add(async () => {
-                console.log(`[Scheduler] Starting execution of task: ${nextTask.id}`);
+                // console.log(`[Scheduler] Starting execution of task: ${nextTask.id}`);
                 await this.executeTask(nextTask);
-                console.log(`[Scheduler] Finished execution of task: ${nextTask.id}`);
+                console.log(`[Scheduler] [Success] Task Completed: [${nextTask.type}] Ch:${nextTask.chapterId.split('_').pop()} Pt:${nextTask.subchapterIndex}`);
             });
             nextTask.status = 'completed';
             // Remove completed task
             this.tasks = this.tasks.filter(t => t.id !== nextTask.id);
         } catch (e) {
-            console.error(`[Scheduler] Task failed: ${nextTask.id}`, e);
+            console.error(`[Scheduler] [Failed] Task Error: [${nextTask.type}] Ch:${nextTask.chapterId.split('_').pop()} Pt:${nextTask.subchapterIndex}`, e);
             nextTask.status = 'failed';
             // Move to end or retry logic?
         } finally {
@@ -203,7 +207,7 @@ export class IngestionScheduler {
         const settings = useSettingsStore.getState();
         const aiState = useAIStore.getState();
 
-        console.log(`[Scheduler] Executing ${task.type} for ${task.chapterId} sub ${task.subchapterIndex}`);
+        // console.log(`[Scheduler] Executing ${task.type} for ${task.chapterId} sub ${task.subchapterIndex}`);
 
         if (task.type === 'DENSITY') {
             const { librarianModelTier } = settings;
