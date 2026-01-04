@@ -88,8 +88,8 @@ export const ModelDownloadModal: React.FC = () => {
         }
     };
 
-    const showProgress = isLoading || downloadPhase !== 'idle';
-    const isDownloading = downloadPhase !== 'idle' && downloadPhase !== 'done';
+    const isDownloading = downloadPhase === 'density' || downloadPhase === 'complex';
+    const showProgress = isLoading || isDownloading;
 
     if (!isOpen && !showProgress) return null;
 
