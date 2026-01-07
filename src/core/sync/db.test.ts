@@ -31,10 +31,11 @@ describe('Database Initialization', () => {
         it('should have all required collections', async () => {
             const db = await initDB();
             
-            const collections = ['books', 'chapters', 'reading_states', 'images', 'raw_files'];
-            for (const collectionName of collections) {
-                expect(db[collectionName as keyof typeof db]).toBeDefined();
-            }
+            expect(db.books).toBeDefined();
+            expect(db.chapters).toBeDefined();
+            expect(db.reading_states).toBeDefined();
+            expect(db.images).toBeDefined();
+            expect(db.raw_files).toBeDefined();
         });
 
         it('should allow inserting a book document', async () => {
