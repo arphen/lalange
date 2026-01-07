@@ -1,11 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useSettingsStore, type PromptFragment } from '../../core/store/settings';
 import { useAIStore } from '../../core/store/ai';
-import { getEngine, MODEL_INFO, type ModelTier, isModelCached, deleteModel, getModelShardInfo } from '../../core/ai/webllm';
-import { resetDB } from '../../core/sync/db';
+import { getEngine, MODEL_INFO, type ModelTier, isModelCached, deleteModel } from '../../core/ai/webllm';
 import { clsx } from 'clsx';
-
-import { ModelStatus } from './ModelStatus';
 
 interface SettingsPanelProps {
     onClose: () => void;
@@ -16,20 +13,15 @@ type SettingsTab = 'general' | 'ai' | 'styling' | 'pacing' | 'librarian' | 'summ
 export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
     const [activeTab, setActiveTab] = useState<SettingsTab>('general');
     const [cachedModels, setCachedModels] = useState<Record<string, boolean>>({});
-    const [shardInfo, setShardInfo] = useState<Record<string, { completed: number, total: number }>>({});
     const settings = useSettingsStore();
     const aiState = useAIStore();
 
     const checkCache = React.useCallback(async () => {
         const status: Record<string, boolean> = {};
-        const shards: Record<string, { completed: number, total: number }> = {};
-        
         for (const tier of Object.keys(MODEL_INFO) as ModelTier[]) {
             status[tier] = await isModelCached(tier);
-            shards[tier] = await getModelShardInfo(tier);
         }
         setCachedModels(status);
-        setShardInfo(shards);
     }, []);
 
     useEffect(() => {
@@ -50,11 +42,6 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
 
     const handleDownloadModel = async (tier: ModelTier) => {
         try {
-            // Enforce Single Model Policy: Update all tasks to use this model
-            settings.setEditorModel(tier);
-            settings.setLibrarianModelTier(tier);
-            settings.setSummarizerModel(tier);
-            
             await getEngine(tier);
             await checkCache();
         } catch (e) {
@@ -159,27 +146,6 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                                         onChange={(e) => settings.setManualOverrideRules(e.target.value)}
                                     />
                                 </div>
-
-                                {/* Danger Zone */}
-                                <div className="pt-6 border-t border-red-900/30">
-                                    <h4 className="text-red-500 font-bold text-sm tracking-widest mb-4">DANGER ZONE</h4>
-                                    <div className="bg-red-900/10 border border-red-900/30 rounded-lg p-4 flex items-center justify-between">
-                                        <div>
-                                            <div className="text-red-400 font-bold text-sm">Factory Reset</div>
-                                            <div className="text-red-400/60 text-xs mt-1">Wipes all books, reading progress, and settings. Cannot be undone.</div>
-                                        </div>
-                                        <button
-                                            onClick={() => {
-                                                if (confirm("WARNING: This will delete all your books and reading progress. Are you sure?")) {
-                                                    resetDB();
-                                                }
-                                            }}
-                                            className="px-4 py-2 bg-red-900/20 border border-red-500/50 text-red-400 text-xs font-bold rounded hover:bg-red-500 hover:text-white transition-all"
-                                        >
-                                            RESET DATABASE
-                                        </button>
-                                    </div>
-                                </div>
                             </div>
                         </div>
                     )}
@@ -191,8 +157,6 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                                 <h3 className="text-2xl font-bold text-white mb-2">Model Manager</h3>
                                 <p className="text-gray-500 text-sm">Download and manage local AI models (WebLLM).</p>
                             </div>
-
-                            <ModelStatus />
 
                             {/* Model Availability Section */}
                             <div className="bg-black/20 rounded-lg border border-white/10 overflow-hidden">
@@ -208,7 +172,6 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                                     {(Object.keys(MODEL_INFO) as ModelTier[]).map(tier => {
                                         const info = MODEL_INFO[tier];
                                         const isCached = cachedModels[tier];
-                                        const shards = shardInfo[tier];
 
                                         return (
                                             <div key={tier} className={clsx(
@@ -223,11 +186,6 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                                                     </div>
                                                     <div className="text-xs text-gray-400 mt-1">
                                                         Required Disk Space: <span className="text-dune-gold">{info.size}</span>
-                                                        {shards && shards.completed > 0 && !isCached && (
-                                                            <span className="ml-2 text-magma-vent font-mono animate-pulse">
-                                                                [{shards.completed}/{shards.total || '?'} SHARDS FOUND]
-                                                            </span>
-                                                        )}
                                                     </div>
                                                 </div>
                                                 <div className="flex items-center gap-4">
@@ -245,7 +203,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                                                             disabled={aiState.isLoading}
                                                             className="px-4 py-2 text-xs font-bold rounded border border-white/20 text-gray-400 hover:border-dune-gold hover:text-dune-gold transition-all disabled:opacity-50"
                                                         >
-                                                            {shards && shards.completed > 0 ? "RESUME DOWNLOAD" : "DOWNLOAD / CACHE"}
+                                                            DOWNLOAD / CACHE
                                                         </button>
                                                     )}
                                                 </div>
@@ -253,6 +211,35 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                                         );
                                     })}
                                 </div>
+                                {aiState.isLoading && (
+                                    <div className="p-4 bg-black/40 border-t border-white/10">
+                                        <div className="flex justify-between text-xs text-gray-400 mb-2">
+                                            <span className="font-bold text-dune-gold">
+                                                {aiState.loadingModel ? `LOADING ${aiState.loadingModel.toUpperCase()}...` : 'DOWNLOADING / LOADING...'}
+                                            </span>
+                                            <span>{Math.round(aiState.progressValue * 100)}%</span>
+                                        </div>
+                                        <div className="w-full bg-gray-800 h-1 rounded overflow-hidden">
+                                            <div
+                                                className="bg-dune-gold h-full transition-all duration-300"
+                                                style={{ width: `${aiState.progressValue * 100}%` }}
+                                            />
+                                        </div>
+                                        <div className="text-[10px] text-gray-500 mt-2 font-mono truncate">
+                                            {aiState.progress}
+                                        </div>
+                                    </div>
+                                )}
+                                {aiState.activity && (
+                                    <div className="p-4 bg-dune-gold/10 border-t border-dune-gold/20">
+                                        <div className="flex items-center gap-2 text-xs text-dune-gold">
+                                            <span className="animate-pulse">●</span>
+                                            <span className="font-bold">ACTIVE:</span>
+                                            <span>{aiState.activity}</span>
+                                            {aiState.activeModel && <span className="opacity-50">({aiState.activeModel})</span>}
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         </div>
                     )}
@@ -298,55 +285,8 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                                 </div>
                             </div>
 
-                            <div className="bg-black/20 p-8 rounded-lg border border-white/10">
-                                <div className="flex justify-between text-sm text-gray-400 mb-4">
-                                    <span>SUMMARY VELOCITY</span>
-                                    <span className="text-dune-gold font-bold">{settings.summaryWpm} WPM</span>
-                                </div>
-                                <input
-                                    type="range" aria-label="Summary WPM" min="50"
-                                    max="500"
-                                    step="10"
-                                    value={settings.summaryWpm}
-                                    onChange={(e) => settings.setSummaryWpm(parseInt(e.target.value))}
-                                    className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-dune-gold"
-                                />
-                                <div className="flex justify-between text-[10px] text-gray-600 mt-2 uppercase tracking-widest">
-                                    <span>Contemplative</span>
-                                    <span>Brisk</span>
-                                </div>
-                            </div>
-
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                                <div>
-                                    <label className="block text-sm text-dune-gold mb-4 uppercase tracking-widest">Analysis Granularity</label>
-                                    <div className="flex flex-col gap-3">
-                                        {[
-                                            { id: 'paragraph', label: 'Paragraph Level', desc: 'Fastest, smoothest flow.' },
-                                            { id: 'sentence', label: 'Sentence Level', desc: 'Speed shifts with logic.' },
-                                            { id: 'word', label: 'Word Level', desc: 'Highest jouissance/intensity.' }
-                                        ].map((opt) => (
-                                            <button
-                                                key={opt.id}
-                                                onClick={() => settings.setPacingGranularity(opt.id as 'paragraph' | 'sentence' | 'word')}
-                                                className={clsx(
-                                                    "flex items-center p-4 rounded-lg border text-left transition-all",
-                                                    settings.pacingGranularity === opt.id
-                                                        ? "bg-white/10 border-dune-gold"
-                                                        : "bg-transparent border-white/10 hover:bg-white/5"
-                                                )}
-                                            >
-                                                <div className={clsx("w-5 h-5 rounded-full border mr-4 flex items-center justify-center flex-shrink-0", settings.pacingGranularity === opt.id ? "border-dune-gold" : "border-gray-500")}>
-                                                    {settings.pacingGranularity === opt.id && <div className="w-2.5 h-2.5 rounded-full bg-dune-gold" />}
-                                                </div>
-                                                <div>
-                                                    <div className={clsx("text-sm font-bold", settings.pacingGranularity === opt.id ? "text-white" : "text-gray-400")}>{opt.label}</div>
-                                                    <div className="text-xs text-gray-600 mt-1">{opt.desc}</div>
-                                                </div>
-                                            </button>
-                                        ))}
-                                    </div>
-                                </div>
+                                {/* Analysis Granularity removed - using Pacing Sensitivity instead */}
                                 <div>
                                     <label className="block text-sm text-dune-gold mb-4 uppercase tracking-widest">Sensitivity Dial</label>
                                     <div className="bg-black/20 p-6 rounded-lg border border-white/10 h-full flex flex-col justify-center">
@@ -474,6 +414,7 @@ const AgentConfig: React.FC<AgentConfigProps> = ({
     title,
     description,
     model,
+    setModel,
     basePrompt,
     setBasePrompt,
     fragments,
@@ -487,12 +428,25 @@ const AgentConfig: React.FC<AgentConfigProps> = ({
             </div>
 
             <div className="bg-white/5 rounded-lg p-8 border border-white/10 space-y-8">
-                {/* Model Info (Read Only) */}
+                {/* Model Selection */}
                 <div>
-                    <label className="block text-xs text-dune-gold mb-4 uppercase tracking-widest font-bold">Active Model</label>
-                    <div className="p-4 rounded border bg-dune-gold/10 border-dune-gold text-white">
-                        <div className="font-bold uppercase text-sm">{MODEL_INFO[model].name}</div>
-                        <div className="text-[10px] opacity-70 mt-1">Managed in Model Manager</div>
+                    <label className="block text-xs text-dune-gold mb-4 uppercase tracking-widest font-bold">AI Model</label>
+                    <div className="grid grid-cols-3 gap-4">
+                        {(Object.keys(MODEL_INFO) as ModelTier[]).map(tier => (
+                            <button
+                                key={tier}
+                                onClick={() => setModel(tier)}
+                                className={clsx(
+                                    "p-4 rounded border text-left transition-all",
+                                    model === tier
+                                        ? "bg-dune-gold text-black border-dune-gold"
+                                        : "bg-black/20 border-white/10 text-gray-400 hover:border-white/30 hover:text-white"
+                                )}
+                            >
+                                <div className="font-bold uppercase text-sm">{MODEL_INFO[tier].name}</div>
+                                <div className="text-[10px] opacity-70 mt-1">{MODEL_INFO[tier].size}</div>
+                            </button>
+                        ))}
                     </div>
                 </div>
 

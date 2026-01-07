@@ -1,7 +1,7 @@
 import { useSettingsStore } from '../store/settings';
 import { useAIStore } from '../store/ai';
 import { initDB } from '../sync/db';
-import { analyzeDensityRange, analysisQueue } from './analysis';
+import { analyzeDensityRange } from './analysis';
 import { generateUnifiedCompletion } from '../ai/service';
 
 export type TaskType = 'DENSITY' | 'SUMMARY';
@@ -25,10 +25,6 @@ export class IngestionScheduler {
     private currentBookId: string | null = null;
     private currentChapterId: string | null = null;
     private currentWordIndex: number = 0;
-    
-    // Queue for LLM processing (concurrency: 1 to enforce Single Model Policy)
-    // We use the shared analysisQueue from analysis.ts to coordinate with other analysis tasks
-    private llmQueue = analysisQueue;
 
     constructor() {
         // potentially load saved state? For now, in-memory.
@@ -81,8 +77,8 @@ export class IngestionScheduler {
 
         // We wake tasks using chunk indices rather than word-distance so that
         // books with many small chunks don't accidentally wake a large number at once.
-        const DENSITY_LOOKAHEAD_CHUNKS = 5;
-        const SUMMARY_LOOKAHEAD_CHUNKS = 1;
+        const DENSITY_LOOKAHEAD_CHUNKS = 3;
+        const SUMMARY_LOOKAHEAD_CHUNKS = 3;
         const REWIND_CHUNKS = 1;
 
         const chapterTasks = this.tasks.filter(
@@ -209,11 +205,13 @@ export class IngestionScheduler {
         nextTask.status = 'processing';
 
         try {
-            await this.llmQueue.add(async () => {
-                console.log(`[Scheduler] Executing task: ${nextTask.id}`);
-                await this.executeTask(nextTask);
-                console.log(`[Scheduler] [Success] Task Completed: [${nextTask.type}] Ch:${nextTask.chapterId.split('_').pop()} Pt:${nextTask.subchapterIndex}`);
-            });
+            // Note: We don't wrap in llmQueue.add() here because:
+            // - analyzeDensityRange() already uses analysisQueue internally for LLM calls
+            // - generateUnifiedCompletion() for SUMMARY tasks is lightweight wrapper
+            // Wrapping here would cause deadlock since analysisQueue has concurrency 1
+            console.log(`[Scheduler] Executing task: ${nextTask.id}`);
+            await this.executeTask(nextTask);
+            console.log(`[Scheduler] [Success] Task Completed: [${nextTask.type}] Ch:${nextTask.chapterId.split('_').pop()} Pt:${nextTask.subchapterIndex}`);
             nextTask.status = 'completed';
             // Remove completed task
             this.tasks = this.tasks.filter(t => t.id !== nextTask.id);
@@ -249,24 +247,35 @@ export class IngestionScheduler {
             try {
                 // Split text into words for density analysis
                 const words = task.text.trim().split(/\s+/);
-                const densities = await analyzeDensityRange(words);
+                const { densities, analysisData } = await analyzeDensityRange(words);
 
                 // Save to DB
                 const chapter = await db.chapters.findOne(task.chapterId).exec();
                 if (chapter) {
                     await chapter.incrementalModify(doc => {
                         const currentDensities = [...(doc.densities || [])];
+                        // Safety: ensure analysisData array exists
+                        const currentAnalysisData = [...(doc.analysisData || [])];
+                        
                         // Splice in the new densities
                         // We need to be careful about indices. 
                         // The task.startWordIndex should align with the chapter content.
                         for (let i = 0; i < densities.length; i++) {
                             if (task.startWordIndex + i < currentDensities.length) {
                                 currentDensities[task.startWordIndex + i] = densities[i];
+                                // We also need to grow the analysisData array if needed because it wasn't pre-filled with 0s like densities
+                                // Actually, chapter content logic in pipeline.ts pre-fills densities with 0s. 
+                                // It does NOT pre-fill analysisData. So we might be pushing or assigning.
+                                // However, incrementalPatch in pipeline.ts only initialized densities.
+                                // So assume analysisData might be shorter. 
+                                // Wait, simple assignment at index works in JS arrays (it fills holes), but we want to be clean.
+                                currentAnalysisData[task.startWordIndex + i] = analysisData[i];
                             }
                         }
                         return {
                             ...doc,
-                            densities: currentDensities
+                            densities: currentDensities,
+                            analysisData: currentAnalysisData
                         };
                     });
                 }

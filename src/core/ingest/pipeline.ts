@@ -190,6 +190,7 @@ export const processChaptersInBackground = async (bookId: string) => {
 
         const opfDir = opfFile.includes('/') ? opfFile.substring(0, opfFile.lastIndexOf('/') + 1) : '';
 
+        let firstContentChapterFound = false;
         let chapterIndex = 0;
         for (const idref of spineIds) {
             const href = manifest[idref];
@@ -247,6 +248,12 @@ export const processChaptersInBackground = async (bookId: string) => {
                         const rawChunks = chunkText(rawText, settings.summaryChunkSize || 2500);
                         console.log(`[Pipeline] Chapter ${chapterIndex + 1}: Split into ${rawChunks.length} chunks for AI processing.`);
                         
+                        const hasContent = rawChunks.some(c => c.trim().length > 0);
+                        const isFirstContentChapter = hasContent && !firstContentChapterFound;
+                        if (isFirstContentChapter) {
+                            firstContentChapterFound = true;
+                        }
+
                         let allWords: string[] = [];
                         let allDensities: number[] = [];
                         const subchapters: { title: string; summary: string; startWordIndex: number; endWordIndex: number }[] = [];
@@ -279,11 +286,11 @@ export const processChaptersInBackground = async (bookId: string) => {
                             // Only schedule an initial window for the FIRST chapter.
                             // Density is lightweight (tiny model) so we can do more up-front than summaries.
                             // All other chapters start dormant and wake up when the user navigates there.
-                            const isFirstChapter = chapterIndex === 0;
-                            const INITIAL_DENSITY_CHUNKS = 5;
-                            const INITIAL_SUMMARY_CHUNKS = 1;
-                            const densityInitialStatus = (isFirstChapter && i < INITIAL_DENSITY_CHUNKS) ? 'pending' : 'dormant';
-                            const summaryInitialStatus = (isFirstChapter && i < INITIAL_SUMMARY_CHUNKS) ? 'pending' : 'dormant';
+                            const isActiveChapter = isFirstContentChapter;
+                            const INITIAL_DENSITY_CHUNKS = 3;
+                            const INITIAL_SUMMARY_CHUNKS = 3;
+                            const densityInitialStatus = (isActiveChapter && i < INITIAL_DENSITY_CHUNKS) ? 'pending' : 'dormant';
+                            const summaryInitialStatus = (isActiveChapter && i < INITIAL_SUMMARY_CHUNKS) ? 'pending' : 'dormant';
 
                             // 1. Density Estimation
                             scheduler.addTask({
@@ -309,10 +316,10 @@ export const processChaptersInBackground = async (bookId: string) => {
                                 text: chunk
                             }, summaryInitialStatus);
                         }
-                        const INITIAL_DENSITY_CHUNKS = 5;
-                        const INITIAL_SUMMARY_CHUNKS = 1;
-                        const activeDensity = chapterIndex === 0 ? Math.min(rawChunks.length, INITIAL_DENSITY_CHUNKS) : 0;
-                        const activeSummary = chapterIndex === 0 ? Math.min(rawChunks.length, INITIAL_SUMMARY_CHUNKS) : 0;
+                        const INITIAL_DENSITY_CHUNKS = 3;
+                        const INITIAL_SUMMARY_CHUNKS = 3;
+                        const activeDensity = isFirstContentChapter ? Math.min(rawChunks.length, INITIAL_DENSITY_CHUNKS) : 0;
+                        const activeSummary = isFirstContentChapter ? Math.min(rawChunks.length, INITIAL_SUMMARY_CHUNKS) : 0;
                         const activeCount = activeDensity + activeSummary;
                         console.log(`[Pipeline] Scheduled ${rawChunks.length * 2} tasks for chapter ${chapterId} (${activeCount} active, rest dormant)`);
 
@@ -407,12 +414,16 @@ export const estimateBookDensity = async (bookId: string) => {
 
                 const chunkWords = allWords.slice(start, end);
 
-                const densities = await analyzeDensityRange(chunkWords);
+                const { densities } = await analyzeDensityRange(chunkWords);
 
                 // Update densities
                 for (let k = 0; k < densities.length; k++) {
                     if (start + k < allDensities.length) {
                         allDensities[start + k] = densities[k];
+                        // Note: estimateBookDensity doesn't update analysisData currently in this loop logic
+                        // but this function is deprecated in favor of scheduler. 
+                        // If we wanted to, we would need to read/write analysisData here too.
+                        // For now leaving as is since main path uses scheduler.
                     }
                 }
 

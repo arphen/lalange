@@ -67,8 +67,10 @@ interface SettingsState {
     setStylingIntensity: (intensity: number) => void;
 
     // Pacing
-    pacingGranularity: 'paragraph' | 'sentence' | 'word';
-    setPacingGranularity: (granularity: 'paragraph' | 'sentence' | 'word') => void;
+    pacingContextTokens: number;
+    setPacingContextTokens: (tokens: number) => void;
+    pacingOverlapTokens: number;
+    setPacingOverlapTokens: (tokens: number) => void;
     pacingSensitivity: number;
     setPacingSensitivity: (sensitivity: number) => void;
 
@@ -166,8 +168,10 @@ export const useSettingsStore = create<SettingsState>()(
             stylingIntensity: 0,
             setStylingIntensity: (stylingIntensity) => set({ stylingIntensity }),
 
-            pacingGranularity: 'paragraph',
-            setPacingGranularity: (pacingGranularity) => set({ pacingGranularity }),
+            pacingContextTokens: 128,
+            setPacingContextTokens: (pacingContextTokens) => set({ pacingContextTokens }),
+            pacingOverlapTokens: 16,
+            setPacingOverlapTokens: (pacingOverlapTokens) => set({ pacingOverlapTokens }),
             pacingSensitivity: 50,
             setPacingSensitivity: (pacingSensitivity) => set({ pacingSensitivity }),
 

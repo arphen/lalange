@@ -1,32 +1,25 @@
 
-export const getStructuralDelay = (word: string, baseInterval: number): number => {
+export const getVisualProcessingDelay = (word: string): number => {
     let delay = 0;
     const lastChar = word.slice(-1);
     const lastTwoChars = word.slice(-2);
 
-    // Strong punctuation (Sentence end)
+    // Punctuation Penalties (Wrap-up time)
+    // Values derived from "RSVP App Design_ Patents & Cognition.md"
     if (['.', '!', '?'].includes(lastChar) || ['."', '!"', '?"'].includes(lastTwoChars)) {
-        delay += baseInterval * 1.5; // Add 1.5x extra delay (total 2.5x)
+        delay += 300; // Period/Sentence End: +300ms
     }
-    // Medium punctuation (Clause end)
     else if ([';', ':'].includes(lastChar)) {
-        delay += baseInterval * 1.0; // Add 1x extra delay (total 2x)
+        delay += 200; // Clause End: +200ms
     }
-    // Weak punctuation (Pause)
     else if ([',', '—', '-'].includes(lastChar)) {
-        delay += baseInterval * 0.5; // Add 0.5x extra delay (total 1.5x)
+        delay += 150; // Pause: +150ms
     }
 
-    // Long Word Rule (> 12 chars)
-    if (word.length > 12) {
-        delay += baseInterval * 0.5;
-    }
-
-    // Hyphenated Word Rule (internal hyphen)
-    // We check if it has a hyphen that is NOT the last character
-    if (word.includes('-') && !word.endsWith('-')) {
-        delay += baseInterval * 0.5;
-    }
+    // Visual Gain (Length Penalty)
+    // Formula: 25ms * sqrt(length)
+    const lengthPenalty = 25 * Math.sqrt(word.length);
+    delay += lengthPenalty;
 
     return delay;
 };

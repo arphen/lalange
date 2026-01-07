@@ -17,7 +17,7 @@ describe('analyzeDensityRange (Percentile-Based)', () => {
     it('should return default densities if LLM fails', async () => {
         vi.mocked(getPromptLogprobs).mockRejectedValue(new Error('LLM Error'));
         const words = ['hello', 'world'];
-        const densities = await analyzeDensityRange(words);
+        const { densities } = await analyzeDensityRange(words);
         // Default factor 1.0
         expect(densities).toEqual([1.0, 1.0]);
     });
@@ -35,28 +35,33 @@ describe('analyzeDensityRange (Percentile-Based)', () => {
         vi.mocked(getPromptLogprobs).mockResolvedValue(mockLogprobs);
 
         const words = ['the', 'cat', 'ephemeral'];
-        const densities = await analyzeDensityRange(words);
+        const { densities, analysisData } = await analyzeDensityRange(words);
 
         expect(densities.length).toBe(3);
         // "the" should be faster than "ephemeral"
         expect(densities[0]).toBeLessThan(densities[2]);
         // All should be different (percentile-based guarantees variation)
         expect(densities[0]).not.toBe(densities[1]);
+        
+        // Verify Analysis Data
+        expect(analysisData[2].tokens[0]).toBe(' ephemeral');
     });
 
-    it('should handle structural multipliers for long words', async () => {
+    it('should NOT apply structural multipliers in analysis phase', async () => {
         // Two words with same surprisal but different lengths
+        // NOTE: Structural/Visual penalties are now applied in the Reader/Timing engine, not here.
+        // This function should purely reflect information density (surprisal).
         const mockLogprobs = [
             { token: 'cat', logprob: -1.0 },
-            { token: ' extraordinarily', logprob: -1.0 } // 15 chars -> 1.3x multiplier
+            { token: ' extraordinarily', logprob: -1.0 }
         ];
         vi.mocked(getPromptLogprobs).mockResolvedValue(mockLogprobs);
 
         const words = ['cat', 'extraordinarily'];
-        const densities = await analyzeDensityRange(words);
+        const { densities } = await analyzeDensityRange(words);
 
-        // Long word should have higher density due to structural multiplier
-        expect(densities[1]).toBeGreaterThan(densities[0]);
+        // Should be equal because surprisal is equal
+        expect(densities[1]).toBeCloseTo(densities[0]);
     });
     
     it('should align tokens to words correctly', async () => {
@@ -71,11 +76,13 @@ describe('analyzeDensityRange (Percentile-Based)', () => {
         vi.mocked(getPromptLogprobs).mockResolvedValue(mockLogprobs);
         
         const words = ['simple', 'text'];
-        const densities = await analyzeDensityRange(words);
+        const { densities, analysisData } = await analyzeDensityRange(words);
         
         expect(densities.length).toBe(2);
         // "simple" (surprisal 2.0) should be slower than "text" (surprisal 0.1)
         expect(densities[0]).toBeGreaterThan(densities[1]);
+
+        expect(analysisData[0].tokens).toEqual(['sim', 'ple']);
     });
 });
 

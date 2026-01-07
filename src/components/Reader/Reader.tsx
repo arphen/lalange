@@ -1,11 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { type BookDocType, type ChapterDocType, type ReadingStateDocType, initDB } from '../../core/sync/db';
 import { getBionicSplit, getBionicGradientHtml } from '../../core/rsvp/bionic';
-import { getStructuralDelay } from '../../core/rsvp/timing';
+import { getVisualProcessingDelay } from '../../core/rsvp/timing';
 import { Sidebar } from './Sidebar';
 import { useSettingsStore } from '../../core/store/settings';
 
 import { scheduler } from '../../core/ingest/scheduler';
+import { processChaptersInBackground } from '../../core/ingest/pipeline';
 
 interface ReaderProps {
     book: BookDocType;
@@ -332,14 +333,25 @@ export const Reader: React.FC<ReaderProps> = ({ book, onOpenSettings }) => {
             const currentWord = activeWords[indexRef.current] || '';
             const density = activeDensities[indexRef.current];
             
-            // Use density if available, otherwise default to 1.0
+            // Use density if available, otherwise default to 1.0 (Normal)
             const currentDensity = (density !== undefined && density > 0) ? density : 1.0;
             
-            // Always calculate structural delay (hard rules: punctuation + word shape)
-            // This is now safe because pipeline.ts no longer includes punctuation multipliers in the density score.
-            const structuralDelay = getStructuralDelay(currentWord, baseInterval);
+            // === COGNITIVE STACK IMPLEMENTATION ===
+            // T_display = T_floor + (K_info * Surprisal) + (K_vis * sqrt(L)) + P_punc
+            
+            // 1. T_floor (Physiological minimum)
+            const T_floor = 75;
 
-            const targetInterval = (baseInterval * currentDensity) + structuralDelay;
+            // 2. Information component (Surprisal)
+            // baseInterval represents the user's preferred "beat". 
+            // currentDensity is the multiplier derived from LLM surprisal (around 1.0).
+            const infoTime = baseInterval * currentDensity;
+
+            // 3. Visual & Punctuation component
+            const visualDelay = getVisualProcessingDelay(currentWord);
+
+            // Total Duration
+            const targetInterval = T_floor + infoTime + visualDelay;
 
             if (accumulatorRef.current >= targetInterval) {
                 if (indexRef.current < activeWords.length - 1) {
@@ -516,6 +528,12 @@ export const Reader: React.FC<ReaderProps> = ({ book, onOpenSettings }) => {
             return () => clearInterval(interval);
         }
     }, [chapters]);
+
+    // Trigger background processing when book is opened
+    // This ensures density/summary tasks are processed even for previously ingested books
+    useEffect(() => {
+        processChaptersInBackground(book.id).catch(console.error);
+    }, [book.id]);
 
     // Effect to render word when chapter or index changes, ensuring ref is available
     useEffect(() => {
@@ -755,8 +773,18 @@ export const Reader: React.FC<ReaderProps> = ({ book, onOpenSettings }) => {
                         <div className="flex-1 overflow-y-auto p-6 font-mono text-lg leading-relaxed selection:bg-magma-vent selection:text-white">
                             {inspectingChapter.content.map((word, i) => {
                                 const density = inspectingChapter.densities?.[i] || 1.0;
+                                const analysis = inspectingChapter.analysisData?.[i];
+                                
+                                let title = `Density: ${density}`;
+                                if (analysis && analysis.tokens && analysis.tokens.length > 0) {
+                                    const tokensStr = analysis.tokens.map(t => `"${t}"`).join(', ');
+                                    const surpStr = analysis.surprisals.map(s => s?.toFixed(2)).join(', ');
+                                    const totalSurp = analysis.surprisals.reduce((a, b) => a + (b || 0), 0).toFixed(2);
+                                    title = `Word: "${word}"\nTokens: [${tokensStr}]\nSurprisals: [${surpStr}]\nTotal Surprisal: ${totalSurp}\nDensity Factor: ${density}`;
+                                }
+
                                 return (
-                                    <span key={i} className={`${getDensityColor(density)} inline-block mr-1.5 mb-1 transition-colors hover:text-white cursor-crosshair`} title={`Density: ${density}`}>
+                                    <span key={i} className={`${getDensityColor(density)} inline-block mr-1.5 mb-1 transition-colors hover:text-white cursor-crosshair`} title={title}>
                                         {word}
                                     </span>
                                 );

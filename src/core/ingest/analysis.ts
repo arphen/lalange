@@ -6,66 +6,89 @@ import { useAIStore } from '../store/ai';
 // Queue for LLM processing (concurrency: 1)
 export const analysisQueue = new PQueue({ concurrency: 1 });
 
-export const analyzeDensityRange = async (words: string[]): Promise<number[]> => {
-    const text = words.join(' ');
-    const { librarianModelTier, pacingSensitivity } = useSettingsStore.getState();
+export interface AnalysisResult {
+    densities: number[];
+    analysisData: { tokens: string[], surprisals: number[] }[];
+}
 
-    console.log(`[Analysis] analyzeDensityRange called for ${words.length} words. Tier: ${librarianModelTier}`);
+export const analyzeDensityRange = async (words: string[]): Promise<AnalysisResult> => {
+    const { librarianModelTier, pacingSensitivity } = useSettingsStore.getState();
+    const WINDOW_SIZE = 250;
+
+    console.log(`[Analysis] analyzeDensityRange called for ${words.length} words. Tier: ${librarianModelTier}. Window: ${WINDOW_SIZE}`);
 
     try {
-        const logprobs = await analysisQueue.add(async () => {
-            useAIStore.getState().setActivity('Scanning Density (Forward Pass)', librarianModelTier);
-            console.log(`[Analysis] Analyzing density for ${words.length} words using Forward Pass...`);
-            try {
-                return await getPromptLogprobs(text, librarianModelTier);
-            } finally {
-                useAIStore.getState().setActivity(null);
-            }
-        });
-
-        if (!logprobs || logprobs.length === 0) {
-            console.warn('[Analysis] No logprobs returned from Forward Pass. Using default density.');
-            return new Array(words.length).fill(1.0);
-        }
-
-        // === PHASE 1: Extract raw surprisal for each word ===
         const rawSurprisals: number[] = [];
-        let tokenIdx = 0;
+        const analysisData: { tokens: string[], surprisals: number[] }[] = [];
 
-        for (const word of words) {
-            let wordLogprob = 0;
-            let reconstructedWord = "";
+        // Process in chunks of WINDOW_SIZE
+        for (let i = 0; i < words.length; i += WINDOW_SIZE) {
+            const chunkWords = words.slice(i, i + WINDOW_SIZE);
+            const chunkText = chunkWords.join(' ');
 
-            while (tokenIdx < logprobs.length) {
-                const item = logprobs[tokenIdx];
-                let tokenText = "";
-                let logprob = 0;
-
-                if (typeof item === 'object' && item !== null) {
-                    if (item.token) tokenText = item.token;
-                    else if (item.content) tokenText = item.content || "";
-                    if (item.logprob !== undefined) logprob = item.logprob;
+            const logprobs = await analysisQueue.add(async () => {
+                useAIStore.getState().setActivity(`Scanning Density (Chunk ${Math.floor(i / WINDOW_SIZE) + 1})`, librarianModelTier);
+                console.log(`[Analysis] Analyzing density for chunk ${i}-${i + chunkWords.length} (${chunkWords.length} words)...`);
+                try {
+                    return await getPromptLogprobs(chunkText, librarianModelTier);
+                } finally {
+                    useAIStore.getState().setActivity(null);
                 }
+            });
 
-                reconstructedWord += tokenText;
-                wordLogprob += logprob;
-                tokenIdx++;
-
-                const normReconstructed = reconstructedWord.replace(/\s/g, '');
-                const normWord = word.replace(/\s/g, '');
-
-                if (normReconstructed.length >= normWord.length) {
-                    break;
-                }
+            if (!logprobs || logprobs.length === 0) {
+                console.warn('[Analysis] No logprobs returned for chunk. Using default density.');
+                rawSurprisals.push(...new Array(chunkWords.length).fill(0)); 
+                analysisData.push(...new Array(chunkWords.length).fill({ tokens: [], surprisals: [] }));
+                continue;
             }
 
-            // Surprisal = -logprob (higher = more unexpected)
-            rawSurprisals.push(-wordLogprob);
-        }
+            // === PHASE 1: Extract raw surprisal for each word in this chunk ===
+            let tokenIdx = 0;
 
-        // Fill if mismatch
-        while (rawSurprisals.length < words.length) {
-            rawSurprisals.push(0);
+            for (const word of chunkWords) {
+                let wordLogprob = 0;
+                const wordTokens: string[] = [];
+                const wordSurprisals: number[] = [];
+                let reconstructedWord = "";
+
+                while (tokenIdx < logprobs.length) {
+                    const item = logprobs[tokenIdx];
+                    let tokenText = "";
+                    let logprob = 0;
+
+                    if (typeof item === 'object' && item !== null) {
+                        if (item.token) tokenText = item.token;
+                        else if (item.content) tokenText = item.content || "";
+                        if (item.logprob !== undefined) logprob = item.logprob;
+                    }
+
+                    reconstructedWord += tokenText;
+                    wordLogprob += logprob;
+                    
+                    wordTokens.push(tokenText);
+                    wordSurprisals.push(-logprob);
+
+                    tokenIdx++;
+
+                    const normReconstructed = reconstructedWord.replace(/\s/g, '');
+                    const normWord = word.replace(/\s/g, '');
+
+                    if (normReconstructed.length >= normWord.length) {
+                        break;
+                    }
+                }
+
+                // Surprisal = -logprob (higher = more unexpected)
+                rawSurprisals.push(-wordLogprob);
+                analysisData.push({ tokens: wordTokens, surprisals: wordSurprisals });
+            }
+            
+            // Fill if mismatch in this chunk
+            while (rawSurprisals.length < i + chunkWords.length) {
+                rawSurprisals.push(0);
+                analysisData.push({ tokens: [], surprisals: [] });
+            }
         }
 
         // === PHASE 2: Calculate percentiles for relative scoring ===
@@ -106,12 +129,9 @@ export const analyzeDensityRange = async (words: string[]): Promise<number[]> =>
             const deviation = densityFactor - 1.0;
             const adjustedFactor = 1.0 + (deviation * sensitivityMult);
 
-            // Apply structural multipliers (word length)
-            let structuralMultiplier = 1.0;
-            if (word.length > 12) structuralMultiplier = 1.3;
-            else if (word.length > 8) structuralMultiplier = 1.1;
-
-            const finalScore = structuralMultiplier * adjustedFactor;
+            // Note: Structural/Visual penalties (length) are now handled in the Reader/Timing engine
+            // to separate "Information Density" (LLM) from "Visual Density" (Oculomotor).
+            const finalScore = adjustedFactor;
             const clamped = Math.max(0.5, Math.min(5.0, finalScore));
 
             // Debug log for tuning (sample 1%)
@@ -122,11 +142,14 @@ export const analyzeDensityRange = async (words: string[]): Promise<number[]> =>
             densities.push(clamped);
         }
 
-        return densities;
+        return { densities, analysisData };
 
     } catch (e) {
         console.warn('LLM failed for density analysis (Forward Pass)', e);
-        return new Array(words.length).fill(1.0);
+        return { 
+            densities: new Array(words.length).fill(1.0), 
+            analysisData: new Array(words.length).fill({ tokens: [], surprisals: [] })
+        };
     }
 };
 

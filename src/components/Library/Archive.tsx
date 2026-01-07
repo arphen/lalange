@@ -106,9 +106,6 @@ export const Archive: React.FC<ArchiveProps> = ({ onOpenBook }) => {
         e.stopPropagation();
         if (!confirm('Are you sure you want to delete this book?')) return;
 
-        // Ensure processing is stopped before deletion
-        stopProcessing(bookId);
-
         const db = await initDB();
         await db.books.findOne(bookId).remove();
 

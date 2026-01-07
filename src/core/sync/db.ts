@@ -37,6 +37,10 @@ export type ChapterDocType = {
     lastChunkCompletedAt?: number;
     content: string[];
     densities?: number[];
+    analysisData?: {
+        tokens: string[];
+        surprisals: number[];
+    }[];
     subchapters?: {
         title: string;
         summary: string;
@@ -100,7 +104,7 @@ export const initDB = async (): Promise<MyDatabase> => {
         }
 
         const db = await createRxDatabase<MyDatabaseCollections>({
-            name: 'lalange_db_v11', // Bumped version/name to force fresh DB
+            name: 'lalange_db_v12', // Bumped version/name to force fresh DB
             storage,
             ignoreDuplicate: true
         });
