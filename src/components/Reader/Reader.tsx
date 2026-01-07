@@ -61,7 +61,6 @@ export const Reader: React.FC<ReaderProps> = ({ book, onOpenSettings }) => {
     const indexRef = useRef(0);
     const wpmRef = useRef(wpm);
     const isPlayingRef = useRef(isPlaying);
-    const wasPlayingRef = useRef(false);
     const wordsRef = useRef<string[]>([]);
     const densitiesRef = useRef<number[]>([]);
     const chaptersRef = useRef(chapters);
@@ -294,22 +293,6 @@ export const Reader: React.FC<ReaderProps> = ({ book, onOpenSettings }) => {
         }
     };
 
-    const handleMouseEnter = () => {
-        if (isPlayingRef.current) {
-            wasPlayingRef.current = true;
-            setIsPlaying(false);
-        } else {
-            wasPlayingRef.current = false;
-        }
-    };
-
-    const handleMouseLeave = () => {
-        if (wasPlayingRef.current) {
-            setIsPlaying(true);
-            wasPlayingRef.current = false;
-        }
-    };
-
     const loop = React.useCallback(function loopInternal(time: number) {
         if (!isPlayingRef.current) return;
 
@@ -457,6 +440,19 @@ export const Reader: React.FC<ReaderProps> = ({ book, onOpenSettings }) => {
             if (requestRef.current) cancelAnimationFrame(requestRef.current);
         };
     }, [isPlaying, saveProgress, loop]);
+
+    // Spacebar to toggle play/pause
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.code === 'Space') {
+                e.preventDefault(); // Prevent scrolling
+                setIsPlaying(prev => !prev);
+            }
+        };
+
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, []);
 
     // Auto-save progress every 5 seconds while playing
     useEffect(() => {
@@ -636,10 +632,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onOpenSettings }) => {
                 className={`flex-1 h-full relative flex flex-col min-w-0 transition-all duration-300 ${showSidebar ? 'ml-80' : 'ml-0'}`}
                 style={{ marginLeft: showSidebar ? '20rem' : '0' }}
             >
-                <div className="w-full h-full flex flex-col relative group"
-                    onMouseEnter={handleMouseEnter}
-                    onMouseLeave={handleMouseLeave}
-                >
+                <div className="w-full h-full flex flex-col relative group">
 
                     {/* Top Zone: Previous Context */}
                     <div className="flex-1 w-full overflow-hidden relative mask-gradient-top flex justify-center">
