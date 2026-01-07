@@ -116,7 +116,7 @@ export const analyzeDensityRange = async (words: string[]): Promise<AnalysisResu
 
             // Percentile-based density factor
             // This ensures variation regardless of model's baseline perplexity
-            let densityFactor = 1.0;
+            let densityFactor: number;
             if (surprisal <= p10) densityFactor = 0.6;        // Bottom 10% → Fast
             else if (surprisal <= p30) densityFactor = 0.8;   // 10-30% → Brisk
             else if (surprisal <= p50) densityFactor = 1.0;   // 30-50% → Normal
