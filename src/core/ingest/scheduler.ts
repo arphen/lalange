@@ -241,8 +241,8 @@ export class IngestionScheduler {
         // console.log(`[Scheduler] Executing ${task.type} for ${task.chapterId} sub ${task.subchapterIndex}`);
 
         if (task.type === 'DENSITY') {
-            const { librarianModelTier } = settings;
-            aiState.setActivity(`Scanning Density (Chunk ${task.subchapterIndex + 1})`, librarianModelTier);
+            const { pacingModelTier } = settings;
+            aiState.setActivity(`Scanning Density (Chunk ${task.subchapterIndex + 1})`, pacingModelTier);
             
             try {
                 // Split text into words for density analysis

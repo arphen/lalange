@@ -70,10 +70,10 @@ export const Archive: React.FC<ArchiveProps> = ({ onOpenBook }) => {
         setLoading(true);
         setStatus('Fetching demo book...');
         try {
-            const res = await fetch('/test_book.epub');
+            const res = await fetch('/pg1952-images.epub');
             if (!res.ok) throw new Error('Failed to fetch demo book');
             const blob = await res.blob();
-            const file = new File([blob], 'test_book.epub', { type: 'application/epub+zip' });
+            const file = new File([blob], 'pg1952-images.epub', { type: 'application/epub+zip' });
             await ingestBook(file);
         } catch (e: unknown) {
             console.error(e);

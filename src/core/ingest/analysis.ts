@@ -12,10 +12,10 @@ export interface AnalysisResult {
 }
 
 export const analyzeDensityRange = async (words: string[]): Promise<AnalysisResult> => {
-    const { librarianModelTier, pacingSensitivity } = useSettingsStore.getState();
+    const { pacingModelTier, pacingSensitivity } = useSettingsStore.getState();
     const WINDOW_SIZE = 250;
 
-    console.log(`[Analysis] analyzeDensityRange called for ${words.length} words. Tier: ${librarianModelTier}. Window: ${WINDOW_SIZE}`);
+    console.log(`[Analysis] analyzeDensityRange called for ${words.length} words. Tier: ${pacingModelTier}. Window: ${WINDOW_SIZE}`);
 
     try {
         const rawSurprisals: number[] = [];
@@ -27,10 +27,10 @@ export const analyzeDensityRange = async (words: string[]): Promise<AnalysisResu
             const chunkText = chunkWords.join(' ');
 
             const logprobs = await analysisQueue.add(async () => {
-                useAIStore.getState().setActivity(`Scanning Density (Chunk ${Math.floor(i / WINDOW_SIZE) + 1})`, librarianModelTier);
+                useAIStore.getState().setActivity(`Scanning Density (Chunk ${Math.floor(i / WINDOW_SIZE) + 1})`, pacingModelTier);
                 console.log(`[Analysis] Analyzing density for chunk ${i}-${i + chunkWords.length} (${chunkWords.length} words)...`);
                 try {
-                    return await getPromptLogprobs(chunkText, librarianModelTier);
+                    return await getPromptLogprobs(chunkText, pacingModelTier);
                 } finally {
                     useAIStore.getState().setActivity(null);
                 }

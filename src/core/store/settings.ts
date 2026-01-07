@@ -67,6 +67,8 @@ interface SettingsState {
     setStylingIntensity: (intensity: number) => void;
 
     // Pacing
+    pacingModelTier: ModelTier;
+    setPacingModelTier: (model: ModelTier) => void;
     pacingContextTokens: number;
     setPacingContextTokens: (tokens: number) => void;
     pacingOverlapTokens: number;
@@ -147,7 +149,7 @@ export const useSettingsStore = create<SettingsState>()(
             setManualOverrideRules: (manualOverrideRules) => set({ manualOverrideRules }),
 
             // Editor Defaults
-            editorModel: 'balanced',
+            editorModel: 'tiny',
             setEditorModel: (editorModel) => set({ editorModel }),
             editorBasePrompt: 'You are an expert editor. Rewrite the following text to improve clarity and flow.',
             setEditorBasePrompt: (editorBasePrompt) => set({ editorBasePrompt }),
@@ -168,6 +170,9 @@ export const useSettingsStore = create<SettingsState>()(
             stylingIntensity: 0,
             setStylingIntensity: (stylingIntensity) => set({ stylingIntensity }),
 
+            pacingModelTier: 'tiny',
+            setPacingModelTier: (pacingModelTier) => set({ pacingModelTier }),
+            
             pacingContextTokens: 128,
             setPacingContextTokens: (pacingContextTokens) => set({ pacingContextTokens }),
             pacingOverlapTokens: 16,
@@ -194,7 +199,7 @@ export const useSettingsStore = create<SettingsState>()(
             setLibrarianModel: (librarianModel) => set({ librarianModel }),
 
             // Summarizer Defaults
-            summarizerModel: 'balanced',
+            summarizerModel: 'tiny',
             setSummarizerModel: (summarizerModel) => set({ summarizerModel }),
             summarizerBasePrompt: 'Summarize the following text in 5 sentences.',
             setSummarizerBasePrompt: (summarizerBasePrompt) => set({ summarizerBasePrompt }),

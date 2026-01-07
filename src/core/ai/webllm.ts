@@ -38,28 +38,12 @@ export const MODEL_INFO = {
         name: "Qwen 2.5 1.5B (Logprobs)",
         size: "980 MB",
         description: "Higher quality 1.5B model."
-    },
-    balanced: {
-        id: "TinyLlama-1.1B-logprobs",
-        name: "TinyLlama (Legacy)",
-        size: "700 MB",
-        description: "Alias for TinyLlama."
-    },
-    // ... aliases to keep old config working
-    pro: { id: "TinyLlama-1.1B-logprobs", name: "TinyLlama (Pro)", size: "700 MB", description: "Alias" },
-    creative: { id: "TinyLlama-1.1B-logprobs", name: "TinyLlama (Cr)", size: "700 MB", description: "Alias" },
-    reliable: { id: "TinyLlama-1.1B-logprobs", name: "TinyLlama (Rel)", size: "700 MB", description: "Alias" },
-    logprobs: { id: "TinyLlama-1.1B-logprobs", name: "TinyLlama (Dev)", size: "700 MB", description: "Alias" }
+    }
 } as const;
 
 export const MODEL_MAPPING = {
     tiny: MODEL_INFO.tiny.id,
     qwen: MODEL_INFO.qwen.id,
-    balanced: MODEL_INFO.balanced.id,
-    pro: MODEL_INFO.pro.id,
-    creative: MODEL_INFO.creative.id,
-    reliable: MODEL_INFO.reliable.id,
-    logprobs: MODEL_INFO.logprobs.id,
 } as const;
 
 export type ModelTier = keyof typeof MODEL_MAPPING;

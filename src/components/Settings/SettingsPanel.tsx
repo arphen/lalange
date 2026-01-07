@@ -8,10 +8,10 @@ interface SettingsPanelProps {
     onClose: () => void;
 }
 
-type SettingsTab = 'general' | 'ai' | 'styling' | 'pacing' | 'librarian' | 'summarizer';
+type SettingsTab = 'librarian' | 'pacing' | 'summarizer';
 
 export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
-    const [activeTab, setActiveTab] = useState<SettingsTab>('general');
+    const [activeTab, setActiveTab] = useState<SettingsTab>('pacing');
     const [cachedModels, setCachedModels] = useState<Record<string, boolean>>({});
     const settings = useSettingsStore();
     const aiState = useAIStore();
@@ -25,19 +25,15 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
     }, []);
 
     useEffect(() => {
-        if (activeTab === 'ai') {
-            // eslint-disable-next-line react-hooks/set-state-in-effect
-            checkCache();
-        }
-    }, [activeTab, checkCache]);
+        // Always check cache on mount since we show models in Librarian tab now
+        // eslint-disable-next-line
+        checkCache().catch(console.error);
+    }, [checkCache]);
 
     const tabs: { id: SettingsTab; label: string; icon: string }[] = [
-        { id: 'general', label: 'General', icon: 'M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4' },
-        { id: 'ai', label: 'Model Manager', icon: 'M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10' },
-        { id: 'styling', label: 'Editor (Styling)', icon: 'M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z' },
         { id: 'pacing', label: 'Pacing Engine', icon: 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z' },
-        { id: 'librarian', label: 'Librarian', icon: 'M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253' },
         { id: 'summarizer', label: 'Summarizer', icon: 'M4 6h16M4 12h16M4 18h7' },
+        { id: 'librarian', label: 'Librarian (BETA)', icon: 'M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253' },
     ];
 
     const handleDownloadModel = async (tier: ModelTier) => {
@@ -91,7 +87,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                         onClick={onClose}
                         className="w-full py-2 border border-white/10 rounded text-xs text-gray-400 hover:bg-white/5 hover:text-white transition-colors"
                     >
-                        [ CLOSE SETTINGS ]
+                        [ CLOSE ]
                     </button>
                     <div className="mt-4 text-center">
                         <p className="text-[10px] text-gray-600 font-mono">
@@ -105,117 +101,146 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
             <div className="flex-1 overflow-y-auto bg-basalt">
                 <div className="max-w-4xl mx-auto p-8 md:p-12">
 
-                    {/* General Tab */}
-                    {activeTab === 'general' && (
-                        <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-300">
-                            <div>
-                                <h3 className="text-2xl font-bold text-white mb-2">Preprocessing</h3>
-                                <p className="text-gray-500 text-sm">Configure how books are cleaned before ingestion.</p>
-                            </div>
-                            <div className="grid grid-cols-1 gap-6">
-                                <Toggle
-                                    label="License Annihilator"
-                                    description="Detects and hard-removes Project Gutenberg/Standard Ebooks legal headers."
-                                    checked={settings.licenseAnnihilator}
-                                    onChange={settings.toggleLicenseAnnihilator}
-                                />
-                                <Toggle
-                                    label="Generative Junk Removal"
-                                    description="Uses AI to detect and skip non-content chunks (TOC, Copyright, etc) during summarization."
-                                    checked={settings.enableJunkRemoval}
-                                    onChange={settings.setEnableJunkRemoval}
-                                />
-                                <Toggle
-                                    label="Structural Scrubber"
-                                    description="Strips out 'Chapter 1', page numbers, and Transcriber’s notes."
-                                    checked={settings.structuralScrubber}
-                                    onChange={settings.setStructuralScrubber}
-                                />
-                                <Toggle
-                                    label="Footnote Suppressor"
-                                    description="Hides [1] or (p. 42) references that trigger 'eye-glitch'."
-                                    checked={settings.footnoteSuppressor}
-                                    onChange={settings.setFootnoteSuppressor}
-                                />
-                                <div className="pt-6 border-t border-white/5">
-                                    <label className="block text-sm text-dune-gold mb-2">MANUAL OVERRIDE RULES</label>
+                    {/* Librarian Tab (Includes General + Model Manager) */}
+                    {activeTab === 'librarian' && (
+                        <div className="space-y-12 animate-in fade-in slide-in-from-bottom-4 duration-300">
+                            
+                            {/* Librarian Agent Config */}
+                            <AgentConfig
+                                title="The Librarian"
+                                description="Configure the recommendation and analysis engine."
+                                model={settings.librarianModelTier}
+                                setModel={settings.setLibrarianModelTier}
+                                basePrompt={settings.librarianBasePrompt}
+                                setBasePrompt={settings.setLibrarianBasePrompt}
+                                fragments={settings.librarianFragments}
+                                toggleFragment={settings.toggleLibrarianFragment}
+                            />
+
+                            {/* Ingestion & Formatting Rules (Formerly General) */}
+                            <div className="space-y-6">
+                                <div>
+                                    <h3 className="text-xl font-bold text-white mb-2">Ingestion Protocols</h3>
+                                    <p className="text-gray-500 text-sm">Rules for cleaning and structuring incoming texts.</p>
+                                </div>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <Toggle
+                                        label="License Annihilator"
+                                        description="Hard-removes legal headers (Project Gutenberg etc)."
+                                        checked={settings.licenseAnnihilator}
+                                        onChange={settings.toggleLicenseAnnihilator}
+                                    />
+                                    <Toggle
+                                        label="Structural Scrubber"
+                                        description="Strips chapter headers, page numbers, notes."
+                                        checked={settings.structuralScrubber}
+                                        onChange={settings.setStructuralScrubber}
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-xs text-dune-gold mb-2 uppercase tracking-widest font-bold">Manual Overrides</label>
                                     <textarea
-                                        className="w-full h-32 bg-black/30 border border-white/10 rounded p-4 text-sm text-gray-300 focus:border-dune-gold focus:outline-none transition-colors font-mono"
+                                        className="w-full h-24 bg-black/30 border border-white/10 rounded p-4 text-xs text-gray-300 focus:border-dune-gold focus:outline-none transition-colors font-mono"
                                         placeholder="Global Find & Replace rules (e.g. Change 'Rand' to 'The Dragon')"
                                         value={settings.manualOverrideRules}
                                         onChange={(e) => settings.setManualOverrideRules(e.target.value)}
                                     />
                                 </div>
                             </div>
-                        </div>
-                    )}
 
-                    {/* Model Manager Tab */}
-                    {activeTab === 'ai' && (
-                        <div className="space-y-10 animate-in fade-in slide-in-from-bottom-4 duration-300">
-                            <div>
-                                <h3 className="text-2xl font-bold text-white mb-2">Model Manager</h3>
-                                <p className="text-gray-500 text-sm">Download and manage local AI models (WebLLM).</p>
+                             {/* Persona & Monetization */}
+                             <div className="bg-white/5 rounded-lg p-8 border border-white/10 space-y-8">
+                                <div>
+                                    <label className="block text-xs text-dune-gold mb-4 uppercase tracking-widest font-bold">Librarian Persona</label>
+                                    <div className="grid grid-cols-3 gap-4">
+                                        {(['standard', 'lacanian', 'custom'] as const).map(persona => (
+                                            <button
+                                                key={persona}
+                                                onClick={() => settings.setLibrarianPersona(persona)}
+                                                className={clsx(
+                                                    "p-4 rounded border text-left transition-all",
+                                                    settings.librarianPersona === persona
+                                                        ? "bg-dune-gold text-black border-dune-gold"
+                                                        : "bg-black/20 border-white/10 text-gray-400 hover:border-white/30 hover:text-white"
+                                                )}
+                                            >
+                                                <div className="font-bold uppercase text-sm">{persona}</div>
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                                <Toggle
+                                        label="Support Development"
+                                        description="(You) generate affiliate links so arphen can pay for hosting."
+                                        checked={settings.affiliateLinksEnabled}
+                                        onChange={settings.setAffiliateLinksEnabled}
+                                    />
                             </div>
 
-                            {/* Model Availability Section */}
-                            <div className="bg-black/20 rounded-lg border border-white/10 overflow-hidden">
-                                <div className="p-4 border-b border-white/10 bg-white/5 flex justify-between items-center">
-                                    <h4 className="font-bold text-dune-gold text-sm tracking-widest">AVAILABLE MODELS</h4>
-                                    {aiState.isLoading && (
-                                        <span className="text-xs text-magma-vent animate-pulse">
-                                            {aiState.progress || 'BUSY...'}
-                                        </span>
-                                    )}
-                                </div>
-                                <div className="divide-y divide-white/5">
-                                    {(Object.keys(MODEL_INFO) as ModelTier[]).map(tier => {
-                                        const info = MODEL_INFO[tier];
-                                        const isCached = cachedModels[tier];
 
-                                        return (
-                                            <div key={tier} className={clsx(
-                                                "p-4 flex items-center justify-between transition-colors hover:bg-white/5",
-                                                isCached && "bg-green-900/10"
-                                            )}>
-                                                <div>
-                                                    <div className="flex items-center gap-2">
-                                                        <span className={clsx("font-bold capitalize", isCached ? "text-green-400" : "text-white")}>{info.name}</span>
-                                                        <span className="text-xs text-gray-500 font-mono">({info.id})</span>
-                                                        {isCached && <span className="text-[10px] bg-green-900/50 text-green-400 px-1.5 py-0.5 rounded border border-green-800">CACHED</span>}
-                                                    </div>
-                                                    <div className="text-xs text-gray-400 mt-1">
-                                                        Required Disk Space: <span className="text-dune-gold">{info.size}</span>
-                                                    </div>
-                                                </div>
-                                                <div className="flex items-center gap-4">
-                                                    {isCached ? (
-                                                        <button
-                                                            onClick={() => handleDeleteModel(tier)}
-                                                            disabled={aiState.isLoading}
-                                                            className="px-4 py-2 text-xs font-bold rounded border border-red-900/50 text-red-400 hover:bg-red-900/20 hover:border-red-500 transition-all disabled:opacity-50"
-                                                        >
-                                                            EVICT
-                                                        </button>
-                                                    ) : (
-                                                        <button
-                                                            onClick={() => handleDownloadModel(tier)}
-                                                            disabled={aiState.isLoading}
-                                                            className="px-4 py-2 text-xs font-bold rounded border border-white/20 text-gray-400 hover:border-dune-gold hover:text-dune-gold transition-all disabled:opacity-50"
-                                                        >
-                                                            DOWNLOAD / CACHE
-                                                        </button>
-                                                    )}
-                                                </div>
-                                            </div>
-                                        );
-                                    })}
+                            {/* Model Vault (Formerly separate tab) */}
+                            <div className="space-y-6 pt-6 border-t border-white/10">
+                                <div>
+                                    <h3 className="text-xl font-bold text-white mb-2">The Model Vault</h3>
+                                    <p className="text-gray-500 text-sm">Manage the local LLM weights stored in your browser.</p>
                                 </div>
-                                {aiState.isLoading && (
+                                <div className="bg-black/20 rounded-lg border border-white/10 overflow-hidden">
+                                     {/* ... (Model List Code) ... */}
+                                    <div className="p-4 border-b border-white/10 bg-white/5 flex justify-between items-center">
+                                        <h4 className="font-bold text-dune-gold text-xs tracking-widest">LOCAL CACHE STATUS</h4>
+                                        {aiState.isLoading && (
+                                            <span className="text-xs text-magma-vent animate-pulse">
+                                                {aiState.progress || 'BUSY...'}
+                                            </span>
+                                        )}
+                                    </div>
+                                    <div className="divide-y divide-white/5">
+                                        {(Object.keys(MODEL_INFO) as ModelTier[]).map(tier => {
+                                            const info = MODEL_INFO[tier];
+                                            const isCached = cachedModels[tier];
+
+                                            return (
+                                                <div key={tier} className={clsx(
+                                                    "p-4 flex items-center justify-between transition-colors hover:bg-white/5",
+                                                    isCached && "bg-green-900/10"
+                                                )}>
+                                                    <div>
+                                                        <div className="flex items-center gap-2">
+                                                            <span className={clsx("font-bold capitalize text-sm", isCached ? "text-green-400" : "text-white")}>{info.name}</span>
+                                                            <span className="text-[10px] text-gray-500 font-mono">({info.id})</span>
+                                                        </div>
+                                                        <div className="text-[10px] text-gray-400 mt-1">
+                                                            Size: <span className="text-dune-gold">{info.size}</span>
+                                                        </div>
+                                                    </div>
+                                                    <div className="flex items-center gap-4">
+                                                        {isCached ? (
+                                                            <button
+                                                                onClick={() => handleDeleteModel(tier)}
+                                                                disabled={aiState.isLoading}
+                                                                className="px-3 py-1.5 text-[10px] font-bold rounded border border-red-900/50 text-red-400 hover:bg-red-900/20 hover:border-red-500 transition-all disabled:opacity-50"
+                                                            >
+                                                                EVICT
+                                                            </button>
+                                                        ) : (
+                                                            <button
+                                                                onClick={() => handleDownloadModel(tier)}
+                                                                disabled={aiState.isLoading}
+                                                                className="px-3 py-1.5 text-[10px] font-bold rounded border border-white/20 text-gray-400 hover:border-dune-gold hover:text-dune-gold transition-all disabled:opacity-50"
+                                                            >
+                                                                DOWNLOAD
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                    {aiState.isLoading && (
                                     <div className="p-4 bg-black/40 border-t border-white/10">
                                         <div className="flex justify-between text-xs text-gray-400 mb-2">
                                             <span className="font-bold text-dune-gold">
-                                                {aiState.loadingModel ? `LOADING ${aiState.loadingModel.toUpperCase()}...` : 'DOWNLOADING / LOADING...'}
+                                                {aiState.loadingModel ? `LOADING ${aiState.loadingModel.toUpperCase()}...` : 'WORKING...'}
                                             </span>
                                             <span>{Math.round(aiState.progressValue * 100)}%</span>
                                         </div>
@@ -230,32 +255,9 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                                         </div>
                                     </div>
                                 )}
-                                {aiState.activity && (
-                                    <div className="p-4 bg-dune-gold/10 border-t border-dune-gold/20">
-                                        <div className="flex items-center gap-2 text-xs text-dune-gold">
-                                            <span className="animate-pulse">●</span>
-                                            <span className="font-bold">ACTIVE:</span>
-                                            <span>{aiState.activity}</span>
-                                            {aiState.activeModel && <span className="opacity-50">({aiState.activeModel})</span>}
-                                        </div>
-                                    </div>
-                                )}
+                                </div>
                             </div>
                         </div>
-                    )}
-
-                    {/* Editor (Styling) Tab */}
-                    {activeTab === 'styling' && (
-                        <AgentConfig
-                            title="The Editor"
-                            description="Configure the AI agent responsible for rewriting and styling text."
-                            model={settings.editorModel}
-                            setModel={settings.setEditorModel}
-                            basePrompt={settings.editorBasePrompt}
-                            setBasePrompt={settings.setEditorBasePrompt}
-                            fragments={settings.editorFragments}
-                            toggleFragment={settings.toggleEditorFragment}
-                        />
                     )}
 
                     {/* Pacing Tab */}
@@ -264,6 +266,57 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                             <div>
                                 <h3 className="text-2xl font-bold text-white mb-2">The Pacing Engine</h3>
                                 <p className="text-gray-500 text-sm">Control how the reader adapts to text density.</p>
+                            </div>
+
+                            {/* Pacing Engine Explanation */}
+                            <div className="bg-white/5 rounded-lg border border-white/10 p-6 space-y-4">
+                                <h4 className="text-dune-gold font-bold uppercase tracking-widest text-xs">The Problem with Speed Reading</h4>
+                                <p className="text-sm text-gray-400 leading-relaxed">
+                                    Traditional RSVP (Rapid Serial Visual Presentation) readers feel unnatural because they force you to process a simple "hello" at the same speed as a complex philosophical concept. Your brain doesn't work that way.
+                                </p>
+                                <h4 className="text-dune-gold font-bold uppercase tracking-widest text-xs pt-2">The Arphen Solution</h4>
+                                <p className="text-sm text-gray-400 leading-relaxed">
+                                    This engine uses a local AI to "read ahead" of you. It measures how surprising or dense the upcoming text is, creating a <span className="text-white font-bold">biological rhythm</span>:
+                                </p>
+                                <ul className="space-y-2 text-xs text-gray-500 font-mono border-l-2 border-white/10 pl-4 py-2">
+                                    <li>
+                                        <strong className="text-gray-300">Complexity Brakes:</strong> When ideas get deep, the reader slows down automatically to let you absorb the meaning.
+                                    </li>
+                                    <li>
+                                        <strong className="text-gray-300">Flow Acceleration:</strong> When the text is simple or repetitive, it speeds up to keep you in the flow state.
+                                    </li>
+                                </ul>
+                                <p className="text-xs text-gray-500 italic">
+                                    Use the "Sensitivity Dial" below to tune this effect. It turns reading into something that feels more like downloading information directly into your mind.
+                                </p>
+                            </div>
+
+                            {/* Pacing Engine Model Selection */}
+                            <div className="bg-white/5 rounded-lg p-8 border border-white/10 space-y-8">
+                                <div>
+                                    <label className="block text-xs text-dune-gold mb-4 uppercase tracking-widest font-bold">Analysis Model</label>
+                                    <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                                        {(Object.keys(MODEL_INFO) as ModelTier[]).map(tier => (
+                                            <button
+                                                key={tier}
+                                                onClick={() => settings.setPacingModelTier(tier)}
+                                                className={clsx(
+                                                    "p-4 rounded border text-left transition-all",
+                                                    settings.pacingModelTier === tier
+                                                        ? "bg-dune-gold text-black border-dune-gold"
+                                                        : "bg-black/20 border-white/10 text-gray-400 hover:border-white/30 hover:text-white"
+                                                )}
+                                            >
+                                                <div className="font-bold uppercase text-sm">{MODEL_INFO[tier].name}</div>
+                                                <div className="text-[10px] opacity-70 mt-1">{MODEL_INFO[tier].size}</div>
+                                            </button>
+                                        ))}
+                                    </div>
+                                    <p className="text-xs text-gray-500 mt-4 italic">
+                                        Note: The pacing engine requires a model capable of returning log-probabilities (logprobs). 
+                                        Standard chat models may not work efficiently.
+                                    </p>
+                                </div>
                             </div>
 
                             <div className="bg-black/20 p-8 rounded-lg border border-white/10">
@@ -286,7 +339,6 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                             </div>
 
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                                {/* Analysis Granularity removed - using Pacing Sensitivity instead */}
                                 <div>
                                     <label className="block text-sm text-dune-gold mb-4 uppercase tracking-widest">Sensitivity Dial</label>
                                     <div className="bg-black/20 p-6 rounded-lg border border-white/10 h-full flex flex-col justify-center">
@@ -306,52 +358,13 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                                         </p>
                                     </div>
                                 </div>
-                            </div>
-                        </div>
-                    )}
-
-                    {/* Librarian Tab */}
-                    {activeTab === 'librarian' && (
-                        <div className="space-y-8">
-                            <AgentConfig
-                                title="The Librarian"
-                                description="Configure the recommendation and analysis engine."
-                                model={settings.librarianModelTier}
-                                setModel={settings.setLibrarianModelTier}
-                                basePrompt={settings.librarianBasePrompt}
-                                setBasePrompt={settings.setLibrarianBasePrompt}
-                                fragments={settings.librarianFragments}
-                                toggleFragment={settings.toggleLibrarianFragment}
-                            />
-
-                            <div className="bg-white/5 rounded-lg p-8 border border-white/10 space-y-8">
                                 <div>
-                                    <label className="block text-xs text-dune-gold mb-4 uppercase tracking-widest font-bold">Persona</label>
-                                    <div className="grid grid-cols-3 gap-4">
-                                        {(['standard', 'lacanian', 'custom'] as const).map(persona => (
-                                            <button
-                                                key={persona}
-                                                onClick={() => settings.setLibrarianPersona(persona)}
-                                                className={clsx(
-                                                    "p-4 rounded border text-left transition-all",
-                                                    settings.librarianPersona === persona
-                                                        ? "bg-dune-gold text-black border-dune-gold"
-                                                        : "bg-black/20 border-white/10 text-gray-400 hover:border-white/30 hover:text-white"
-                                                )}
-                                            >
-                                                <div className="font-bold uppercase text-sm">{persona}</div>
-                                            </button>
-                                        ))}
-                                    </div>
-                                </div>
-
-                                <div>
-                                    <label className="block text-xs text-dune-gold mb-4 uppercase tracking-widest font-bold">Monetization</label>
-                                    <Toggle
-                                        label="Support Development"
-                                        description="(You) generate affiliate links for arphen so he can pay for his domain name"
-                                        checked={settings.affiliateLinksEnabled}
-                                        onChange={settings.setAffiliateLinksEnabled}
+                                    <label className="block text-sm text-dune-gold mb-4 uppercase tracking-widest">Visual Output</label>
+                                     <Toggle
+                                        label="Footnote Suppressor"
+                                        description="Hides [1] or (p. 42) references that trigger 'eye-glitch' during RSVP."
+                                        checked={settings.footnoteSuppressor}
+                                        onChange={settings.setFootnoteSuppressor}
                                     />
                                 </div>
                             </div>
@@ -360,16 +373,43 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
 
                     {/* Summarizer Tab */}
                     {activeTab === 'summarizer' && (
-                        <AgentConfig
-                            title="The Summarizer"
-                            description="Configure the agent responsible for chapter summaries and plot analysis."
-                            model={settings.summarizerModel}
-                            setModel={settings.setSummarizerModel}
-                            basePrompt={settings.summarizerBasePrompt}
-                            setBasePrompt={settings.setSummarizerBasePrompt}
-                            fragments={settings.summarizerFragments}
-                            toggleFragment={settings.toggleSummarizerFragment}
-                        />
+                        <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-300">
+                             <AgentConfig
+                                title="The Summarizer"
+                                description="Your automated reading journal."
+                                infoBlock={
+                                    <div className="bg-white/5 rounded-lg border border-white/10 p-6 space-y-4">
+                                        <h4 className="text-dune-gold font-bold uppercase tracking-widest text-xs">Keeping the Thread</h4>
+                                        <p className="text-sm text-gray-400 leading-relaxed">
+                                            When you're reading at high speeds (RSVP), it's easy to lose track of the broader context, especially in long novels. It's like driving fast—sometimes you miss the scenery.
+                                        </p>
+                                        <h4 className="text-dune-gold font-bold uppercase tracking-widest text-xs pt-2">How It Helps</h4>
+                                        <p className="text-sm text-gray-400 leading-relaxed">
+                                            The Summarizer works quietly in the background. As you finish a chapter, it <span className="text-white font-bold">digests the events</span> and adds them to a long-term memory bank.
+                                        </p>
+                                        <p className="text-xs text-gray-500 italic border-l-2 border-white/10 pl-4 py-2">
+                                            This allows the "Librarian" (the chat assistant) to answer questions like "Who was that guy from Chapter 1?" or "What just happened?" without you having to re-read.
+                                        </p>
+                                    </div>
+                                }
+                                model={settings.summarizerModel}
+                                setModel={settings.setSummarizerModel}
+                                basePrompt={settings.summarizerBasePrompt}
+                                setBasePrompt={settings.setSummarizerBasePrompt}
+                                fragments={settings.summarizerFragments}
+                                toggleFragment={settings.toggleSummarizerFragment}
+                            />
+                            
+                            <div className="pt-6 border-t border-white/10">
+                                <h3 className="text-xl font-bold text-white mb-4">Content Filtering</h3>
+                                <Toggle
+                                    label="Generative Junk Removal"
+                                    description="Uses AI to detect and skip non-content chunks (TOC, Copyright, etc) during summarization."
+                                    checked={settings.enableJunkRemoval}
+                                    onChange={settings.setEnableJunkRemoval}
+                                />
+                            </div>
+                        </div>
                     )}
 
                 </div>
@@ -379,7 +419,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
 };
 
 const Toggle = ({ label, description, checked, onChange }: { label: string, description: string, checked: boolean, onChange: (v: boolean) => void }) => (
-    <div className="flex items-start justify-between group p-4 rounded-lg hover:bg-white/5 transition-colors border border-transparent hover:border-white/5">
+    <div className="flex items-start justify-between group p-4 rounded-lg hover:bg-white/5 transition-colors border border-transparent hover:border-white/5 bg-black/20">
         <div>
             <div className="text-sm text-gray-200 font-bold group-hover:text-dune-gold transition-colors">{label}</div>
             <div className="text-xs text-gray-500 mt-1">{description}</div>
@@ -402,6 +442,7 @@ const Toggle = ({ label, description, checked, onChange }: { label: string, desc
 interface AgentConfigProps {
     title: string;
     description: string;
+    infoBlock?: React.ReactNode;
     model: ModelTier;
     setModel: (m: ModelTier) => void;
     basePrompt: string;
@@ -413,6 +454,7 @@ interface AgentConfigProps {
 const AgentConfig: React.FC<AgentConfigProps> = ({
     title,
     description,
+    infoBlock,
     model,
     setModel,
     basePrompt,
@@ -427,11 +469,13 @@ const AgentConfig: React.FC<AgentConfigProps> = ({
                 <p className="text-gray-500 text-sm">{description}</p>
             </div>
 
+            {infoBlock}
+
             <div className="bg-white/5 rounded-lg p-8 border border-white/10 space-y-8">
                 {/* Model Selection */}
                 <div>
                     <label className="block text-xs text-dune-gold mb-4 uppercase tracking-widest font-bold">AI Model</label>
-                    <div className="grid grid-cols-3 gap-4">
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                         {(Object.keys(MODEL_INFO) as ModelTier[]).map(tier => (
                             <button
                                 key={tier}
@@ -454,7 +498,7 @@ const AgentConfig: React.FC<AgentConfigProps> = ({
                 <div>
                     <label className="block text-xs text-dune-gold mb-4 uppercase tracking-widest font-bold">Base System Prompt</label>
                     <textarea
-                        className="w-full h-32 bg-black/30 border border-white/10 rounded p-4 text-sm text-gray-300 focus:border-dune-gold focus:outline-none transition-colors font-mono leading-relaxed"
+                        className="w-full h-32 bg-black/30 border border-white/10 rounded p-4 text-xs text-gray-300 focus:border-dune-gold focus:outline-none transition-colors font-mono leading-relaxed"
                         value={basePrompt}
                         onChange={(e) => setBasePrompt(e.target.value)}
                     />
