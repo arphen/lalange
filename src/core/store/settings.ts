@@ -76,6 +76,10 @@ interface SettingsState {
     pacingSensitivity: number;
     setPacingSensitivity: (sensitivity: number) => void;
 
+    // Onboarding
+    hasCompletedOnboarding: boolean;
+    setHasCompletedOnboarding: (completed: boolean) => void;
+
     // Librarian
     librarianModelTier: ModelTier;
     setLibrarianModelTier: (model: ModelTier) => void;
@@ -176,6 +180,9 @@ export const useSettingsStore = create<SettingsState>()(
             pacingContextTokens: 128,
             setPacingContextTokens: (pacingContextTokens) => set({ pacingContextTokens }),
             pacingOverlapTokens: 16,
+            hasCompletedOnboarding: false,
+            setHasCompletedOnboarding: (hasCompletedOnboarding) => set({ hasCompletedOnboarding }),
+
             setPacingOverlapTokens: (pacingOverlapTokens) => set({ pacingOverlapTokens }),
             pacingSensitivity: 50,
             setPacingSensitivity: (pacingSensitivity) => set({ pacingSensitivity }),

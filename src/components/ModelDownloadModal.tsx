@@ -3,6 +3,7 @@ import { useSettingsStore } from '../core/store/settings';
 import { useAIStore } from '../core/store/ai';
 import { MODEL_INFO, type ModelTier, isModelCached, getEngine } from '../core/ai/webllm';
 import { clsx } from 'clsx';
+import { BrandName } from './BrandName';
 
 export const ModelDownloadModal: React.FC = () => {
     const { editorModel, setEditorModel, setLibrarianModelTier, setSummarizerModel } = useSettingsStore();
@@ -57,7 +58,7 @@ export const ModelDownloadModal: React.FC = () => {
                     <p className="text-xs text-gray-400 mt-2 font-mono">
                         {isLoading 
                             ? 'Downloading model parameters to local storage. This happens only once.' 
-                            : 'Arphen runs entirely on your device. Select a model to download.'}
+                            : <><BrandName /> runs entirely on your device. Select a model to download.</>}
                     </p>
                 </div>
 

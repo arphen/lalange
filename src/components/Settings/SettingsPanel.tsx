@@ -3,6 +3,7 @@ import { useSettingsStore, type PromptFragment } from '../../core/store/settings
 import { useAIStore } from '../../core/store/ai';
 import { getEngine, MODEL_INFO, type ModelTier, isModelCached, deleteModel } from '../../core/ai/webllm';
 import { clsx } from 'clsx';
+import { BrandName } from '../BrandName';
 
 interface SettingsPanelProps {
     onClose: () => void;
@@ -171,7 +172,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                                 </div>
                                 <Toggle
                                         label="Support Development"
-                                        description="(You) generate affiliate links so arphen can pay for hosting."
+                                        description={<>(You) generate affiliate links so <BrandName /> can pay for hosting.</>}
                                         checked={settings.affiliateLinksEnabled}
                                         onChange={settings.setAffiliateLinksEnabled}
                                     />
@@ -274,7 +275,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                                 <p className="text-sm text-gray-400 leading-relaxed">
                                     Traditional RSVP (Rapid Serial Visual Presentation) readers feel unnatural because they force you to process a simple "hello" at the same speed as a complex philosophical concept. Your brain doesn't work that way.
                                 </p>
-                                <h4 className="text-dune-gold font-bold uppercase tracking-widest text-xs pt-2">The Arphen Solution</h4>
+                                <h4 className="text-dune-gold font-bold uppercase tracking-widest text-xs pt-2 flex items-center gap-2">The <BrandName /> Solution</h4>
                                 <p className="text-sm text-gray-400 leading-relaxed">
                                     This engine uses a local AI to "read ahead" of you. It measures how surprising or dense the upcoming text is, creating a <span className="text-white font-bold">biological rhythm</span>:
                                 </p>
@@ -418,7 +419,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
     );
 };
 
-const Toggle = ({ label, description, checked, onChange }: { label: string, description: string, checked: boolean, onChange: (v: boolean) => void }) => (
+const Toggle = ({ label, description, checked, onChange }: { label: string, description: React.ReactNode, checked: boolean, onChange: (v: boolean) => void }) => (
     <div className="flex items-start justify-between group p-4 rounded-lg hover:bg-white/5 transition-colors border border-transparent hover:border-white/5 bg-black/20">
         <div>
             <div className="text-sm text-gray-200 font-bold group-hover:text-dune-gold transition-colors">{label}</div>
