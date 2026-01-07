@@ -106,7 +106,7 @@ export const initDB = async (): Promise<MyDatabase> => {
         const db = await createRxDatabase<MyDatabaseCollections>({
             name: 'lalange_db_v12', // Bumped version/name to force fresh DB
             storage,
-            ignoreDuplicate: true
+            ignoreDuplicate: import.meta.env.DEV
         });
 
         await db.addCollections({
