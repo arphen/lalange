@@ -180,10 +180,10 @@ export const useSettingsStore = create<SettingsState>()(
             pacingContextTokens: 128,
             setPacingContextTokens: (pacingContextTokens) => set({ pacingContextTokens }),
             pacingOverlapTokens: 16,
+            setPacingOverlapTokens: (pacingOverlapTokens) => set({ pacingOverlapTokens }),
+            
             hasCompletedOnboarding: false,
             setHasCompletedOnboarding: (hasCompletedOnboarding) => set({ hasCompletedOnboarding }),
-
-            setPacingOverlapTokens: (pacingOverlapTokens) => set({ pacingOverlapTokens }),
             pacingSensitivity: 50,
             setPacingSensitivity: (pacingSensitivity) => set({ pacingSensitivity }),
 
