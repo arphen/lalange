@@ -13,6 +13,8 @@ vi.mock('../../core/sync/db', () => ({
 vi.mock('../../core/ingest/pipeline', () => ({
     initialIngest: vi.fn(),
     processChaptersInBackground: vi.fn().mockResolvedValue(undefined),
+    stopProcessing: vi.fn(),
+    estimateBookDensity: vi.fn(),
 }));
 
 describe('Archive', () => {

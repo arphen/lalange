@@ -108,6 +108,16 @@ export const chapterSchema = {
                 type: 'number'
             }
         },
+        analysisData: {
+            type: 'array',
+            items: {
+                type: 'object',
+                properties: {
+                    tokens: { type: 'array', items: { type: 'string' } },
+                    surprisals: { type: 'array', items: { type: 'number' } }
+                }
+            }
+        },
         subchapters: {
             type: 'array',
             items: {

@@ -19,6 +19,8 @@ interface SettingsState {
     // Reading
     wpm: number;
     setWpm: (wpm: number) => void;
+    summaryWpm: number;
+    setSummaryWpm: (wpm: number) => void;
     fontScale: number;
     setFontScale: (scale: number) => void;
 
@@ -37,6 +39,8 @@ interface SettingsState {
     toggleLicenseAnnihilator: () => void;
     structuralScrubber: boolean;
     setStructuralScrubber: (enabled: boolean) => void;
+    enableJunkRemoval: boolean;
+    setEnableJunkRemoval: (enabled: boolean) => void;
     footnoteSuppressor: boolean;
     setFootnoteSuppressor: (enabled: boolean) => void;
     manualOverrideRules: string;
@@ -63,10 +67,18 @@ interface SettingsState {
     setStylingIntensity: (intensity: number) => void;
 
     // Pacing
-    pacingGranularity: 'paragraph' | 'sentence' | 'word';
-    setPacingGranularity: (granularity: 'paragraph' | 'sentence' | 'word') => void;
+    pacingModelTier: ModelTier;
+    setPacingModelTier: (model: ModelTier) => void;
+    pacingContextTokens: number;
+    setPacingContextTokens: (tokens: number) => void;
+    pacingOverlapTokens: number;
+    setPacingOverlapTokens: (tokens: number) => void;
     pacingSensitivity: number;
     setPacingSensitivity: (sensitivity: number) => void;
+
+    // Onboarding
+    hasCompletedOnboarding: boolean;
+    setHasCompletedOnboarding: (completed: boolean) => void;
 
     // Librarian
     librarianModelTier: ModelTier;
@@ -114,6 +126,9 @@ export const useSettingsStore = create<SettingsState>()(
             wpm: 300,
             setWpm: (wpm) => set({ wpm }),
 
+            summaryWpm: 200,
+            setSummaryWpm: (summaryWpm) => set({ summaryWpm }),
+
             fontScale: 1,
             setFontScale: (fontScale) => set({ fontScale }),
 
@@ -130,13 +145,15 @@ export const useSettingsStore = create<SettingsState>()(
             toggleLicenseAnnihilator: () => set((state) => ({ licenseAnnihilator: !state.licenseAnnihilator })),
             structuralScrubber: true,
             setStructuralScrubber: (structuralScrubber) => set({ structuralScrubber }),
+            enableJunkRemoval: true,
+            setEnableJunkRemoval: (enableJunkRemoval) => set({ enableJunkRemoval }),
             footnoteSuppressor: true,
             setFootnoteSuppressor: (footnoteSuppressor) => set({ footnoteSuppressor }),
             manualOverrideRules: '',
             setManualOverrideRules: (manualOverrideRules) => set({ manualOverrideRules }),
 
             // Editor Defaults
-            editorModel: 'balanced',
+            editorModel: 'tiny',
             setEditorModel: (editorModel) => set({ editorModel }),
             editorBasePrompt: 'You are an expert editor. Rewrite the following text to improve clarity and flow.',
             setEditorBasePrompt: (editorBasePrompt) => set({ editorBasePrompt }),
@@ -157,12 +174,20 @@ export const useSettingsStore = create<SettingsState>()(
             stylingIntensity: 0,
             setStylingIntensity: (stylingIntensity) => set({ stylingIntensity }),
 
-            pacingGranularity: 'paragraph',
-            setPacingGranularity: (pacingGranularity) => set({ pacingGranularity }),
+            pacingModelTier: 'tiny',
+            setPacingModelTier: (pacingModelTier) => set({ pacingModelTier }),
+            
+            pacingContextTokens: 128,
+            setPacingContextTokens: (pacingContextTokens) => set({ pacingContextTokens }),
+            pacingOverlapTokens: 16,
+            hasCompletedOnboarding: false,
+            setHasCompletedOnboarding: (hasCompletedOnboarding) => set({ hasCompletedOnboarding }),
+
+            setPacingOverlapTokens: (pacingOverlapTokens) => set({ pacingOverlapTokens }),
             pacingSensitivity: 50,
             setPacingSensitivity: (pacingSensitivity) => set({ pacingSensitivity }),
 
-            // Librarian Defaults
+            // Librarian Defaults (used for density estimation)
             librarianModelTier: 'tiny',
             setLibrarianModelTier: (librarianModelTier) => set({ librarianModelTier }),
             librarianBasePrompt: 'You are the Scansion Librarian, a knowledgeable, slightly eccentric guide to the world\'s classics. Your goal is to recommend public domain books from Project Gutenberg.',

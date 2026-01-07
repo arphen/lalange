@@ -15,13 +15,14 @@
     "prepare": "husky"
   },
   "dependencies": {
-    "@mlc-ai/web-llm": "^0.2.80",
+    "@mlc-ai/web-llm": "file:./packages/web-llm",
     "cheerio": "^1.1.2",
     "clsx": "^2.1.1",
     "dexie": "^4.2.1",
     "epubjs": "^0.3.93",
     "framer-motion": "^12.23.26",
     "jszip": "^3.10.1",
+    "lucide-react": "^0.562.0",
     "p-queue": "^9.0.1",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",

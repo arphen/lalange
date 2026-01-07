@@ -21,27 +21,49 @@ vi.mock('./components/Manifesto', () => ({
 
 // Mock stores
 vi.mock('./core/store/settings', () => ({
-    useSettingsStore: () => ({ theme: 'volcanic' })
+    useSettingsStore: () => ({ 
+        theme: 'volcanic',
+        editorModel: 'tiny',
+        hasCompletedOnboarding: true,
+        setEditorModel: vi.fn(),
+        setLibrarianModelTier: vi.fn(),
+        setSummarizerModel: vi.fn()
+    })
 }));
+
 vi.mock('./core/store/ai', () => ({
-    useAIStore: () => ({ activity: null })
+    useAIStore: () => ({ 
+        activity: null,
+        isLoading: false,
+        progress: '',
+        progressValue: 0
+    })
+}));
+
+// Mock WebLLM
+vi.mock('./core/ai/webllm', () => ({
+    MODEL_INFO: {
+        tiny: { name: 'Tiny', size: '600 MB', description: 'Desc' }
+    },
+    isModelCached: vi.fn().mockResolvedValue(true),
+    getEngine: vi.fn()
 }));
 
 describe('App Component', () => {
     it('renders the correct header title', () => {
         render(<App />);
-        expect(screen.getByText('XYZ')).toBeInTheDocument();
+        // The brand name "XYZ" is split into X and YZ
+        expect(screen.getByText('X')).toBeInTheDocument();
+        expect(screen.getByText('YZ')).toBeInTheDocument();
     });
 
     it('renders the correct footer text with styling', () => {
         render(<App />);
-        // "Made by" is in the button text, but "Arphen" is in a span.
-        // getByText with regex matches the whole text content of the button.
         expect(screen.getByText(/Made by/i)).toBeInTheDocument();
 
-        const arphenText = screen.getByText('Arphen');
-        expect(arphenText).toBeInTheDocument();
-        expect(arphenText).toHaveClass('text-magma-vent');
-        expect(arphenText).toHaveClass('font-bold');
+        const arphen = screen.getByText('Arphen');
+        expect(arphen).toBeInTheDocument();
+        expect(arphen).toHaveClass('text-neon-pride');
+        expect(arphen).toHaveClass('font-bold');
     });
 });

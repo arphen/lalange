@@ -1,4 +1,5 @@
 import React from 'react';
+import { BrandName } from './BrandName';
 
 export const Manifesto: React.FC<{ onBack: () => void }> = ({ onBack }) => {
     return (
@@ -14,7 +15,7 @@ export const Manifesto: React.FC<{ onBack: () => void }> = ({ onBack }) => {
 
             <div className="space-y-6 text-lg leading-relaxed text-white/90">
                 <p>
-                    Arphen represents a shift towards <strong>local-only usage of LLMs</strong> as a means to wrest control from Big AI.
+                    <BrandName /> represents a shift towards <strong>local-only usage of LLMs</strong> as a means to wrest control from Big AI.
                 </p>
 
                 <p>

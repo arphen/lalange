@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { type ChapterDocType } from '../../core/sync/db';
 import { formatReadingTime } from '../../hooks/useReadingTimeEstimate';
+import { useAIStore } from '../../core/store/ai';
 import { clsx } from 'clsx';
 
 interface SidebarProps {
@@ -25,6 +26,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     now
 }) => {
     const [expandedSummary, setExpandedSummary] = useState<string | null>(null);
+    const aiState = useAIStore();
 
     // Calculate total stats
     const totalWords = chapters.reduce((acc, c) => acc + (c.content?.length || 0), 0);
@@ -161,6 +163,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                             currentWordIndex >= sub.startWordIndex &&
                                             (currentWordIndex < sub.endWordIndex || (idx === chapter.subchapters!.length - 1 && currentWordIndex >= sub.startWordIndex));
 
+                                        // Calculate Density Progress
+                                        const densitySlice = chapter.densities?.slice(sub.startWordIndex, sub.endWordIndex) || [];
+                                        const processedDensityCount = densitySlice.filter(d => d > 0).length;
+                                        const densityProgress = densitySlice.length > 0 ? processedDensityCount / densitySlice.length : 0;
+
                                         return (
                                             <div key={idx} className="flex flex-col relative group/sub">
                                                 {/* Active Reading Highlight */}
@@ -170,7 +177,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                                         isActive ? "opacity-100 bg-white/5" : "opacity-0"
                                                     )}
                                                 />
-                                                {/* Health Bar Background */}
+                                                {/* Health Bar Background (Readiness) */}
                                                 <div
                                                     className={clsx(
                                                         "absolute inset-0 transition-all duration-1000 ease-out rounded-sm",
@@ -182,25 +189,37 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                                     }}
                                                 />
 
-                                                <div className="flex items-center justify-between relative z-10 pl-1">
-                                                    <button
-                                                        className={clsx(
-                                                            "flex-1 text-left text-[10px] py-1 transition-colors truncate pr-2",
-                                                            isActive ? "text-white font-bold" : (isFullyReady ? "text-gray-500 hover:text-dune-gold" : (isSafeToRead ? "text-canarian-pine font-bold" : "text-dune-gold font-bold"))
-                                                        )}
-                                                        onClick={(e) => {
-                                                            e.stopPropagation();
-                                                            if (isExpanded) {
-                                                                if (hasStarted) {
-                                                                    onLoadChapter(chapter.id, sub.startWordIndex);
+                                                <div className="flex items-center justify-between relative z-10 pl-1 py-1">
+                                                    <div className="flex-1 min-w-0 pr-2">
+                                                        <button
+                                                            className={clsx(
+                                                                "text-left text-[10px] transition-colors truncate w-full",
+                                                                isActive ? "text-white font-bold" : (isFullyReady ? "text-gray-500 hover:text-dune-gold" : (isSafeToRead ? "text-canarian-pine font-bold" : "text-dune-gold font-bold"))
+                                                            )}
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                if (isExpanded) {
+                                                                    if (hasStarted) {
+                                                                        onLoadChapter(chapter.id, sub.startWordIndex);
+                                                                    }
+                                                                } else {
+                                                                    setExpandedSummary(summaryId);
                                                                 }
-                                                            } else {
-                                                                setExpandedSummary(summaryId);
-                                                            }
-                                                        }}
-                                                    >
-                                                        {sub.title} {!isFullyReady && "..."}
-                                                    </button>
+                                                            }}
+                                                        >
+                                                            {sub.title} {!isFullyReady && "..."}
+                                                        </button>
+                                                        
+                                                        {/* Density Progress Bar */}
+                                                        {densityProgress < 1 && densityProgress > 0 && (
+                                                            <div className="w-full h-0.5 bg-gray-800 mt-1 rounded-full overflow-hidden">
+                                                                <div 
+                                                                    className="h-full bg-magma-vent transition-all duration-500"
+                                                                    style={{ width: `${densityProgress * 100}%` }}
+                                                                />
+                                                            </div>
+                                                        )}
+                                                    </div>
 
                                                     <button
                                                         onClick={(e) => {
@@ -211,7 +230,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                                         }}
                                                         disabled={!hasStarted}
                                                         className={clsx(
-                                                            "p-1 rounded hover:bg-white/10 transition-colors",
+                                                            "p-1 rounded hover:bg-white/10 transition-colors flex-shrink-0",
                                                             hasStarted ? "text-dune-gold" : "text-gray-600 opacity-50 cursor-not-allowed"
                                                         )}
                                                         title="Read Subchapter"
@@ -231,6 +250,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                             </div>
                                         );
                                     })}
+                                    
+                                    {/* Processing Indicator for Next Chunk */}
+                                    {isProcessing && (
+                                        <div className="pl-1 py-1 text-[10px] text-dune-gold animate-pulse italic flex items-center gap-2">
+                                            <span className="w-1 h-1 bg-dune-gold rounded-full"/>
+                                            Summarizing next chunk...
+                                        </div>
+                                    )}
                                 </div>
                             )}
                         </div>
@@ -239,14 +266,37 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </div>
 
             {/* Telemetry Footer */}
-            <div className="p-4 border-t border-white/10 bg-black/40">
-                <div className="text-[10px] text-gray-500 tracking-widest mb-1">SYSTEM VELOCITY</div>
-                <div className="text-2xl font-mono text-dune-gold flex items-baseline gap-2">
-                    {ingestSpeed > 0 ? ingestSpeed : "IDLE"} <span className="text-xs text-gray-600">TPM</span>
+            <div className="p-4 border-t border-white/10 bg-black/40 space-y-3">
+                {/* AI Status */}
+                <div>
+                    <div className="flex justify-between items-center mb-1">
+                        <div className="text-[10px] text-gray-500 tracking-widest">NEURAL ENGINE</div>
+                        {aiState.error && <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" title={aiState.error} />}
+                        {!aiState.error && aiState.isLoading && <div className="w-2 h-2 rounded-full bg-yellow-500 animate-pulse" title="Loading..." />}
+                        {!aiState.error && !aiState.isLoading && aiState.isReady && <div className="w-2 h-2 rounded-full bg-green-500" title="Ready" />}
+                    </div>
+                    <div className="text-xs font-mono text-dune-gold truncate" title={aiState.activeModelName || 'None'}>
+                        {aiState.activeModelName || 'OFFLINE'}
+                    </div>
+                    <div className="flex justify-between items-center mt-1">
+                        <div className="text-[10px] text-gray-600">
+                            {aiState.tps > 0 ? `${aiState.tps.toFixed(1)} TPS` : 'IDLE'}
+                        </div>
+                        {aiState.activity && (
+                            <div className="text-[10px] text-magma-vent animate-pulse truncate max-w-[100px]">
+                                {aiState.activity}
+                            </div>
+                        )}
+                    </div>
                 </div>
+
+                {/* Pipeline Status */}
                 {ingestSpeed > 0 && (
-                    <div className="text-[10px] text-gray-600 mt-1">
-                        ~{(ingestSpeed / 60).toFixed(1)} TPS
+                    <div className="pt-2 border-t border-white/5">
+                        <div className="text-[10px] text-gray-500 tracking-widest mb-1">PIPELINE VELOCITY</div>
+                        <div className="text-xs font-mono text-gray-400 flex items-baseline gap-2">
+                            {ingestSpeed} <span className="text-[10px] text-gray-600">TPM</span>
+                        </div>
                     </div>
                 )}
             </div>

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { initDB, type BookDocType } from '../../core/sync/db';
-import { initialIngest, processChaptersInBackground, stopProcessing, isProcessing, estimateBookDensity } from '../../core/ingest/pipeline';
+import { initialIngest, processChaptersInBackground, stopProcessing, estimateBookDensity } from '../../core/ingest/pipeline';
 import { useAIStore } from '../../core/store/ai';
 import { BookCard } from './BookCard';
 
@@ -70,10 +70,10 @@ export const Archive: React.FC<ArchiveProps> = ({ onOpenBook }) => {
         setLoading(true);
         setStatus('Fetching demo book...');
         try {
-            const res = await fetch('/test_book.epub');
+            const res = await fetch('/pg1952-images.epub');
             if (!res.ok) throw new Error('Failed to fetch demo book');
             const blob = await res.blob();
-            const file = new File([blob], 'test_book.epub', { type: 'application/epub+zip' });
+            const file = new File([blob], 'pg1952-images.epub', { type: 'application/epub+zip' });
             await ingestBook(file);
         } catch (e: unknown) {
             console.error(e);
@@ -84,27 +84,15 @@ export const Archive: React.FC<ArchiveProps> = ({ onOpenBook }) => {
     };
 
     const handleBookClick = async (book: BookDocType) => {
-        if (isProcessing(book.id)) {
-            if (confirm('Ingestion is in progress. Stop?')) {
-                stopProcessing(book.id);
-            }
-            return;
-        }
-
-        const db = await initDB();
-        const chapters = await db.chapters.find({ selector: { bookId: book.id } }).exec();
-        const hasError = chapters.some(c => c.status === 'error');
-        const isPending = chapters.some(c => c.status === 'pending' || c.status === 'processing');
-
-        if (hasError || isPending) {
-            if (confirm('Book ingestion is incomplete/failed. Resume?')) {
-                processChaptersInBackground(book.id).catch(console.error);
-                return;
-            }
-            if (!confirm('Open reader anyway?')) return;
-        }
-
+        // Allow opening even if processing
         onOpenBook(book);
+    };
+
+    const handleStopProcessing = (e: React.MouseEvent, bookId: string) => {
+        e.stopPropagation();
+        if (confirm('Stop ingestion for this book?')) {
+            stopProcessing(bookId);
+        }
     };
 
     const handleEstimateDensity = async (e: React.MouseEvent, bookId: string) => {
@@ -222,6 +210,7 @@ export const Archive: React.FC<ArchiveProps> = ({ onOpenBook }) => {
                                     book={book}
                                     onOpen={() => handleBookClick(book)}
                                     onDelete={(e) => handleDelete(e, book.id)}
+                                    onStop={(e) => handleStopProcessing(e, book.id)}
                                     onEstimateDensity={(e) => handleEstimateDensity(e, book.id)}
                                 />
                             ))}
