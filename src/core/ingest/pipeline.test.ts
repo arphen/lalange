@@ -13,6 +13,7 @@ vi.mock('../ai/service', () => ({
     generateUnifiedCompletion: vi.fn().mockResolvedValue({
         response: JSON.stringify({ "some text": 5 })
     }),
+    getPromptLogprobs: vi.fn().mockResolvedValue([])
 }));
 
 describe('processChaptersInBackground', () => {

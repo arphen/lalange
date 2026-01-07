@@ -1,9 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { type BookDocType, type ChapterDocType, type ReadingStateDocType, initDB } from '../../core/sync/db';
 import { getBionicSplit, getBionicGradientHtml } from '../../core/rsvp/bionic';
-import { getPunctuationDelay } from '../../core/rsvp/timing';
+import { getVisualProcessingDelay } from '../../core/rsvp/timing';
 import { Sidebar } from './Sidebar';
 import { useSettingsStore } from '../../core/store/settings';
+
+import { scheduler } from '../../core/ingest/scheduler';
+import { processChaptersInBackground } from '../../core/ingest/pipeline';
 
 interface ReaderProps {
     book: BookDocType;
@@ -11,9 +14,21 @@ interface ReaderProps {
     onOpenSettings?: () => void;
 }
 
+const getDensityColor = (score: number) => {
+    if (score === 0) return 'text-gray-700 opacity-50'; // Pending
+    if (score <= 0.6) return 'text-blue-400'; // Fast
+    if (score <= 0.8) return 'text-blue-300'; // Brisk
+    if (score <= 1.0) return 'text-gray-400'; // Normal
+    if (score <= 1.2) return 'text-yellow-200'; // Deliberate
+    if (score <= 1.5) return 'text-yellow-500'; // Slow
+    if (score <= 2.0) return 'text-orange-500'; // Very Slow
+    return 'text-red-500 font-bold'; // Profound
+};
+
 export const Reader: React.FC<ReaderProps> = ({ book, onOpenSettings }) => {
     const [isPlaying, setIsPlaying] = useState(false);
-    const { wpm } = useSettingsStore();
+    const { wpm, setWpm, summaryWpm } = useSettingsStore();
+    const [isHoveringDial, setIsHoveringDial] = useState(false);
 
     // State for current chapter and reading position
     const [currentChapter, setCurrentChapter] = useState<ChapterDocType | null>(null);
@@ -21,10 +36,18 @@ export const Reader: React.FC<ReaderProps> = ({ book, onOpenSettings }) => {
     const [readingState, setReadingState] = useState<ReadingStateDocType | null>(null);
     const [loading, setLoading] = useState(true);
 
+    // Update Scheduler Cursor
+    useEffect(() => {
+        if (currentChapter) {
+            scheduler.setCursor(book.id, currentChapter.id, currentWordIndex);
+        }
+    }, [book.id, currentChapter, currentWordIndex]);
+
     // Sidebar & Chapters
     const [chapters, setChapters] = useState<ChapterDocType[]>([]);
     const [showSidebar, setShowSidebar] = useState(true);
-    const [inspectingChapter, setInspectingChapter] = useState<ChapterDocType | null>(null);
+    const [inspectingChapterId, setInspectingChapterId] = useState<string | null>(null);
+    const inspectingChapter = chapters.find(c => c.id === inspectingChapterId);
     const [now, setNow] = useState(Date.now()); // Force re-render for live time updates
 
     const prevContainerRef = useRef<HTMLDivElement>(null);
@@ -85,9 +108,12 @@ export const Reader: React.FC<ReaderProps> = ({ book, onOpenSettings }) => {
                 const isEnd = /[.!?]$/.test(w);
                 const breakHtml = isEnd ? '<div class="w-full h-2"></div>' : '';
 
+                const density = densitiesRef.current[actualIndex] || 1.0;
+                const colorClass = getDensityColor(density);
+
                 return `
                     <span 
-                        class="word-span inline-block mr-1.5 mb-1 transition-all duration-300 cursor-pointer text-gray-500 opacity-40 hover:opacity-100 hover:text-white"
+                        class="word-span inline-block mr-1.5 mb-1 transition-all duration-300 cursor-pointer ${colorClass} opacity-60 hover:opacity-100 hover:text-white"
                         data-index="${actualIndex}"
                     >
                         <span class="font-bold">${bold}</span><span class="font-light opacity-80">${light}</span>
@@ -111,9 +137,12 @@ export const Reader: React.FC<ReaderProps> = ({ book, onOpenSettings }) => {
                 const isEnd = /[.!?]$/.test(w);
                 const breakHtml = isEnd ? '<div class="w-full h-2"></div>' : '';
 
+                const density = densitiesRef.current[actualIndex] || 1.0;
+                const colorClass = getDensityColor(density);
+
                 return `
                     <span 
-                        class="word-span inline-block mr-1.5 mb-1 transition-all duration-300 cursor-pointer text-gray-500 opacity-40 hover:opacity-100 hover:text-white"
+                        class="word-span inline-block mr-1.5 mb-1 transition-all duration-300 cursor-pointer ${colorClass} opacity-60 hover:opacity-100 hover:text-white"
                         data-index="${actualIndex}"
                     >
                         <span class="font-bold">${bold}</span><span class="font-light opacity-80">${light}</span>
@@ -303,11 +332,26 @@ export const Reader: React.FC<ReaderProps> = ({ book, onOpenSettings }) => {
 
             const currentWord = activeWords[indexRef.current] || '';
             const density = activeDensities[indexRef.current];
-            const currentDensity = density !== undefined ? density : 1.0;
-            // If density is 0 (junk), we ignore punctuation delay to ensure it's skipped instantly
-            const punctuationDelay = currentDensity === 0 ? 0 : getPunctuationDelay(currentWord, baseInterval);
+            
+            // Use density if available, otherwise default to 1.0 (Normal)
+            const currentDensity = (density !== undefined && density > 0) ? density : 1.0;
+            
+            // === COGNITIVE STACK IMPLEMENTATION ===
+            // T_display = T_floor + (K_info * Surprisal) + (K_vis * sqrt(L)) + P_punc
+            
+            // 1. T_floor (Physiological minimum)
+            const T_floor = 75;
 
-            const targetInterval = (baseInterval * currentDensity) + punctuationDelay;
+            // 2. Information component (Surprisal)
+            // baseInterval represents the user's preferred "beat". 
+            // currentDensity is the multiplier derived from LLM surprisal (around 1.0).
+            const infoTime = baseInterval * currentDensity;
+
+            // 3. Visual & Punctuation component
+            const visualDelay = getVisualProcessingDelay(currentWord);
+
+            // Total Duration
+            const targetInterval = T_floor + infoTime + visualDelay;
 
             if (accumulatorRef.current >= targetInterval) {
                 if (indexRef.current < activeWords.length - 1) {
@@ -330,7 +374,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onOpenSettings }) => {
                             indexRef.current = 0;
 
                             // Slow down WPM
-                            wpmRef.current = 100;
+                            wpmRef.current = summaryWpm;
 
                             // Force render first word of summary
                             renderWord(0, summaryWordsRef.current);
@@ -414,6 +458,22 @@ export const Reader: React.FC<ReaderProps> = ({ book, onOpenSettings }) => {
         };
     }, [isPlaying, saveProgress, loop]);
 
+    // Auto-save progress every 5 seconds while playing
+    useEffect(() => {
+        if (!isPlaying) return;
+        const interval = setInterval(() => {
+            saveProgress();
+        }, 5000);
+        return () => clearInterval(interval);
+    }, [isPlaying, saveProgress]);
+
+    // Save on unmount
+    useEffect(() => {
+        return () => {
+            saveProgress();
+        };
+    }, [saveProgress]);
+
     // Load initial state & Subscribe to chapters
     useEffect(() => {
         let sub: { unsubscribe: () => void };
@@ -469,19 +529,18 @@ export const Reader: React.FC<ReaderProps> = ({ book, onOpenSettings }) => {
         }
     }, [chapters]);
 
+    // Trigger background processing when book is opened
+    // This ensures density/summary tasks are processed even for previously ingested books
+    useEffect(() => {
+        processChaptersInBackground(book.id).catch(console.error);
+    }, [book.id]);
+
     // Effect to render word when chapter or index changes, ensuring ref is available
     useEffect(() => {
         if (!loading && currentChapter && wordsRef.current.length > 0) {
             renderWord(currentWordIndex, wordsRef.current);
         }
     }, [loading, currentChapter, currentWordIndex, renderWord]);
-
-    const getDensityColor = (score: number) => {
-        if (score < 0.8) return 'text-gray-500';
-        if (score < 1.5) return 'text-gray-300';
-        if (score < 2.5) return 'text-yellow-500';
-        return 'text-red-500 font-bold';
-    };
 
     if (loading && !currentChapter) {
         return <div className="flex items-center justify-center h-full font-mono text-dune-gold animate-pulse">INITIALIZING COCKPIT...</div>;
@@ -490,11 +549,29 @@ export const Reader: React.FC<ReaderProps> = ({ book, onOpenSettings }) => {
     // Calculate Subchapter Progress
     const currentSubchapter = currentChapter?.subchapters?.find(s => currentWordIndex >= s.startWordIndex && currentWordIndex < s.endWordIndex);
     let subchapterProgress = 0;
+    let timeLeftStr = '';
+    
     if (currentSubchapter) {
         const total = currentSubchapter.endWordIndex - currentSubchapter.startWordIndex;
         const current = currentWordIndex - currentSubchapter.startWordIndex;
         subchapterProgress = Math.min(1, Math.max(0, current / total));
+
+        const wordsLeft = currentSubchapter.endWordIndex - currentWordIndex;
+        const minutesLeft = wordsLeft / wpm;
+        timeLeftStr = minutesLeft < 1 ? '< 1m' : `${Math.round(minutesLeft)}m`;
     }
+
+    // WPM Dial Logic
+    const dialColor = wpm < 300 ? 'text-blue-400' : wpm < 500 ? 'text-dune-gold' : 'text-red-500';
+    const dialGlow = isHoveringDial ? 'drop-shadow-[0_0_10px_rgba(255,255,255,0.5)]' : 'opacity-30 hover:opacity-100';
+
+    // Calculate word to render for React (to avoid stale content on re-renders)
+    // When playing, the loop updates the DOM directly.
+    // When paused or when state changes (like isSummaryActive), React re-renders.
+    // We need to ensure React renders the correct word so it doesn't overwrite the loop's work with stale data.
+    const wordToRender = isSummaryActive 
+        ? (summaryWordsRef.current[indexRef.current] || '')
+        : (wordsRef.current[currentWordIndex] || '');
 
     return (
         <div className="relative w-full h-screen bg-basalt text-white overflow-hidden flex">
@@ -545,7 +622,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onOpenSettings }) => {
                         loadChapter(id, index || 0);
                         setShowSidebar(false);
                     }}
-                    onInspectChapter={setInspectingChapter}
+                    onInspectChapter={(chapter) => setInspectingChapterId(chapter.id)}
                     wpm={wpm}
                     currentWordIndex={currentWordIndex}
                     now={now}
@@ -576,24 +653,29 @@ export const Reader: React.FC<ReaderProps> = ({ book, onOpenSettings }) => {
                         onClick={() => setIsPlaying(!isPlayingRef.current)}
                     >
                         {/* Bionic Word */}
-                        <div ref={rsvpRef} className={`text-6xl md:text-8xl font-mono tracking-tight whitespace-nowrap drop-shadow-[0_0_15px_rgba(255,255,255,0.5)] ${isSummaryActive ? 'text-orange-500' : 'text-white'}`}>
-                            {wordsRef.current[currentWordIndex] && (
-                                <span dangerouslySetInnerHTML={{ __html: getBionicGradientHtml(wordsRef.current[currentWordIndex]) }} />
+                        <div ref={rsvpRef} className={`text-6xl md:text-8xl font-mono tracking-tight whitespace-nowrap drop-shadow-[0_0_15px_rgba(255,255,255,0.5)] ${isSummaryActive ? 'text-amber-400 italic' : 'text-white'}`}>
+                            {wordToRender && (
+                                <span dangerouslySetInnerHTML={{ __html: getBionicGradientHtml(wordToRender) }} />
                             )}
                         </div>
 
                         {/* Subchapter Progress Lights */}
                         {currentSubchapter && (
-                            <div className="absolute bottom-6 flex gap-3 pointer-events-none">
-                                {[...Array(5)].map((_, i) => {
-                                    const isLit = subchapterProgress >= (i / 5);
-                                    return (
-                                        <div
-                                            key={i}
-                                            className={`w-1.5 h-1.5 rounded-full transition-all duration-500 ${isLit ? 'bg-dune-gold shadow-[0_0_8px_var(--color-dune-gold)]' : 'bg-white/10'}`}
-                                        />
-                                    );
-                                })}
+                            <div className="absolute bottom-6 flex flex-col items-center gap-2 pointer-events-none">
+                                <div className="flex gap-3">
+                                    {[...Array(5)].map((_, i) => {
+                                        const isLit = subchapterProgress >= (i / 5);
+                                        return (
+                                            <div
+                                                key={i}
+                                                className={`w-1.5 h-1.5 rounded-full transition-all duration-500 ${isLit ? 'bg-dune-gold shadow-[0_0_8px_var(--color-dune-gold)]' : 'bg-white/10'}`}
+                                            />
+                                        );
+                                    })}
+                                </div>
+                                <div className="text-[10px] font-mono text-white/30 tracking-widest uppercase animate-pulse">
+                                    {timeLeftStr} REMAINING
+                                </div>
                             </div>
                         )}
 
@@ -637,6 +719,42 @@ export const Reader: React.FC<ReaderProps> = ({ book, onOpenSettings }) => {
                 </div>
             </div>
 
+            {/* WPM Dial Overlay */}
+            <div 
+                className={`absolute bottom-8 right-8 z-[70] flex flex-col items-center transition-all duration-500 ${dialGlow}`}
+                onMouseEnter={() => setIsHoveringDial(true)}
+                onMouseLeave={() => setIsHoveringDial(false)}
+            >
+                <div className="relative w-24 h-24 flex items-center justify-center">
+                    {/* Dial Ring */}
+                    <svg className="w-full h-full transform -rotate-90" viewBox="0 0 100 100">
+                        <circle cx="50" cy="50" r="45" fill="none" stroke="currentColor" strokeWidth="2" className="text-white/10" />
+                        <circle 
+                            cx="50" cy="50" r="45" fill="none" stroke="currentColor" strokeWidth="2" 
+                            className={`${dialColor} transition-all duration-300`}
+                            strokeDasharray="283"
+                            strokeDashoffset={283 - (283 * (wpm / 1000))}
+                        />
+                    </svg>
+                    
+                    {/* Value Display */}
+                    <div className="absolute inset-0 flex flex-col items-center justify-center">
+                        <span className={`text-2xl font-mono font-bold ${dialColor}`}>{wpm}</span>
+                        <span className="text-[8px] text-gray-500 tracking-widest">WPM</span>
+                    </div>
+
+                    {/* Invisible Range Input for Interaction */}
+                    <input 
+                        type="range" 
+                        min="100" max="1000" step="10"
+                        value={wpm}
+                        onChange={(e) => setWpm(parseInt(e.target.value))}
+                        className="absolute inset-0 w-full h-full opacity-0 cursor-ns-resize"
+                        title="Adjust Speed"
+                    />
+                </div>
+            </div>
+
             {/* Inspection Modal */}
             {inspectingChapter && (
                 <div className="absolute inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-4 md:p-12">
@@ -644,7 +762,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onOpenSettings }) => {
                         <div className="flex justify-between items-center p-4 border-b border-white/10">
                             <h2 className="font-mono text-xl font-bold text-dune-gold tracking-widest uppercase">{inspectingChapter.title} // DENSITY_MAP</h2>
                             <button
-                                onClick={() => setInspectingChapter(null)}
+                                onClick={() => setInspectingChapterId(null)}
                                 className="text-gray-400 hover:text-magma-vent transition-colors"
                             >
                                 <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -655,18 +773,28 @@ export const Reader: React.FC<ReaderProps> = ({ book, onOpenSettings }) => {
                         <div className="flex-1 overflow-y-auto p-6 font-mono text-lg leading-relaxed selection:bg-magma-vent selection:text-white">
                             {inspectingChapter.content.map((word, i) => {
                                 const density = inspectingChapter.densities?.[i] || 1.0;
+                                const analysis = inspectingChapter.analysisData?.[i];
+                                
+                                let title = `Density: ${density}`;
+                                if (analysis && analysis.tokens && analysis.tokens.length > 0) {
+                                    const tokensStr = analysis.tokens.map(t => `"${t}"`).join(', ');
+                                    const surpStr = analysis.surprisals.map(s => s?.toFixed(2)).join(', ');
+                                    const totalSurp = analysis.surprisals.reduce((a, b) => a + (b || 0), 0).toFixed(2);
+                                    title = `Word: "${word}"\nTokens: [${tokensStr}]\nSurprisals: [${surpStr}]\nTotal Surprisal: ${totalSurp}\nDensity Factor: ${density}`;
+                                }
+
                                 return (
-                                    <span key={i} className={`${getDensityColor(density)} inline-block mr-1.5 mb-1 transition-colors hover:text-white cursor-crosshair`} title={`Density: ${density}`}>
+                                    <span key={i} className={`${getDensityColor(density)} inline-block mr-1.5 mb-1 transition-colors hover:text-white cursor-crosshair`} title={title}>
                                         {word}
                                     </span>
                                 );
                             })}
                         </div>
                         <div className="p-4 border-t border-white/10 flex gap-6 text-xs font-mono flex-wrap uppercase tracking-wider bg-black/20">
-                            <div className="flex items-center gap-2"><span className="w-2 h-2 bg-gray-500 rounded-full"></span> Flow (&lt;0.8)</div>
-                            <div className="flex items-center gap-2"><span className="w-2 h-2 bg-gray-300 rounded-full"></span> Normal</div>
-                            <div className="flex items-center gap-2"><span className="w-2 h-2 bg-yellow-500 rounded-full"></span> Complex (1.5-2.5)</div>
-                            <div className="flex items-center gap-2"><span className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></span> Anchor (&gt;2.5)</div>
+                            <div className="flex items-center gap-2"><span className="w-2 h-2 bg-blue-400 rounded-full"></span> Fast (&lt;0.8)</div>
+                            <div className="flex items-center gap-2"><span className="w-2 h-2 bg-gray-400 rounded-full"></span> Normal</div>
+                            <div className="flex items-center gap-2"><span className="w-2 h-2 bg-yellow-500 rounded-full"></span> Slow (1.2-1.5)</div>
+                            <div className="flex items-center gap-2"><span className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></span> Profound (&gt;2.0)</div>
                         </div>
                     </div>
                 </div>

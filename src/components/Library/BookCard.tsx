@@ -6,10 +6,11 @@ interface BookCardProps {
     book: BookDocType;
     onOpen: () => void;
     onDelete: (e: React.MouseEvent) => void;
+    onStop?: (e: React.MouseEvent) => void;
     onEstimateDensity?: (e: React.MouseEvent) => void;
 }
 
-export const BookCard: React.FC<BookCardProps> = ({ book, onOpen, onDelete, onEstimateDensity }) => {
+export const BookCard: React.FC<BookCardProps> = ({ book, onOpen, onDelete, onStop, onEstimateDensity }) => {
     const [chapters, setChapters] = useState<ChapterDocType[]>([]);
     const [readingTime, setReadingTime] = useState<string>('');
     const [processingStatus, setProcessingStatus] = useState<string>('');
@@ -89,21 +90,36 @@ export const BookCard: React.FC<BookCardProps> = ({ book, onOpen, onDelete, onEs
     }, [chapters]);
 
     const isReady = chapters.length > 0 && chapters.every(c => c.status === 'ready');
+    const isProcessing = chapters.some(c => c.status === 'processing');
 
     return (
         <div
             onClick={onOpen}
             className="cursor-pointer group relative bg-white/5 border border-white/10 hover:border-dune-gold transition-all duration-300 p-4 flex flex-col h-full"
         >
-            <button
-                onClick={onDelete}
-                className="absolute top-2 right-2 z-10 text-gray-500 hover:text-magma-vent opacity-0 group-hover:opacity-100 transition-opacity"
-                title="Delete Book"
-            >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-            </button>
+            <div className="absolute top-2 right-2 z-10 flex gap-2">
+                {isProcessing && onStop && (
+                    <button
+                        onClick={onStop}
+                        className="text-magma-vent hover:text-red-500 opacity-100 transition-opacity animate-pulse"
+                        title="Stop Processing"
+                    >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
+                        </svg>
+                    </button>
+                )}
+                <button
+                    onClick={onDelete}
+                    className={`text-gray-500 hover:text-magma-vent transition-opacity ${isProcessing ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+                    title="Delete Book"
+                >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                </button>
+            </div>
             {onEstimateDensity && isReady && (
                 <button
                     onClick={onEstimateDensity}

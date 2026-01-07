@@ -1,15 +1,11 @@
 import JSZip from 'jszip';
 import * as cheerio from 'cheerio';
-import PQueue from 'p-queue';
-import { checkAIHealth, generateUnifiedCompletion } from '../ai/service';
 import { initDB, type BookDocType, type ChapterDocType, type ImageDocType, type RawFileDocType } from '../sync/db';
 import { removeLicenseText } from './license';
 import { useSettingsStore } from '../store/settings';
-import { useAIStore } from '../store/ai';
 import { generateUUID } from '../../utils/uuid';
-
-// Queue for LLM processing (concurrency: 1)
-const llmQueue = new PQueue({ concurrency: 1 });
+import { scheduler } from './scheduler';
+import { analyzeDensityRange, chunkText } from './analysis';
 
 // Job control
 const activeJobs = new Set<string>();
@@ -21,6 +17,8 @@ export const stopProcessing = (bookId: string) => {
         state.stopped = true;
         console.log(`[Pipeline] Stop signal received for book ${bookId}`);
     }
+    // Also cancel any pending scheduler tasks
+    scheduler.removeTasksForBook(bookId);
 };
 
 export const isProcessing = (bookId: string) => activeJobs.has(bookId);
@@ -37,16 +35,9 @@ export const initialIngest = async (file: File, onProgress?: (msg: string) => vo
     const bookId = generateUUID();
     const zip = await JSZip.loadAsync(file);
 
-    // 1. Health Check
-    onProgress?.('Checking AI service...');
-    console.log('[Pipeline] Checking AI service health...');
-    const isAIUp = await checkAIHealth();
-    if (!isAIUp) {
-        console.error('[Pipeline] AI service check failed.');
-        throw new Error("WebLLM engine failed to initialize. Please check your internet connection or try reloading.");
-    }
-    console.log('[Pipeline] AI service is healthy.');
-
+    // 1. (Skipped) Health Check - We don't block ingestion on AI readiness anymore.
+    // The AI is only needed for background processing (summaries/density).
+    
     // 2. Find OPF to get metadata and spine
     const opfFile = Object.keys(zip.files).find(path => path.endsWith('.opf'));
     if (!opfFile) throw new Error('Invalid EPUB: No OPF file found');
@@ -199,6 +190,7 @@ export const processChaptersInBackground = async (bookId: string) => {
 
         const opfDir = opfFile.includes('/') ? opfFile.substring(0, opfFile.lastIndexOf('/') + 1) : '';
 
+        let firstContentChapterFound = false;
         let chapterIndex = 0;
         for (const idref of spineIds) {
             const href = manifest[idref];
@@ -217,7 +209,7 @@ export const processChaptersInBackground = async (bookId: string) => {
             if (chapterDoc && (chapterDoc.status === 'pending' || chapterDoc.status === 'processing' || chapterDoc.status === 'error')) {
                 console.log(`[Pipeline] Processing chapter ${chapterIndex + 1}/${spineIds.length}: ${chapterId}`);
                 // Capture the updated document instance to avoid conflict
-                let currentDoc = await chapterDoc.patch({ status: 'processing', progress: 0 });
+                const currentDoc = await chapterDoc.patch({ status: 'processing', progress: 0 });
 
                 try {
                     const fullPath = opfDir + href;
@@ -251,29 +243,23 @@ export const processChaptersInBackground = async (bookId: string) => {
                         rawText = removeLicenseText(rawText);
                         console.log(`[Pipeline] Chapter ${chapterIndex + 1}: Extracted ${rawText.length} chars of raw text.`);
 
-                        const startTime = Date.now();
-                        let processedWordsCount = 0;
-
                         // Pipeline: Clean -> Editor/Summary -> Density -> Save
                         const settings = useSettingsStore.getState();
-                        const { summarizerModel, summarizerBasePrompt, summarizerFragments } = settings;
-                        const summaryFragmentText = summarizerFragments.filter(f => f.enabled).map(f => f.text).join('\n');
-                        const summarySystemPrompt = `${summarizerBasePrompt}\n${summaryFragmentText}`;
-
-                        // Fallback for legacy setting if base prompt is empty (optional, but good for transition)
-                        const specificSummaryInstruction = settings.summaryPrompt || "Summarize the following text in 5 sentences.";
-
                         const rawChunks = chunkText(rawText, settings.summaryChunkSize || 2500);
                         console.log(`[Pipeline] Chapter ${chapterIndex + 1}: Split into ${rawChunks.length} chunks for AI processing.`);
+                        
+                        const hasContent = rawChunks.some(c => c.trim().length > 0);
+                        const isFirstContentChapter = hasContent && !firstContentChapterFound;
+                        if (isFirstContentChapter) {
+                            firstContentChapterFound = true;
+                        }
+
                         let allWords: string[] = [];
                         let allDensities: number[] = [];
                         const subchapters: { title: string; summary: string; startWordIndex: number; endWordIndex: number }[] = [];
 
                         for (let i = 0; i < rawChunks.length; i++) {
                             const chunk = rawChunks[i];
-                            console.log(`[Pipeline] Processing chunk ${i + 1}/${rawChunks.length} (Length: ${chunk.length} chars)`);
-
-                            // Pre-calculate words to determine indices immediately
                             const cleanedChunk = chunk;
                             const newWords = cleanedChunk.trim().split(/\s+/).filter(w => w.length > 0);
 
@@ -283,138 +269,67 @@ export const processChaptersInBackground = async (bookId: string) => {
                             const endWordIndex = startWordIndex + newWords.length;
 
                             // --- PRE-FILL: Immediate UI Update ---
-                            // Add words and default densities immediately so the user sees text while AI processes
                             allWords = [...allWords, ...newWords];
-                            const chunkDefaultDensities = new Array(newWords.length).fill(1.0);
+                            // Use 0 as "Pending Analysis" marker
+                            const chunkDefaultDensities = new Array(newWords.length).fill(0);
                             allDensities = [...allDensities, ...chunkDefaultDensities];
 
-                            const prefillDoc = await db.chapters.findOne(currentDoc.id).exec();
-                            if (prefillDoc) {
-                                await prefillDoc.incrementalModify((docData) => ({
-                                    ...docData,
-                                    content: [...allWords],
-                                    densities: [...allDensities],
-                                    status: 'processing' // Keep processing so TPM is tracked
-                                }));
-                            }
-                            // -------------------------------------
-
-                            // Shared state for this chunk
-                            let chunkTitle = `Part ${i + 1}`;
-                            let chunkSummary = '';
-                            let isJunk = false;
-
-                            // --- Task 1: Editor/Summary (Serial) ---
-                            try {
-                                const editorPrompt = `
-${summarySystemPrompt}
-
-Analyze the following text segment from a book.
-Task:
-1. Determine if this text is "CONTENT" (narrative, story, useful info) or "JUNK" (copyright page, table of contents, list of image references, empty space, or just garbage).
-2. If CONTENT, provide a short "title" (max 5 words) and a "summary" based on this instruction: "${specificSummaryInstruction}".
-3. If JUNK, return status "JUNK".
-
-OUTPUT JSON ONLY:
-{
-  "status": "CONTENT" | "JUNK",
-  "title": "...",
-  "summary": "..."
-}
-
-TEXT:
-${chunk.substring(0, 3000)}
-`;
-                                const completionResult = await llmQueue.add(async () => {
-                                    useAIStore.getState().setActivity(`Summarizing Chunk ${i + 1}`, summarizerModel);
-                                    try {
-                                        return await generateUnifiedCompletion(editorPrompt, summarizerModel);
-                                    } finally {
-                                        useAIStore.getState().setActivity(null);
-                                    }
-                                });
-                                const response = completionResult.response;
-
-                                const jsonMatch = response.match(/\{[\s\S]*\}/);
-                                if (jsonMatch) {
-                                    const parsed = JSON.parse(jsonMatch[0]);
-                                    if (parsed.status === 'JUNK') {
-                                        console.log(`[Pipeline] Chunk ${i + 1} marked as JUNK.`);
-                                        isJunk = true;
-                                    } else {
-                                        chunkTitle = parsed.title || chunkTitle;
-                                        chunkSummary = parsed.summary || '';
-                                        console.log(`[Pipeline] Chunk ${i + 1} Summary: "${chunkTitle}" (${chunkSummary.length} chars)`);
-
-                                        // IMMEDIATE UPDATE: Save subchapter info so user sees it ASAP
-                                        const freshDoc = await db.chapters.findOne(currentDoc.id).exec();
-                                        if (freshDoc) {
-                                            await freshDoc.incrementalModify((docData) => {
-                                                const currentSubchapters = docData.subchapters || [];
-                                                return {
-                                                    ...docData,
-                                                    subchapters: [...currentSubchapters, {
-                                                        title: chunkTitle,
-                                                        summary: chunkSummary,
-                                                        startWordIndex,
-                                                        endWordIndex
-                                                    }]
-                                                };
-                                            });
-                                        }
-                                    }
-                                }
-                            } catch (e) {
-                                console.warn('Failed to run Editor/Summary pass', e);
-                            }
-
-                            if (isJunk) continue;
-
-                            // --- Task 2: Density Analysis (Skipped - Manual Trigger Only) ---
-                            // Density analysis is now triggered manually via estimateBookDensity()
-                            // We leave densities as default (1.0) here.
-
-                            processedWordsCount += newWords.length;
-
-                            // Update local subchapters array to match DB state (for final save)
+                            // Create placeholder subchapter
                             subchapters.push({
-                                title: chunkTitle,
-                                summary: chunkSummary,
+                                title: `Part ${i + 1}`,
+                                summary: "", // Empty summary indicates pending
                                 startWordIndex,
                                 endWordIndex
                             });
 
-                            // Final update for this chunk (Content + Densities)
-                            const elapsedMin = (Date.now() - startTime) / 60000;
-                            const wpm = elapsedMin > 0 ? Math.round(processedWordsCount / elapsedMin) : 0;
+                            // --- SCHEDULE TASKS ---
+                            // Only schedule an initial window for the FIRST chapter.
+                            // Density is lightweight (tiny model) so we can do more up-front than summaries.
+                            // All other chapters start dormant and wake up when the user navigates there.
+                            const isActiveChapter = isFirstContentChapter;
+                            const INITIAL_DENSITY_CHUNKS = 3;
+                            const INITIAL_SUMMARY_CHUNKS = 3;
+                            const densityInitialStatus = (isActiveChapter && i < INITIAL_DENSITY_CHUNKS) ? 'pending' : 'dormant';
+                            const summaryInitialStatus = (isActiveChapter && i < INITIAL_SUMMARY_CHUNKS) ? 'pending' : 'dormant';
 
-                            // Use incrementalPatch to avoid revision conflicts
-                            const latestDoc = await db.chapters.findOne(currentDoc.id).exec();
-                            if (latestDoc) {
-                                currentDoc = latestDoc;
-                                await currentDoc.incrementalPatch({
-                                    content: [...allWords],
-                                    densities: [...allDensities],
-                                    // subchapters: subchapters, // Already updated by summaryPromise, but safe to include
-                                    progress: Math.round(((i + 1) / rawChunks.length) * 100),
-                                    processingSpeed: wpm,
-                                    lastChunkCompletedAt: Date.now(),
-                                    status: 'processing'
-                                });
-                            }
+                            // 1. Density Estimation
+                            scheduler.addTask({
+                                id: `${chapterId}_density_${i}`,
+                                bookId,
+                                chapterId,
+                                subchapterIndex: i,
+                                startWordIndex,
+                                endWordIndex,
+                                type: 'DENSITY',
+                                text: chunk
+                            }, densityInitialStatus);
+
+                            // 2. Summarization
+                            scheduler.addTask({
+                                id: `${chapterId}_summary_${i}`,
+                                bookId,
+                                chapterId,
+                                subchapterIndex: i,
+                                startWordIndex,
+                                endWordIndex,
+                                type: 'SUMMARY',
+                                text: chunk
+                            }, summaryInitialStatus);
                         }
+                        const INITIAL_DENSITY_CHUNKS = 3;
+                        const INITIAL_SUMMARY_CHUNKS = 3;
+                        const activeDensity = isFirstContentChapter ? Math.min(rawChunks.length, INITIAL_DENSITY_CHUNKS) : 0;
+                        const activeSummary = isFirstContentChapter ? Math.min(rawChunks.length, INITIAL_SUMMARY_CHUNKS) : 0;
+                        const activeCount = activeDensity + activeSummary;
+                        console.log(`[Pipeline] Scheduled ${rawChunks.length * 2} tasks for chapter ${chapterId} (${activeCount} active, rest dormant)`);
 
-                        const elapsedMin = (Date.now() - startTime) / 60000;
-                        const finalWpm = elapsedMin > 0 ? Math.round(allWords.length / elapsedMin) : 0;
-                        console.log(`[Pipeline] Chapter ${chapterId} processed: ${allWords.length} words in ${elapsedMin.toFixed(2)}m (${finalWpm} WPM)`);
-
-                        // Final update
+                        // Final update for this chapter (Content + Placeholders)
                         const finalDoc = await db.chapters.findOne(currentDoc.id).exec();
                         if (finalDoc) {
                             await finalDoc.incrementalPatch({
-                                status: 'ready',
+                                status: 'ready', // Ready for reading (even if pending analysis)
                                 content: [...allWords],
-                                densities: [...allDensities], // Should be fully populated now
+                                densities: [...allDensities],
                                 subchapters,
                                 title: extractedTitle || finalDoc.title,
                                 progress: 100
@@ -443,253 +358,8 @@ ${chunk.substring(0, 3000)}
     } finally {
         activeJobs.delete(bookId);
         processingState.delete(bookId);
-        console.log(`[Pipeline] Background processing finished/stopped for book: ${bookId}`);
+        console.log(`[Pipeline] Ingestion preparation complete for book: ${bookId}. Tasks have been handed off to the Scheduler.`);
     }
-};
-
-export const analyzeDensityRange = async (words: string[], onMetrics?: (metrics: Record<string, unknown>) => void): Promise<number[]> => {
-    const text = words.join(' ');
-
-    // Split into sentences (naive split, but sufficient for this purpose)
-    // Matches sequence of chars ending with .!? followed by space or end of string
-    // We use a regex that captures the delimiter to keep it, then rejoin
-    const rawSentences = text.match(/[^.!?]+[.!?]+(["']?)(?=\s|$)|[^.!?]+$/g) || [text];
-    const sentences = rawSentences.map(s => s.trim()).filter(s => s.length > 0);
-
-    const cleanKey = (text: string) => text.replace(/[^^\p{L}\p{N}\s]/gu, '').replace(/\s+/g, ' ').trim();
-
-    const parseLooseScoreObject = (maybeObjectText: string): Record<string, number> => {
-        const scores: Record<string, number> = {};
-        const lines = maybeObjectText.split(/\r?\n/);
-
-        for (const line of lines) {
-            const trimmed = line.trim();
-            if (!trimmed || trimmed === '{' || trimmed === '}') continue;
-
-            // Greedy match so we split on the *last* ':' (keys can contain ':' sometimes)
-            // Example invalid JSON line we want to tolerate: "" he thought": 1,
-            const m = trimmed.match(/^(.*):\s*(-?\d+(?:\.\d+)?)\s*,?\s*$/);
-            if (!m) continue;
-
-            let rawKey = m[1].trim();
-            const rawValue = m[2];
-
-            // Strip leading/trailing quotes, then strip any remaining quote characters.
-            // This intentionally tolerates invalid JSON where the key contains unescaped quotes.
-            rawKey = rawKey.replace(/^"+/, '').replace(/"+$/, '');
-            rawKey = rawKey.replace(/["\u201C\u201D]/g, '');
-
-            const parsedValue = Number(rawValue);
-            if (!Number.isFinite(parsedValue)) continue;
-
-            const normalizedKey = cleanKey(rawKey);
-            if (!normalizedKey) continue;
-            scores[normalizedKey] = parsedValue;
-        }
-
-        return scores;
-    };
-
-    let sentenceScores: Record<string, number> = {};
-
-    try {
-        const { librarianModelTier, librarianBasePrompt, librarianFragments } = useSettingsStore.getState();
-        const fragmentText = librarianFragments.filter(f => f.enabled).map(f => f.text).join('\n');
-        const fullSystemPrompt = `${librarianBasePrompt}\n${fragmentText}`;
-
-        const completionResult = await llmQueue.add(async () => {
-            useAIStore.getState().setActivity('Analyzing Density', librarianModelTier);
-            console.log(`[Pipeline] Analyzing density for ${sentences.length} sentences...`);
-            try {
-                return await generateUnifiedCompletion(
-                    `${fullSystemPrompt}
-
-Analyze the literary density of the following sentences.
-For each sentence, assign a "complexity_score" from 0 to 10.
-
-CRITERIA:
-- Score 0 (Junk/Structural): Footnotes, page numbers, misplaced chapter titles, URLS, copyright notices, dysfunctional formatting, or non-narrative artifacts.
-- Score 1-3 (Simple): Narrative, concrete examples, simple sentence structure.
-- Score 8-10 (Dense): Abstract theory, dialectics, archaic phrasing, multiple nested clauses.
-
-OUTPUT FORMAT:
-You are a JSON generator. Output ONLY valid JSON.
-- Do NOT include any conversational text (e.g. "Here is the JSON").
-- Do NOT use Markdown formatting (no \`\`\`json blocks).
-- Key: The first 5 words of the sentence, with ALL punctuation and quotes REMOVED.
-- Value: The score (number).
-
-EXAMPLE INPUT:
-"The wealth of those societies in which the capitalist mode of production prevails, presents itself as an immense accumulation of commodities. This is a fact. [12]"
-
-EXAMPLE OUTPUT:
-{
-  "The wealth of those societies": 9,
-  "This is a fact": 2,
-  "12": 0
-}
-
-TEXT TO ANALYZE:
-${sentences.join('\n')}
-`,
-                    librarianModelTier
-                );
-            } finally {
-                useAIStore.getState().setActivity(null);
-            }
-        });
-
-        const result = completionResult.response;
-        console.log(`[Pipeline] Density analysis result (length: ${result.length}):`, result.substring(0, 100) + '...');
-        if (completionResult.metrics && onMetrics) {
-            onMetrics(completionResult.metrics);
-        }
-
-        try {
-            let jsonMatch = result.match(/\{[\s\S]*\}/);
-            if (!jsonMatch) {
-                // Fallback: Try to match start of JSON if end is missing (truncated response)
-                jsonMatch = result.match(/\{[\s\S]*/);
-            }
-
-            if (jsonMatch) {
-                let jsonStr = jsonMatch[0];
-
-                // If truncated (missing closing brace), append it
-                if (!jsonStr.trim().endsWith('}')) {
-                    jsonStr = jsonStr.trim() + '}';
-                }
-
-                // Fix smart quotes ( ) to straight quotes (")
-                jsonStr = jsonStr.replace(/[\u201C\u201D]/g, '"');
-                // Remove trailing commas before closing braces/brackets
-                jsonStr = jsonStr.replace(/,(\s*[}\]])/g, '$1');
-
-                const normalizedScores: Record<string, number> = {};
-                let parsed: Record<string, unknown> | null = null;
-
-                try {
-                    parsed = JSON.parse(jsonStr) as Record<string, unknown>;
-                } catch (e) {
-                    // If the model emitted invalid JSON (e.g. unescaped quotes inside keys), fall back to a tolerant parser.
-                    const loose = parseLooseScoreObject(jsonStr);
-                    if (Object.keys(loose).length > 0) {
-                        sentenceScores = loose;
-                        parsed = null;
-                    } else {
-                        throw e;
-                    }
-                }
-
-                if (parsed) {
-                    for (const [k, v] of Object.entries(parsed)) {
-                        const numeric = typeof v === 'number' ? v : Number(v);
-                        if (!Number.isFinite(numeric)) continue;
-                        normalizedScores[cleanKey(k)] = numeric;
-                    }
-                    sentenceScores = normalizedScores;
-                }
-            } else {
-                console.warn('No JSON object found in density result:', result);
-            }
-        } catch (e) {
-            console.warn('Failed to parse density JSON', e, result);
-        }
-    } catch (e) {
-        console.warn('LLM failed for density analysis', e);
-    }
-
-    // Map scores back to words
-    const densities: number[] = [];
-
-    for (const sentence of sentences) {
-        // Find score for this sentence
-        // Try to match by first 5 words
-        const sentenceWords = sentence.split(/\s+/);
-        const rawFirst5 = sentenceWords.slice(0, 5).join(' ');
-        const cleanFirst5 = cleanKey(rawFirst5);
-
-        // Fuzzy match key? For now, exact match or default
-        let score = 5; // Default normal speed
-
-        // Try exact match
-        if (sentenceScores[cleanFirst5]) {
-            score = sentenceScores[cleanFirst5];
-        } else {
-            // Try finding a key that starts with the first few words
-            const cleanFirst3 = cleanKey(sentenceWords.slice(0, 3).join(' '));
-            const key = Object.keys(sentenceScores).find(k => k.startsWith(cleanFirst3));
-            if (key) score = sentenceScores[key];
-        }
-
-        // Calculate Density Factor (AI Layer)
-        let densityFactor = 1.0;
-        if (score === 0) {
-            densityFactor = 0;
-        } else {
-            densityFactor = 1 + ((score - 5) * 0.1);
-        }
-
-        // Apply to all words in this sentence
-        for (const word of sentenceWords) {
-            // Structural Rhythm (Code Layer)
-            let structuralMultiplier = 1.0;
-            if (word.match(/[.!?]["']?$/)) structuralMultiplier = 3.0;
-            else if (word.match(/[,;]["']?$/)) structuralMultiplier = 1.5;
-            else if (word.length > 8) structuralMultiplier = 1.2;
-
-            // Final Score
-            const finalScore = structuralMultiplier * densityFactor;
-
-            // Ensure we don't go too crazy
-            let clamped: number;
-            if (finalScore === 0) {
-                clamped = 0;
-            } else {
-                clamped = Math.max(0.5, Math.min(5.0, finalScore));
-            }
-            densities.push(clamped);
-        }
-    }
-
-    // If we have a mismatch in word count (due to splitting/joining), pad or trim
-    // This can happen if regex split differs from original word split
-    if (densities.length !== words.length) {
-        // console.warn(`Density word count mismatch. Expected ${words.length}, got ${densities.length}`);
-        if (densities.length < words.length) {
-            const missing = words.length - densities.length;
-            densities.push(...new Array(missing).fill(1.0));
-        } else {
-            // This is tricky, we might have generated more tokens? 
-            // Just slice to fit
-            return densities.slice(0, words.length);
-        }
-    }
-
-    return densities;
-};
-
-const chunkText = (text: string, maxChars: number): string[] => {
-    const words = text.split(/\s+/);
-    const chunks: string[] = [];
-    let currentChunk: string[] = [];
-    let currentLength = 0;
-
-    for (const word of words) {
-        currentChunk.push(word);
-        currentLength += word.length + 1; // +1 for space
-
-        // Break if we exceed maxChars AND we are at a sentence boundary
-        if (currentLength >= maxChars && word.match(/[.!?]["']?$/)) {
-            chunks.push(currentChunk.join(' '));
-            currentChunk = [];
-            currentLength = 0;
-        }
-    }
-    if (currentChunk.length > 0) {
-        chunks.push(currentChunk.join(' '));
-    }
-    return chunks;
 };
 
 export const estimateBookDensity = async (bookId: string) => {
@@ -744,21 +414,16 @@ export const estimateBookDensity = async (bookId: string) => {
 
                 const chunkWords = allWords.slice(start, end);
 
-                const densities = await analyzeDensityRange(chunkWords, async (metrics) => {
-                    if (metrics && metrics.eval_count && metrics.eval_duration) {
-                        const durationSeconds = (metrics.eval_duration as number) / 1e9;
-                        const tpm = durationSeconds > 0 ? ((metrics.eval_count as number) / durationSeconds) * 60 : 0;
-                        const freshDoc = await db.chapters.findOne(chapterId).exec();
-                        if (freshDoc) {
-                            await freshDoc.incrementalPatch({ lastTPM: Math.round(tpm) });
-                        }
-                    }
-                });
+                const { densities } = await analyzeDensityRange(chunkWords);
 
                 // Update densities
                 for (let k = 0; k < densities.length; k++) {
                     if (start + k < allDensities.length) {
                         allDensities[start + k] = densities[k];
+                        // Note: estimateBookDensity doesn't update analysisData currently in this loop logic
+                        // but this function is deprecated in favor of scheduler. 
+                        // If we wanted to, we would need to read/write analysisData here too.
+                        // For now leaving as is since main path uses scheduler.
                     }
                 }
 

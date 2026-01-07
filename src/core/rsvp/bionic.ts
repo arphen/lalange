@@ -27,6 +27,12 @@ export const getBionicSplit = (word: string): { bold: string, light: string } =>
 export const getBionicGradientHtml = (word: string): string => {
     if (!word) return '';
 
+    // Handle Hyphenated Words (Split and process parts)
+    if (word.includes('-') && !word.endsWith('-')) {
+        const parts = word.split('-');
+        return parts.map(part => getBionicGradientHtml(part)).join('<span class="opacity-50">-</span><br/>');
+    }
+
     let html = '';
     const len = word.length;
 
