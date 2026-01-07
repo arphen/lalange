@@ -24,7 +24,7 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
+# lib/ NOT ignored - needed for npm install from file: protocol
 lib64/
 parts/
 sdist/
@@ -36,6 +36,8 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
+# lib/ is NOT ignored - needed for npm install from git
+!lib/
 
 .conda/
 # PyInstaller
