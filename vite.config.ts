@@ -37,6 +37,10 @@ export default defineConfig(({ mode }) => {
     define: {
       __COMMIT_HASH__: JSON.stringify(commitHash),
     },
+    optimizeDeps: {
+      exclude: ['@mlc-ai/web-llm'], // Skip optimizing the package itself
+      entries: ['index.html'],      // Only scan the root index.html, ignoring examples in packages/
+    },
     plugins,
     server: {
       host: true,
