@@ -71,3 +71,7 @@ export default defineConfig([
   },
 ])
 ```
+
+## Acknowledgements
+
+This project embeds a custom version of [Web LLM](https://github.com/mlc-ai/web-llm), which is licensed under the [Apache License 2.0](packages/web-llm/LICENSE).
