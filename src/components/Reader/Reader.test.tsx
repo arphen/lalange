@@ -202,4 +202,26 @@ describe('Reader Component', () => {
             }));
         });
     });
+
+    it('should toggle play/pause with spacebar', async () => {
+        render(<Reader book={mockBook} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('play-overlay')).toBeInTheDocument();
+        });
+
+        // Press Spacebar
+        fireEvent.keyDown(window, { key: ' ', code: 'Space' });
+
+        // Should be playing now (no overlay)
+        await waitFor(() => {
+            expect(screen.queryByTestId('play-overlay')).not.toBeInTheDocument();
+        });
+
+        // Press Spacebar again
+        fireEvent.keyDown(window, { key: ' ', code: 'Space' });
+
+        await waitFor(() => {
+            expect(screen.getByTestId('play-overlay')).toBeInTheDocument();
+        });
+    });
 });
