@@ -1,7 +1,7 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { type BookDocType, type ChapterDocType, type ReadingStateDocType, initDB } from '../../core/sync/db';
 import { getBionicSplit, getBionicGradientHtml } from '../../core/rsvp/bionic';
-import { getVisualProcessingDelay } from '../../core/rsvp/timing';
+import { getVisualProcessingDelay, getSpeedFactor } from '../../core/rsvp/timing';
 import { Sidebar } from './Sidebar';
 import { useSettingsStore } from '../../core/store/settings';
 
@@ -11,7 +11,6 @@ import { processChaptersInBackground } from '../../core/ingest/pipeline';
 interface ReaderProps {
     book: BookDocType;
     onBack?: () => void;
-    onOpenSettings?: () => void;
 }
 
 const getDensityColor = (score: number) => {
@@ -25,10 +24,17 @@ const getDensityColor = (score: number) => {
     return 'text-red-500 font-bold'; // Profound
 };
 
-export const Reader: React.FC<ReaderProps> = ({ book, onOpenSettings }) => {
+export const Reader: React.FC<ReaderProps> = ({ book }) => {
     const [isPlaying, setIsPlaying] = useState(false);
     const { wpm, setWpm, summaryWpm } = useSettingsStore();
-    const [isHoveringDial, setIsHoveringDial] = useState(false);
+
+    // Actual WPM tracking (words displayed in last 60 seconds)
+    const wordTimestampsRef = useRef<number[]>([]);
+    const [actualWpm, setActualWpm] = useState(0);
+
+    // Speed control momentum (exponential decay integration)
+    // Each press adds to accumulated intensity, which decays over time
+    const speedMomentumRef = useRef<{ lastPress: number; intensity: number }>({ lastPress: 0, intensity: 0 });
 
     // State for current chapter and reading position
     const [currentChapter, setCurrentChapter] = useState<ChapterDocType | null>(null);
@@ -45,7 +51,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onOpenSettings }) => {
 
     // Sidebar & Chapters
     const [chapters, setChapters] = useState<ChapterDocType[]>([]);
-    const [showSidebar, setShowSidebar] = useState(true);
+    const [showChapters, setShowChapters] = useState(true);
     const [inspectingChapterId, setInspectingChapterId] = useState<string | null>(null);
     const inspectingChapter = chapters.find(c => c.id === inspectingChapterId);
     const [now, setNow] = useState(Date.now()); // Force re-render for live time updates
@@ -219,51 +225,51 @@ export const Reader: React.FC<ReaderProps> = ({ book, onOpenSettings }) => {
         });
     }, [renderWord, book.id]);
 
-    const scrollIntervalRef = useRef<number | null>(null);
-    const scrollStartTimeRef = useRef<number>(0);
-
-    const startScrolling = (direction: 'back' | 'fwd') => {
-        if (scrollIntervalRef.current) return;
-
-        scrollStartTimeRef.current = Date.now();
-
-        const scrollLoop = () => {
-            const now = Date.now();
-            const elapsed = now - scrollStartTimeRef.current;
-
-            // Exponential speed increase:
-            // Start slow (1 word per tick) for first 1s
-            // Then ramp up speed
-            let speed = 1;
-            if (elapsed > 1000) {
-                // After 1s, speed increases based on time
-                // e.g. at 2s -> speed 5, at 3s -> speed 10
-                speed = Math.floor(1 + (elapsed - 1000) / 200);
-            }
-
-            const newIndex = direction === 'back'
-                ? Math.max(0, indexRef.current - speed)
-                : Math.min(wordsRef.current.length - 1, indexRef.current + speed);
-
-            if (newIndex !== indexRef.current) {
-                indexRef.current = newIndex;
-                setCurrentWordIndex(newIndex);
-                renderWord(newIndex, wordsRef.current);
-                scrollIntervalRef.current = requestAnimationFrame(scrollLoop);
-            } else {
-                scrollIntervalRef.current = null; // Stop if hit boundary
-            }
-        };
-
-        scrollIntervalRef.current = requestAnimationFrame(scrollLoop);
-    };
-
-    const stopScrolling = () => {
-        if (scrollIntervalRef.current) {
-            cancelAnimationFrame(scrollIntervalRef.current);
-            scrollIntervalRef.current = null;
+    // Wheel/touchpad scroll handler for navigating through words
+    const handleWheel = useCallback((e: React.WheelEvent) => {
+        // Prevent default page scroll
+        e.preventDefault();
+        
+        // Stop playback when user scrolls
+        if (isPlayingRef.current) {
+            setIsPlaying(false);
         }
-    };
+        
+        // Calculate scroll amount - normalize for different input devices
+        // deltaY is positive for scroll down (forward), negative for scroll up (back)
+        const delta = e.deltaY;
+        
+        // Use deltaMode to handle different scroll units
+        // 0 = pixels, 1 = lines, 2 = pages
+        let scrollAmount: number;
+        if (e.deltaMode === 1) {
+            // Line mode (some mice)
+            scrollAmount = Math.sign(delta) * Math.ceil(Math.abs(delta));
+        } else if (e.deltaMode === 2) {
+            // Page mode
+            scrollAmount = Math.sign(delta) * 10;
+        } else {
+            // Pixel mode (trackpad, most common)
+            // Scale down for smooth scrolling - ~50 pixels = 1 word
+            scrollAmount = Math.sign(delta) * Math.ceil(Math.abs(delta) / 50);
+        }
+        
+        // Clamp to reasonable range
+        scrollAmount = Math.max(-20, Math.min(20, scrollAmount));
+        
+        if (scrollAmount === 0) return;
+        
+        const newIndex = Math.max(0, Math.min(
+            wordsRef.current.length - 1,
+            indexRef.current + scrollAmount
+        ));
+        
+        if (newIndex !== indexRef.current) {
+            indexRef.current = newIndex;
+            setCurrentWordIndex(newIndex);
+            renderWord(newIndex, wordsRef.current);
+        }
+    }, [renderWord, setIsPlaying]);
 
     const handleRiverClick = (e: React.MouseEvent) => {
         const target = e.target as HTMLElement;
@@ -321,17 +327,22 @@ export const Reader: React.FC<ReaderProps> = ({ book, onOpenSettings }) => {
             
             // === COGNITIVE STACK IMPLEMENTATION ===
             // T_display = T_floor + (K_info * Surprisal) + (K_vis * sqrt(L)) + P_punc
+            // All additive components scale down at higher target WPMs
             
-            // 1. T_floor (Physiological minimum)
-            const T_floor = 75;
+            // Speed factor: reduces cognitive delays at higher WPM targets
+            const speedFactor = getSpeedFactor(wpmRef.current);
+            
+            // 1. T_floor (Physiological minimum) - scales with speed
+            // At 150 WPM: 75ms, at 600 WPM: ~19ms, at 1000+ WPM: ~8ms minimum
+            const T_floor = 75 * speedFactor;
 
             // 2. Information component (Surprisal)
             // baseInterval represents the user's preferred "beat". 
             // currentDensity is the multiplier derived from LLM surprisal (around 1.0).
             const infoTime = baseInterval * currentDensity;
 
-            // 3. Visual & Punctuation component
-            const visualDelay = getVisualProcessingDelay(currentWord);
+            // 3. Visual & Punctuation component (scaled by speedFactor)
+            const visualDelay = getVisualProcessingDelay(currentWord, speedFactor);
 
             // Total Duration
             const targetInterval = T_floor + infoTime + visualDelay;
@@ -341,6 +352,9 @@ export const Reader: React.FC<ReaderProps> = ({ book, onOpenSettings }) => {
                     indexRef.current++;
                     accumulatorRef.current -= targetInterval;
                     shouldRender = true;
+
+                    // Track word timestamp for actual WPM calculation
+                    wordTimestampsRef.current.push(time);
 
                     // Check for Subchapter Boundary (only if NOT in summary mode)
                     if (!isSummaryActiveRef.current) {
@@ -463,6 +477,43 @@ export const Reader: React.FC<ReaderProps> = ({ book, onOpenSettings }) => {
         return () => clearInterval(interval);
     }, [isPlaying, saveProgress]);
 
+    // Calculate actual WPM from word timestamps (every 500ms)
+    useEffect(() => {
+        const calculateActualWpm = () => {
+            const now = performance.now();
+            const oneMinuteAgo = now - 60000;
+            
+            // Filter to words displayed in the last 60 seconds
+            const recentTimestamps = wordTimestampsRef.current.filter(t => t > oneMinuteAgo);
+            wordTimestampsRef.current = recentTimestamps; // Prune old entries
+            
+            // Calculate WPM based on words in last minute
+            // If we have less than a minute of data, extrapolate
+            if (recentTimestamps.length >= 2) {
+                const oldestTimestamp = recentTimestamps[0];
+                const timeSpanMs = now - oldestTimestamp;
+                const timeSpanMinutes = timeSpanMs / 60000;
+                const wordsPerMinute = Math.round(recentTimestamps.length / timeSpanMinutes);
+                setActualWpm(wordsPerMinute);
+            } else if (recentTimestamps.length === 1) {
+                // Just started, show 0 for now
+                setActualWpm(0);
+            } else {
+                setActualWpm(0);
+            }
+        };
+
+        if (!isPlaying) {
+            // Don't reset immediately, keep last known value visible
+            return;
+        }
+
+        const interval = setInterval(calculateActualWpm, 500);
+        calculateActualWpm(); // Initial calculation
+        
+        return () => clearInterval(interval);
+    }, [isPlaying]);
+
     // Save on unmount
     useEffect(() => {
         return () => {
@@ -514,6 +565,43 @@ export const Reader: React.FC<ReaderProps> = ({ book, onOpenSettings }) => {
         };
     }, [book.id, book.chapterIds, loadChapter]);
 
+    // Speed control handlers with momentum (must be before any conditional returns)
+    // Rapid repeated presses accumulate intensity for larger jumps
+    const calculateMomentumDelta = useCallback(() => {
+        const now = performance.now();
+        const momentum = speedMomentumRef.current;
+        
+        // Time since last press in seconds
+        const timeSinceLastPress = (now - momentum.lastPress) / 1000;
+        
+        // Decay the existing intensity (half-life of ~300ms)
+        const decayFactor = Math.exp(-timeSinceLastPress / 0.3);
+        const decayedIntensity = momentum.intensity * decayFactor;
+        
+        // Add new impulse (1.0 base)
+        const newIntensity = decayedIntensity + 1.0;
+        
+        // Update state
+        speedMomentumRef.current = { lastPress: now, intensity: newIntensity };
+        
+        // Calculate delta: base of 25, scaled by intensity (clamped to reasonable range)
+        // intensity 1 = 25, intensity 2 = 50, intensity 4 = 100, etc.
+        const baseDelta = 25;
+        const delta = Math.round(baseDelta * Math.min(newIntensity, 8));
+        
+        return delta;
+    }, []);
+
+    const handleSlower = useCallback(() => {
+        const delta = calculateMomentumDelta();
+        setWpm(Math.max(50, wpm - delta));
+    }, [wpm, setWpm, calculateMomentumDelta]);
+
+    const handleFaster = useCallback(() => {
+        const delta = calculateMomentumDelta();
+        setWpm(wpm + delta); // No max limit
+    }, [wpm, setWpm, calculateMomentumDelta]);
+
     // Live update sidebar for processing chapters
     useEffect(() => {
         const hasProcessing = chapters.some(c => c.status === 'processing');
@@ -557,9 +645,10 @@ export const Reader: React.FC<ReaderProps> = ({ book, onOpenSettings }) => {
         timeLeftStr = minutesLeft < 1 ? '< 1m' : `${Math.round(minutesLeft)}m`;
     }
 
-    // WPM Dial Logic
-    const dialColor = wpm < 300 ? 'text-blue-400' : wpm < 500 ? 'text-dune-gold' : 'text-red-500';
-    const dialGlow = isHoveringDial ? 'drop-shadow-[0_0_10px_rgba(255,255,255,0.5)]' : 'opacity-30 hover:opacity-100';
+    // Color based on actual speed vs target
+    const speedColor = actualWpm === 0 ? 'text-gray-500' : 
+        actualWpm < wpm * 0.8 ? 'text-blue-400' : 
+        actualWpm > wpm * 1.2 ? 'text-red-400' : 'text-dune-gold';
 
     // Calculate word to render for React (to avoid stale content on re-renders)
     // When playing, the loop updates the DOM directly.
@@ -570,45 +659,38 @@ export const Reader: React.FC<ReaderProps> = ({ book, onOpenSettings }) => {
         : (wordsRef.current[currentWordIndex] || '');
 
     return (
-        <div className="relative w-full h-screen bg-basalt text-white overflow-hidden flex">
+        <div className="relative w-full h-full min-h-0 bg-basalt text-white overflow-hidden flex">
             {/* Floating Header / Controls */}
             <div className="absolute top-0 left-0 right-0 z-[60] p-4 flex justify-between items-start pointer-events-none">
-                {/* Menu Button */}
-                <button
-                    onClick={() => setShowSidebar(!showSidebar)}
-                    className="pointer-events-auto p-3 bg-black/40 backdrop-blur-md rounded-full border border-white/10 text-dune-gold hover:bg-white/10 transition-colors shadow-lg"
-                    title="Chapters"
-                >
-                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        {showSidebar ? (
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                        ) : (
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-                        )}
-                    </svg>
-                </button>
+                <div className="w-12" />
 
                 {/* Chapter Title (Centered) */}
                 <div className="mt-2 px-6 py-2 bg-black/20 backdrop-blur-sm rounded-full border border-white/5 shadow-lg">
                     <h3 className="font-mono text-xs text-gray-400 tracking-widest uppercase">{currentChapter?.title}</h3>
                 </div>
 
-                {/* Settings Button */}
-                <button data-testid="settings-button" onClick={onOpenSettings}
-                    className="pointer-events-auto p-3 bg-black/40 backdrop-blur-md rounded-full border border-white/10 text-dune-gold hover:bg-white/10 transition-colors shadow-lg"
-                    title="Settings"
-                >
-                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                    </svg>
-                </button>
+                <div className="pointer-events-auto flex items-start gap-3">
+                    {/* Chapters Button */}
+                    <button
+                        onClick={() => setShowChapters(!showChapters)}
+                        className="p-3 bg-black/40 backdrop-blur-md rounded-full border border-white/10 text-dune-gold hover:bg-white/10 transition-colors shadow-lg"
+                        title="Chapters"
+                    >
+                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            {showChapters ? (
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                            ) : (
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                            )}
+                        </svg>
+                    </button>
+                </div>
             </div>
 
-            {/* Sidebar (Chapters) */}
+            {/* Chapters Drawer (Right) */}
             <div
                 data-testid="sidebar-container"
-                className={`fixed inset-y-0 left-0 z-50 w-80 bg-basalt border-r border-white/10 transform transition-transform duration-300 ${showSidebar ? 'translate-x-0' : '-translate-x-full'}`}
+                className={`fixed inset-y-0 right-0 z-50 w-80 bg-basalt border-l border-white/10 transform transition-transform duration-300 ${showChapters ? 'translate-x-0' : 'translate-x-full'}`}
                 style={{ willChange: 'transform' }}
             >
                 <Sidebar
@@ -616,7 +698,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onOpenSettings }) => {
                     currentChapter={currentChapter}
                     onLoadChapter={(id, index) => {
                         loadChapter(id, index || 0);
-                        setShowSidebar(false);
+                        setShowChapters(false);
                     }}
                     onInspectChapter={(chapter) => setInspectingChapterId(chapter.id)}
                     wpm={wpm}
@@ -629,27 +711,40 @@ export const Reader: React.FC<ReaderProps> = ({ book, onOpenSettings }) => {
 
             {/* Main Reader Area (Full Screen) */}
             <div
-                className={`flex-1 h-full relative flex flex-col min-w-0 transition-all duration-300 ${showSidebar ? 'ml-80' : 'ml-0'}`}
-                style={{ marginLeft: showSidebar ? '20rem' : '0' }}
+                className={`flex-1 h-full relative flex flex-col min-w-0 transition-all duration-300 ${showChapters ? 'mr-80' : 'mr-0'}`}
+                style={{ marginRight: showChapters ? '20rem' : '0' }}
             >
                 <div className="w-full h-full flex flex-col relative group">
 
                     {/* Top Zone: Previous Context */}
-                    <div className="flex-1 w-full overflow-hidden relative mask-gradient-top flex justify-center">
-                        <div ref={prevContainerRef} className="w-full max-w-2xl h-full flex flex-wrap content-end justify-start p-8 md:p-16 font-mono text-lg md:text-xl leading-relaxed select-none overflow-hidden" onClick={handleRiverClick}></div>
+                    <div 
+                        className="flex-1 w-full overflow-hidden relative mask-gradient-top flex justify-center"
+                    >
+                        <div 
+                            ref={prevContainerRef} 
+                            className="w-full max-w-2xl h-full flex flex-wrap content-end justify-start p-8 md:p-16 font-mono text-lg md:text-xl leading-relaxed select-none overflow-hidden border-x border-white/5 cursor-ns-resize" 
+                            onClick={handleRiverClick}
+                            onWheel={handleWheel}
+                        ></div>
                     </div>
 
                     {/* Middle Zone: RSVP (Click to Toggle) */}
                     <div
                         data-testid="rsvp-container"
-                        className="relative h-48 w-full flex items-center justify-center bg-black/20 border-y border-white/5 z-30 cursor-pointer hover:bg-white/5 transition-colors"
+                        className="relative h-48 w-full flex items-center justify-center z-30"
                         onClick={() => setIsPlaying(!isPlayingRef.current)}
                     >
-                        {/* Bionic Word */}
-                        <div ref={rsvpRef} className={`text-6xl md:text-8xl font-mono tracking-tight whitespace-nowrap drop-shadow-[0_0_15px_rgba(255,255,255,0.5)] ${isSummaryActive ? 'text-amber-400 italic' : 'text-white'}`}>
-                            {wordToRender && (
-                                <span dangerouslySetInnerHTML={{ __html: getBionicGradientHtml(wordToRender) }} />
-                            )}
+                        {/* Text area container with border */}
+                        <div 
+                            className="w-full max-w-2xl h-full flex items-center justify-center bg-black/20 border border-white/5 hover:border-white/10 transition-colors cursor-ns-resize"
+                            onWheel={handleWheel}
+                        >
+                            {/* Bionic Word */}
+                            <div ref={rsvpRef} className={`text-6xl md:text-8xl font-mono tracking-tight whitespace-nowrap drop-shadow-[0_0_15px_rgba(255,255,255,0.5)] ${isSummaryActive ? 'text-amber-400 italic' : 'text-white'}`}>
+                                {wordToRender && (
+                                    <span dangerouslySetInnerHTML={{ __html: getBionicGradientHtml(wordToRender) }} />
+                                )}
+                            </div>
                         </div>
 
                         {/* Subchapter Progress Lights */}
@@ -672,7 +767,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onOpenSettings }) => {
                             </div>
                         )}
 
-                        {/* Play/Pause Overlay */}
+                        {/* Play/Pause Overlay - positioned over the RSVP container */}
                         {!isPlaying && (
                             <div data-testid="play-overlay" className="absolute inset-0 flex items-center justify-center pointer-events-none animate-in fade-in duration-200">
                                 <div className="bg-black/40 backdrop-blur-sm p-6 rounded-full border border-white/10 shadow-2xl">
@@ -685,67 +780,70 @@ export const Reader: React.FC<ReaderProps> = ({ book, onOpenSettings }) => {
                     </div>
 
                     {/* Bottom Zone: Next Context */}
-                    <div className="flex-1 w-full overflow-hidden relative mask-gradient-bottom flex justify-center">
-                        <div ref={nextContainerRef} className="w-full max-w-2xl h-full flex flex-wrap content-start justify-start p-8 md:p-16 font-mono text-lg md:text-xl leading-relaxed select-none overflow-hidden" onClick={handleRiverClick}></div>
+                    <div 
+                        className="flex-1 w-full overflow-hidden relative mask-gradient-bottom flex justify-center"
+                    >
+                        <div 
+                            ref={nextContainerRef} 
+                            className="w-full max-w-2xl h-full flex flex-wrap content-start justify-start p-8 md:p-16 font-mono text-lg md:text-xl leading-relaxed select-none overflow-hidden border-x border-white/5 cursor-ns-resize" 
+                            onClick={handleRiverClick}
+                            onWheel={handleWheel}
+                        ></div>
                     </div>
 
-                    {/* Scroll Zones */}
-                    <div
-                        className="absolute top-0 left-1/2 -translate-x-1/2 w-full max-w-2xl h-12 z-40 opacity-30 hover:opacity-100 transition-opacity flex items-center justify-center cursor-n-resize bg-gradient-to-b from-black/80 to-transparent pointer-events-auto group/scroll"
-                        onMouseEnter={() => startScrolling('back')}
-                        onMouseLeave={stopScrolling}
-                    >
-                        <svg className="w-6 h-6 text-white/50 group-hover/scroll:text-white transition-colors animate-bounce" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
-                        </svg>
-                    </div>
-                    <div
-                        className="absolute bottom-0 left-1/2 -translate-x-1/2 w-full max-w-2xl h-12 z-40 opacity-30 hover:opacity-100 transition-opacity flex items-center justify-center cursor-s-resize bg-gradient-to-t from-black/80 to-transparent pointer-events-auto group/scroll"
-                        onMouseEnter={() => startScrolling('fwd')}
-                        onMouseLeave={stopScrolling}
-                    >
-                        <svg className="w-6 h-6 text-white/50 group-hover/scroll:text-white transition-colors animate-bounce" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                        </svg>
+                    {/* Scroll hint - subtle indicator that scrolling is available */}
+                    <div className="absolute top-4 left-1/2 -translate-x-1/2 z-40 opacity-0 group-hover:opacity-30 transition-opacity duration-500 pointer-events-none">
+                        <div className="text-[10px] font-mono text-white/50 tracking-widest uppercase flex items-center gap-2">
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 9l4-4 4 4m0 6l-4 4-4-4" />
+                            </svg>
+                            scroll to navigate
+                        </div>
                     </div>
 
                 </div>
             </div>
 
-            {/* WPM Dial Overlay */}
-            <div 
-                className={`absolute bottom-8 right-8 z-[70] flex flex-col items-center transition-all duration-500 ${dialGlow}`}
-                onMouseEnter={() => setIsHoveringDial(true)}
-                onMouseLeave={() => setIsHoveringDial(false)}
-            >
-                <div className="relative w-24 h-24 flex items-center justify-center">
-                    {/* Dial Ring */}
-                    <svg className="w-full h-full transform -rotate-90" viewBox="0 0 100 100">
-                        <circle cx="50" cy="50" r="45" fill="none" stroke="currentColor" strokeWidth="2" className="text-white/10" />
-                        <circle 
-                            cx="50" cy="50" r="45" fill="none" stroke="currentColor" strokeWidth="2" 
-                            className={`${dialColor} transition-all duration-300`}
-                            strokeDasharray="283"
-                            strokeDashoffset={283 - (283 * (wpm / 1000))}
-                        />
+            {/* Speed Control Overlay */}
+            <div className="absolute bottom-8 right-8 z-[70] flex items-center gap-3 opacity-40 hover:opacity-100 transition-opacity duration-300">
+                {/* Slower Button */}
+                <button
+                    onClick={handleSlower}
+                    className="p-2 bg-black/60 backdrop-blur-sm rounded-full border border-white/10 text-white/60 hover:text-white hover:bg-black/80 hover:border-white/30 transition-all active:scale-95"
+                    title="Slower (-50 WPM)"
+                >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 12H4" />
                     </svg>
-                    
-                    {/* Value Display */}
-                    <div className="absolute inset-0 flex flex-col items-center justify-center">
-                        <span className={`text-2xl font-mono font-bold ${dialColor}`}>{wpm}</span>
-                        <span className="text-[8px] text-gray-500 tracking-widest">WPM</span>
-                    </div>
+                </button>
 
-                    {/* Invisible Range Input for Interaction */}
-                    <input 
-                        type="range" 
-                        min="100" max="1000" step="10"
-                        value={wpm}
-                        onChange={(e) => setWpm(parseInt(e.target.value))}
-                        className="absolute inset-0 w-full h-full opacity-0 cursor-ns-resize"
-                        title="Adjust Speed"
-                    />
+                {/* WPM Display */}
+                <div className="flex flex-col items-center px-4 py-2 bg-black/60 backdrop-blur-sm rounded-lg border border-white/10 min-w-[80px]">
+                    <div className="flex items-baseline gap-1">
+                        <span className={`text-xl font-mono font-bold tabular-nums ${speedColor}`}>
+                            {actualWpm > 0 ? actualWpm : '—'}
+                        </span>
+                    </div>
+                    <span className="text-[9px] text-gray-500 tracking-widest uppercase">
+                        {actualWpm > 0 ? 'WPM' : 'PAUSED'}
+                    </span>
+                    {actualWpm > 0 && (
+                        <span className="text-[8px] text-gray-600 mt-0.5">
+                            target: {wpm}
+                        </span>
+                    )}
                 </div>
+
+                {/* Faster Button */}
+                <button
+                    onClick={handleFaster}
+                    className="p-2 bg-black/60 backdrop-blur-sm rounded-full border border-white/10 text-white/60 hover:text-white hover:bg-black/80 hover:border-white/30 transition-all active:scale-95"
+                    title="Faster (+50 WPM)"
+                >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                    </svg>
+                </button>
             </div>
 
             {/* Inspection Modal */}

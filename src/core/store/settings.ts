@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { type ModelTier } from '../ai/webllm';
+import { type DurationStrategyId, DEFAULT_STRATEGY_ID } from '../rsvp/duration';
 
 export type ThemeMode = 'volcanic' | 'dunes' | 'ash';
 
@@ -23,6 +24,8 @@ interface SettingsState {
     setSummaryWpm: (wpm: number) => void;
     fontScale: number;
     setFontScale: (scale: number) => void;
+    durationStrategy: DurationStrategyId;
+    setDurationStrategy: (strategy: DurationStrategyId) => void;
 
     // Features
     bionicEnabled: boolean;
@@ -131,6 +134,9 @@ export const useSettingsStore = create<SettingsState>()(
 
             fontScale: 1,
             setFontScale: (fontScale) => set({ fontScale }),
+
+            durationStrategy: DEFAULT_STRATEGY_ID,
+            setDurationStrategy: (durationStrategy) => set({ durationStrategy }),
 
             bionicEnabled: true,
             setBionicEnabled: (bionicEnabled) => set({ bionicEnabled }),
