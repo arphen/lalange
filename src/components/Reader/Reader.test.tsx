@@ -122,7 +122,7 @@ describe('Reader Component', () => {
         await waitFor(() => {
             const sidebar = screen.getByTestId('sidebar-container');
             expect(sidebar).toHaveClass('translate-x-0');
-            expect(sidebar).not.toHaveClass('-translate-x-full');
+            expect(sidebar).not.toHaveClass('translate-x-full');
         });
     });
 

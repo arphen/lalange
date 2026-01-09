@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useSettingsStore, type PromptFragment } from '../../core/store/settings';
 import { useAIStore } from '../../core/store/ai';
 import { getEngine, MODEL_INFO, type ModelTier, isModelCached, deleteModel } from '../../core/ai/webllm';
+import { getAvailableStrategies, type DurationStrategyId } from '../../core/rsvp/duration';
 import { clsx } from 'clsx';
 import { BrandName } from '../BrandName';
 
@@ -317,6 +318,33 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                                         Note: The pacing engine requires a model capable of returning log-probabilities (logprobs). 
                                         Standard chat models may not work efficiently.
                                     </p>
+                                </div>
+                            </div>
+
+                            {/* Duration Strategy Selection */}
+                            <div className="bg-white/5 rounded-lg p-8 border border-white/10 space-y-6">
+                                <div>
+                                    <label className="block text-xs text-dune-gold mb-2 uppercase tracking-widest font-bold">Duration Strategy</label>
+                                    <p className="text-xs text-gray-500 mb-4">
+                                        Controls how word display times are calculated from the complexity analysis.
+                                    </p>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                        {getAvailableStrategies().filter(s => s.id !== 'constant').map(strategy => (
+                                            <button
+                                                key={strategy.id}
+                                                onClick={() => settings.setDurationStrategy(strategy.id as DurationStrategyId)}
+                                                className={clsx(
+                                                    "p-4 rounded border text-left transition-all",
+                                                    settings.durationStrategy === strategy.id
+                                                        ? "bg-dune-gold text-black border-dune-gold"
+                                                        : "bg-black/20 border-white/10 text-gray-400 hover:border-white/30 hover:text-white"
+                                                )}
+                                            >
+                                                <div className="font-bold text-sm">{strategy.name}</div>
+                                                <div className="text-[10px] opacity-70 mt-2 leading-relaxed">{strategy.description}</div>
+                                            </button>
+                                        ))}
+                                    </div>
                                 </div>
                             </div>
 
