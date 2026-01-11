@@ -1,6 +1,6 @@
 
 import { describe, it, expect } from 'vitest';
-import { getBionicSplit } from './bionic';
+import { getBionicSplit, getBionicGradientHtml, getDashHtml, isDashToken } from './bionic';
 
 describe('getBionicSplit', () => {
     it('should handle empty string', () => {
@@ -23,5 +23,62 @@ describe('getBionicSplit', () => {
 
     it('should handle long words', () => {
         expect(getBionicSplit('information')).toEqual({ bold: 'infor', light: 'mation' });
+    });
+});
+
+describe('isDashToken', () => {
+    it('should recognize em-dash as dash token', () => {
+        expect(isDashToken('—')).toBe(true);
+    });
+
+    it('should recognize en-dash as dash token', () => {
+        expect(isDashToken('–')).toBe(true);
+    });
+
+    it('should recognize double hyphen as dash token', () => {
+        expect(isDashToken('--')).toBe(true);
+    });
+
+    it('should NOT recognize regular words as dash tokens', () => {
+        expect(isDashToken('hello')).toBe(false);
+        expect(isDashToken('perhaps')).toBe(false);
+    });
+
+    it('should NOT recognize single hyphen as dash token', () => {
+        expect(isDashToken('-')).toBe(false);
+    });
+});
+
+describe('getDashHtml', () => {
+    it('should return HTML with rsvp-dash class', () => {
+        const html = getDashHtml();
+        expect(html).toContain('rsvp-dash');
+    });
+
+    it('should normalize all dashes to em-dash display', () => {
+        // The function always returns em-dash regardless of usage context
+        const html = getDashHtml();
+        expect(html).toContain('—');
+    });
+});
+
+describe('getBionicGradientHtml', () => {
+    it('should return dash HTML for dash tokens', () => {
+        const html = getBionicGradientHtml('—');
+        expect(html).toContain('rsvp-dash');
+        expect(html).toContain('—');
+    });
+
+    it('should return gradient HTML for regular words', () => {
+        const html = getBionicGradientHtml('hello');
+        expect(html).toContain('font-bold');
+        expect(html).toContain('font-semibold');
+    });
+
+    it('should handle em-dash token correctly', () => {
+        const html = getBionicGradientHtml('—');
+        // Should use dash rendering, not gradient rendering
+        expect(html).not.toContain('font-bold');
+        expect(html).toContain('rsvp-dash');
     });
 });

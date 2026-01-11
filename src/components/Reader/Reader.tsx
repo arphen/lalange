@@ -423,7 +423,7 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
         }
 
         requestRef.current = requestAnimationFrame(loopInternal);
-    }, [wpm, renderWord, loadChapter]);
+    }, [wpm, renderWord, loadChapter, summaryWpm]);
 
     // Sync refs
     useEffect(() => {

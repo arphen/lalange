@@ -10,7 +10,7 @@ describe('Database Initialization', () => {
             const db = await initDB();
 
             expect(db).toBeDefined();
-            expect(db.name).toBe('lalange_db_v12');
+            expect(db.name).toBe('lalange_db_v15');
             
             // Verify the database was created with correct collections
             expect(db.books).toBeDefined();
@@ -25,7 +25,7 @@ describe('Database Initialization', () => {
             const db2 = await initDB();
 
             expect(db1).toBe(db2);
-            expect(db1.name).toBe('lalange_db_v12');
+            expect(db1.name).toBe('lalange_db_v15');
         });
 
         it('should have all required collections', async () => {

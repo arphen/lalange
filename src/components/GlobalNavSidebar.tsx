@@ -1,5 +1,6 @@
 import { clsx } from 'clsx';
 import { BrandName } from './BrandName';
+import { AIStatusPanel } from './AIStatusPanel';
 import type { BookDocType } from '../core/sync/db';
 
 export type ViewState = 'archive' | 'reader' | 'library' | 'settings' | 'manifesto';
@@ -8,7 +9,6 @@ interface GlobalNavSidebarProps {
   view: ViewState;
   currentBook: BookDocType | null;
   onNavigate: (view: ViewState) => void;
-  aiActivity?: string | null;
 }
 
 interface NavItemProps {
@@ -36,19 +36,17 @@ const NavItem = ({ label, active, onClick, disabled }: NavItemProps) => (
   </button>
 );
 
-export function GlobalNavSidebar({ view, currentBook, onNavigate, aiActivity }: GlobalNavSidebarProps) {
+export function GlobalNavSidebar({ view, currentBook, onNavigate }: GlobalNavSidebarProps) {
   return (
     <div className="h-full w-64 shrink-0 border-r border-white/10 bg-black/20 backdrop-blur-sm flex flex-col">
       <div className="p-4 border-b border-white/10">
         <div className="flex items-center justify-between gap-2">
           <BrandName className="text-lg" />
         </div>
-        {aiActivity && (
-          <div className="mt-3 flex items-center gap-2 text-[10px] text-dune-gold font-mono border border-dune-gold/20 px-2 py-1 rounded bg-dune-gold/5">
-            <span className="animate-pulse">●</span>
-            <span className="uppercase tracking-wider truncate">{aiActivity}</span>
-          </div>
-        )}
+        {/* AI Status Panel - Always visible */}
+        <div className="mt-3">
+          <AIStatusPanel variant="sidebar" />
+        </div>
       </div>
 
       <div className="flex-1 p-4 flex flex-col gap-2">

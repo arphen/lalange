@@ -129,6 +129,33 @@ export const chapterSchema = {
                     endWordIndex: { type: 'number' }
                 }
             }
+        },
+        metadata: {
+            type: 'object',
+            properties: {
+                classificationType: { 
+                    type: 'string',
+                    enum: ['content', 'license', 'toc', 'cover', 'frontmatter', 'backmatter', 'image']
+                },
+                classificationReason: { type: 'string' },
+                licenseInfo: {
+                    type: 'object',
+                    properties: {
+                        publisher: { type: 'string' },
+                        text: { type: 'string' }
+                    }
+                },
+                tocEntries: {
+                    type: 'array',
+                    items: {
+                        type: 'object',
+                        properties: {
+                            title: { type: 'string' },
+                            href: { type: 'string' }
+                        }
+                    }
+                }
+            }
         }
     },
     required: ['id', 'bookId', 'index', 'content'],
