@@ -27,7 +27,7 @@ export const isDashToken = isPauseToken;
  * Dashes get special visual treatment - larger, centered, with a subtle glow
  * to emphasize the cognitive pause they represent.
  */
-export const getDashHtml = (dash: string): string => {
+export const getDashHtml = (): string => {
     // Use em-dash (—) as the canonical display, regardless of input
     // This normalizes en-dash, double hyphen, etc. to a consistent visual
     const displayChar = '—';
@@ -50,7 +50,7 @@ export const getBionicGradientHtml = (word: string): string => {
 
     // Handle dash/pause tokens with special rendering
     if (isPauseToken(word)) {
-        return getDashHtml(word);
+        return getDashHtml();
     }
 
     // Handle Hyphenated Words (Split and process parts)
