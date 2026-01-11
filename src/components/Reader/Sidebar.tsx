@@ -15,6 +15,35 @@ interface SidebarProps {
     now: number;
 }
 
+/**
+ * Gets the display name for a subchapter:
+ * - Always uses first 5 words of chunk content with ellipsis when content is available
+ * - Falls back to title only if content is not yet loaded
+ */
+export const getSubchapterDisplayName = (
+    sub: { title: string; startWordIndex: number; endWordIndex: number },
+    chapterContent: string[] | undefined
+): string => {
+    // Always show first words if content is available for this subchapter
+    if (chapterContent && chapterContent.length > sub.startWordIndex) {
+        const chunkWords = chapterContent.slice(sub.startWordIndex, Math.min(sub.startWordIndex + 5, sub.endWordIndex));
+        if (chunkWords.length > 0) {
+            return chunkWords.join(' ') + '...';
+        }
+    }
+    return sub.title;
+};
+
+/**
+ * Calculate summary progress for a subchapter
+ * Returns: 0 = not started, 0.5 = in progress (density done, no summary), 1 = complete
+ */
+export const getSummaryProgress = (densityProgress: number, hasSummary: boolean): number => {
+    if (hasSummary) return 1;
+    if (densityProgress >= 1) return 0.5; // Density done, summary in progress
+    return 0;
+};
+
 export const Sidebar: React.FC<SidebarProps> = ({
     chapters,
     currentChapter,
@@ -28,13 +57,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
     const [expandedSummary, setExpandedSummary] = useState<string | null>(null);
     const aiState = useAIStore();
 
+    // Filter out image chapters
+    const displayChapters = chapters.filter(c => c.metadata?.classificationType !== 'image');
+
     // Calculate total stats
-    const totalWords = chapters.reduce((acc, c) => acc + (c.content?.length || 0), 0);
+    const totalWords = displayChapters.reduce((acc, c) => acc + (c.content?.length || 0), 0);
     const totalTimeMinutes = totalWords / wpm;
     const timeBank = formatReadingTime(totalTimeMinutes);
 
     // Calculate average ingest speed (from processing chapters)
-    const processingChapters = chapters.filter(c => c.status === 'processing');
+    const processingChapters = displayChapters.filter(c => c.status === 'processing');
     const ingestSpeed = processingChapters.length > 0
         ? Math.round(processingChapters.reduce((acc, c) => acc + (c.lastTPM || 0), 0) / processingChapters.length)
         : 0;
@@ -79,7 +111,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
             {/* Chapter List (Fill-Bars) */}
             <div className="flex-1 overflow-y-auto p-2 space-y-1">
-                {chapters.map(chapter => {
+                {displayChapters.map(chapter => {
                     const readingTime = getChapterReadingTime(chapter);
                     const isCurrent = currentChapter?.id === chapter.id;
                     const isProcessing = chapter.status === 'processing';
@@ -164,9 +196,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                             (currentWordIndex < sub.endWordIndex || (idx === chapter.subchapters!.length - 1 && currentWordIndex >= sub.startWordIndex));
 
                                         // Calculate Density Progress
+                                        // Densities are initialized with 0 (pending) and filled with values >= 0.5 when processed
                                         const densitySlice = chapter.densities?.slice(sub.startWordIndex, sub.endWordIndex) || [];
+                                        const expectedLength = sub.endWordIndex - sub.startWordIndex;
+                                        // Count densities that have been processed (> 0 means analyzed, since pending = 0)
                                         const processedDensityCount = densitySlice.filter(d => d > 0).length;
-                                        const densityProgress = densitySlice.length > 0 ? processedDensityCount / densitySlice.length : 0;
+                                        // Progress is based on how many we have vs how many we expect
+                                        const densityProgress = expectedLength > 0 ? Math.min(1, processedDensityCount / expectedLength) : 0;
+                                        
+                                        // Check if summary exists and is non-empty
+                                        const hasSummary = Boolean(sub.summary && sub.summary.trim().length > 0);
 
                                         return (
                                             <div key={idx} className="flex flex-col relative group/sub">
@@ -193,30 +232,52 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                                     <div className="flex-1 min-w-0 pr-2">
                                                         <button
                                                             className={clsx(
-                                                                "text-left text-[10px] transition-colors truncate w-full",
+                                                                "text-left text-[10px] transition-colors truncate w-full cursor-pointer",
                                                                 isActive ? "text-white font-bold" : (isFullyReady ? "text-gray-500 hover:text-dune-gold" : (isSafeToRead ? "text-canarian-pine font-bold" : "text-dune-gold font-bold"))
                                                             )}
                                                             onClick={(e) => {
                                                                 e.stopPropagation();
-                                                                if (isExpanded) {
-                                                                    if (hasStarted) {
-                                                                        onLoadChapter(chapter.id, sub.startWordIndex);
-                                                                    }
-                                                                } else {
-                                                                    setExpandedSummary(summaryId);
-                                                                }
+                                                                e.preventDefault();
+                                                                setExpandedSummary(isExpanded ? null : summaryId);
                                                             }}
+                                                            data-testid={`subchapter-btn-${idx}`}
                                                         >
-                                                            {sub.title} {!isFullyReady && "..."}
+                                                            {getSubchapterDisplayName(sub, chapter.content)}
                                                         </button>
                                                         
-                                                        {/* Density Progress Bar */}
-                                                        {densityProgress < 1 && densityProgress > 0 && (
-                                                            <div className="w-full h-0.5 bg-gray-800 mt-1 rounded-full overflow-hidden">
-                                                                <div 
-                                                                    className="h-full bg-magma-vent transition-all duration-500"
-                                                                    style={{ width: `${densityProgress * 100}%` }}
-                                                                />
+                                                        {/* Fused 2px Progress Bar: 1px red (density) + 1px purple (summary) */}
+                                                        {(densityProgress < 1 || !hasSummary) && (
+                                                            <div className="w-full mt-1 h-[2px] flex flex-col" data-testid={`progress-bar-${idx}`}>
+                                                                {/* Row 1: Density (Red/Magma) - 1px */}
+                                                                <div className="w-full h-[1px] bg-gray-800/50 overflow-hidden relative" data-testid={`density-bar-${idx}`}>
+                                                                    <div 
+                                                                        className="absolute inset-y-0 left-0 bg-magma-vent transition-all duration-500"
+                                                                        style={{ width: `${densityProgress * 100}%` }}
+                                                                        data-testid={`density-fill-${idx}`}
+                                                                    />
+                                                                </div>
+                                                                {/* Row 2: Summary (Purple) - 1px */}
+                                                                <div className="w-full h-[1px] bg-gray-800/50 overflow-hidden relative" data-testid={`summary-bar-${idx}`}>
+                                                                    {densityProgress >= 1 && !hasSummary ? (
+                                                                        /* Shimmer animation while summarizing */
+                                                                        <div 
+                                                                            className="absolute inset-0 bg-gradient-to-r from-transparent via-purple-500 to-transparent animate-shimmer" 
+                                                                            data-testid={`summary-shimmer-${idx}`}
+                                                                        />
+                                                                    ) : hasSummary ? (
+                                                                        /* Complete - solid purple */
+                                                                        <div 
+                                                                            className="absolute inset-y-0 left-0 bg-purple-500 w-full" 
+                                                                            data-testid={`summary-complete-${idx}`}
+                                                                        />
+                                                                    ) : (
+                                                                        /* Waiting for density - gray/empty */
+                                                                        <div 
+                                                                            className="absolute inset-y-0 left-0 bg-gray-700 w-0" 
+                                                                            data-testid={`summary-waiting-${idx}`}
+                                                                        />
+                                                                    )}
+                                                                </div>
                                                             </div>
                                                         )}
                                                     </div>
@@ -242,11 +303,36 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                                     </button>
                                                 </div>
 
-                                                {isExpanded && (
-                                                    <div className="text-[10px] text-gray-400 italic bg-black/20 p-2 rounded border border-white/5 mb-1 animate-in fade-in slide-in-from-top-1 relative z-10">
-                                                        {sub.summary}
-                                                    </div>
-                                                )}
+                                                {/* Summary Slide-out */}
+                                                <div 
+                                                    className={clsx(
+                                                        "overflow-hidden transition-all duration-300 ease-out",
+                                                        isExpanded ? "max-h-40 opacity-100 mt-1" : "max-h-0 opacity-0"
+                                                    )}
+                                                >
+                                                    {hasSummary ? (
+                                                        <div 
+                                                            className="text-[10px] text-gray-400 italic bg-black/30 p-2 rounded border border-white/10 relative z-10"
+                                                            data-testid={`summary-content-${idx}`}
+                                                        >
+                                                            {sub.summary}
+                                                        </div>
+                                                    ) : densityProgress >= 1 ? (
+                                                        <div 
+                                                            className="text-[10px] text-purple-400 italic bg-purple-500/10 p-2 rounded border border-purple-500/20 animate-pulse relative z-10"
+                                                            data-testid={`summary-generating-${idx}`}
+                                                        >
+                                                            Generating summary...
+                                                        </div>
+                                                    ) : (
+                                                        <div 
+                                                            className="text-[10px] text-gray-600 italic bg-black/20 p-2 rounded border border-white/5 relative z-10"
+                                                            data-testid={`summary-pending-${idx}`}
+                                                        >
+                                                            Analyzing density...
+                                                        </div>
+                                                    )}
+                                                </div>
                                             </div>
                                         );
                                     })}
@@ -267,29 +353,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
             {/* Telemetry Footer */}
             <div className="p-4 border-t border-white/10 bg-black/40 space-y-3">
-                {/* AI Status */}
-                <div>
-                    <div className="flex justify-between items-center mb-1">
-                        <div className="text-[10px] text-gray-500 tracking-widest">NEURAL ENGINE</div>
-                        {aiState.error && <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" title={aiState.error} />}
-                        {!aiState.error && aiState.isLoading && <div className="w-2 h-2 rounded-full bg-yellow-500 animate-pulse" title="Loading..." />}
-                        {!aiState.error && !aiState.isLoading && aiState.isReady && <div className="w-2 h-2 rounded-full bg-green-500" title="Ready" />}
-                    </div>
-                    <div className="text-xs font-mono text-dune-gold truncate" title={aiState.activeModelName || 'None'}>
-                        {aiState.activeModelName || 'OFFLINE'}
-                    </div>
-                    <div className="flex justify-between items-center mt-1">
-                        <div className="text-[10px] text-gray-600">
-                            {aiState.tps > 0 ? `${aiState.tps.toFixed(1)} TPS` : 'IDLE'}
-                        </div>
-                        {aiState.activity && (
-                            <div className="text-[10px] text-magma-vent animate-pulse truncate max-w-[100px]">
-                                {aiState.activity}
-                            </div>
-                        )}
-                    </div>
-                </div>
-
                 {/* Pipeline Status */}
                 {ingestSpeed > 0 && (
                     <div className="pt-2 border-t border-white/5">

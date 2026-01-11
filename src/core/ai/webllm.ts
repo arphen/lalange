@@ -127,58 +127,62 @@ export const getEngine = async (
     const modelId = MODEL_MAPPING[tier];
     console.log(`[WebLLM] Requesting engine for tier: ${tier} (Model ID: ${modelId})`);
     
-    const { setProgress, setLoading, setReady, setError, setActiveModelName } = useAIStore.getState();
-    const startTime = Date.now();
+    const aiStore = useAIStore.getState();
+    const { setProgress, setLoading, setReady, setError, setActiveModelName, startModelLoad, completeModelLoad, recordCrash, setLifecycleState } = aiStore;
+
+    // Check if model is already in cache to determine lifecycle state
+    const isCached = await hasModelInCache(modelId, APP_CONFIG);
+    
+    // Get model size from config
+    const modelConfig = tier === 'tiny' ? TINYLLAMA_LOGPROBS_CONFIG : QWEN_LOGPROBS_CONFIG;
+    const modelSizeBytes = modelConfig.vram_required_MB * 1024 * 1024;
 
     const onProgress: InitProgressCallback = (report) => {
         console.log(`[WebLLM] Init Progress: ${report.text} (${report.progress})`);
         const info = MODEL_INFO[tier];
-        let timeInfo = "";
-
-        if (report.progress > 0.01 && report.progress < 1) {
-            const elapsed = (Date.now() - startTime) / 1000;
-            const estimatedTotal = elapsed / report.progress;
-            const remaining = estimatedTotal - elapsed;
-
-            if (remaining > 0 && isFinite(remaining)) {
-                const mins = Math.floor(remaining / 60);
-                const secs = Math.floor(remaining % 60);
-                timeInfo = ` [ETA: ${mins > 0 ? `${mins}m ` : ''}${secs}s]`;
-            }
-        }
 
         // Remove the verbose explanation text that WebLLM appends
         let cleanText = report.text.replace(". It can take a while when we first visit this page to populate the cache. Later refreshes will become faster.", "");
 
         // Better status messages to distinguish Cache vs Network
+        // Also update lifecycle state based on what's happening
         if (cleanText.includes("Fetching")) {
-             cleanText = "Downloading from Network";
+            cleanText = "Downloading from Network";
+            setLifecycleState('downloading');
         } else if (cleanText.includes("Loading model from cache")) {
-             cleanText = "Loading into GPU Memory";
+            cleanText = "Loading into GPU Memory";
+            setLifecycleState('loading');
         }
 
-        setProgress(`[${info.name}] ${cleanText}${timeInfo}`, report.progress);
+        setProgress(`[${info.name}] ${cleanText}`, report.progress);
     };
 
     if (engineInstance && currentLoadedModel === modelId) {
         return engineInstance;
     }
 
-    setLoading(true, tier); // Pass tier as the loading model name
+    setLoading(true, tier);
     setReady(false);
     setError(null);
+    
+    // Start model load tracking
+    startModelLoad(MODEL_INFO[tier].name, modelSizeBytes);
+    
+    // Set initial lifecycle state based on cache status
+    if (isCached) {
+        setLifecycleState('loading');
+        setProgress(`[${MODEL_INFO[tier].name}] Warming up AI (Loading from Disk)...`, 0);
+    } else {
+        setLifecycleState('downloading');
+        setProgress(`[${MODEL_INFO[tier].name}] Preparing to download...`, 0);
+    }
 
     try {
-        // Check if model is already in cache to update UI state immediately
-        const isCached = await hasModelInCache(modelId, APP_CONFIG);
-        if (isCached) {
-            setProgress(`[${MODEL_INFO[tier].name}] Warming up AI (Loading from Disk)...`, 0);
-        }
-
         // When switching models, we need to unload and recreate the engine
         // because appConfig can only be set at creation time
         if (engineInstance) {
             console.log(`[WebLLM] Unloading current model to switch to: ${modelId}`);
+            setLifecycleState('unloading');
             await engineInstance.unload();
             engineInstance = null;
         }
@@ -193,6 +197,7 @@ export const getEngine = async (
         currentLoadedModel = modelId;
         setReady(true);
         setActiveModelName(MODEL_INFO[tier].name);
+        completeModelLoad(); // Mark loading as complete
         return engineInstance;
     } catch (error) {
         console.error("Failed to load WebLLM engine:", error);
@@ -208,6 +213,7 @@ export const getEngine = async (
         }
         
         setError(errorMessage);
+        recordCrash(errorMessage); // Record the crash
         throw error;
     } finally {
         setLoading(false);
@@ -235,7 +241,7 @@ export const generateWebLLMCompletion = async (
     prompt: string,
     tier: ModelTier
 ): Promise<{ response: string, usage?: Record<string, unknown> }> => {
-    const { setTPS } = useAIStore.getState();
+    const { setTPS, recordInference } = useAIStore.getState();
     const engine = await getEngine(tier);
     
     const start = performance.now();
@@ -247,7 +253,7 @@ export const generateWebLLMCompletion = async (
 
     const usage = reply.usage as Record<string, unknown> | undefined;
     
-    // Calculate TPS
+    // Calculate TPS and record inference
     if (usage && typeof usage.completion_tokens === 'number') {
         const durationSec = (end - start) / 1000;
         if (durationSec > 0) {
@@ -255,6 +261,8 @@ export const generateWebLLMCompletion = async (
             setTPS(Math.round(tps * 100) / 100);
         }
     }
+    
+    recordInference(); // Track inference count
 
     return {
         response: reply.choices[0].message.content || "",

@@ -24,6 +24,8 @@ export interface WordMeta {
     isClauseEnd: boolean;
     /** Whether this word contains pause punctuation (, — -) */
     isPause: boolean;
+    /** Whether this token is a standalone dash (em-dash, en-dash) - deserves its own display moment */
+    isDashToken: boolean;
 }
 
 /**

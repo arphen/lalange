@@ -23,6 +23,7 @@ import type {
     DurationResult,
     DurationStrategyId
 } from './types';
+import { isPauseToken } from '../tokenize';
 
 /**
  * Configuration for the sentence budgeting algorithm.
@@ -34,6 +35,8 @@ interface SentenceBudgetConfig {
     clauseEndWeight: number;
     /** Weight multiplier for pause punctuation (, — -) */
     pauseWeight: number;
+    /** Weight multiplier for standalone dash tokens (cognitive gaps) */
+    dashTokenWeight: number;
     /** Minimum density floor to prevent words from getting near-zero time */
     minDensityFloor: number;
     /** Factor for visual length penalty (applied to sqrt(length)) */
@@ -46,6 +49,7 @@ const DEFAULT_CONFIG: SentenceBudgetConfig = {
     sentenceEndWeight: 2.5,  // ~300ms at 300 WPM (base = 200ms)
     clauseEndWeight: 1.75,   // ~350ms at 300 WPM
     pauseWeight: 1.5,        // ~300ms at 300 WPM
+    dashTokenWeight: 2.0,    // Standalone dashes get significant pause weight
     minDensityFloor: 0.3,    // Fastest words still get 30% of average time
     lengthFactor: 0.05,      // Subtle length influence within budget
 };
@@ -99,6 +103,16 @@ export class SentenceBudgetStrategy implements DurationStrategy {
         for (let i = 0; i < n; i++) {
             const word = words[i];
             const density = densities[i] ?? 1.0;
+            
+            // Check if this is a standalone dash token
+            const isDash = isPauseToken(word);
+            
+            // Dash tokens get their weight from config, not density
+            // (they have no semantic content, only cognitive pause)
+            if (isDash) {
+                rawWeights.push(this.config.dashTokenWeight);
+                continue;
+            }
             
             // Start with density (surprisal-based), floored to prevent near-zero
             let weight = Math.max(density, this.config.minDensityFloor);

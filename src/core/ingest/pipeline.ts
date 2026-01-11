@@ -1,7 +1,9 @@
 import JSZip from 'jszip';
 import * as cheerio from 'cheerio';
 import { initDB, type BookDocType, type ChapterDocType, type ImageDocType, type RawFileDocType } from '../sync/db';
-import { removeLicenseText } from './license';
+import { removeLicenseText, cleanHtmlBeforeExtraction } from './license';
+import { classifyChapter, cleanText, type ChapterClassification } from './cleaning';
+import { tokenizeForRSVP } from '../rsvp/tokenize';
 import { useSettingsStore } from '../store/settings';
 import { generateUUID } from '../../utils/uuid';
 import { scheduler } from './scheduler';
@@ -222,7 +224,10 @@ export const processChaptersInBackground = async (bookId: string) => {
 
                     if (fileInZip) {
                         const htmlContent = await fileInZip.async('string');
-                        const $ = cheerio.load(htmlContent);
+                        
+                        // Step 1: Clean HTML at DOM level (remove boilerplate elements, page numbers)
+                        const cleanedHtml = cleanHtmlBeforeExtraction(htmlContent);
+                        const $ = cheerio.load(cleanedHtml);
 
                         // Extract Title if possible (h1)
                         const extractedTitle = $('h1').first().text().trim();
@@ -239,9 +244,56 @@ export const processChaptersInBackground = async (bookId: string) => {
                         });
                         if (!rawText.trim()) rawText = $('body').text();
 
-                        // Apply license removal
-                        rawText = removeLicenseText(rawText);
-                        console.log(`[Pipeline] Chapter ${chapterIndex + 1}: Extracted ${rawText.length} chars of raw text.`);
+                        // Step 2: Classify chapter (license, TOC, cover, content, etc.)
+                        const classification = classifyChapter(
+                            rawText,
+                            htmlContent,
+                            extractedTitle,
+                            chapterIndex
+                        );
+                        console.log(`[Pipeline] Chapter ${chapterIndex + 1} classified as: ${classification.type} (confidence: ${classification.confidence.toFixed(2)})`);
+
+                        // Step 3: Handle non-content chapters
+                        if (!classification.shouldIncludeInReading) {
+                            console.log(`[Pipeline] Skipping chapter ${chapterIndex + 1} (${classification.type}): ${classification.reason}`);
+                            
+                            // Mark chapter as skipped but store metadata
+                            const latestDoc = await db.chapters.findOne(currentDoc.id).exec();
+                            if (latestDoc) {
+                                await latestDoc.incrementalPatch({
+                                    status: 'ready',
+                                    content: [], // Empty content = skipped
+                                    title: extractedTitle || `${classification.type.charAt(0).toUpperCase() + classification.type.slice(1)}`,
+                                    progress: 100,
+                                    // Store classification metadata for potential UI display
+                                    metadata: {
+                                        classificationType: classification.type,
+                                        classificationReason: classification.reason,
+                                        licenseInfo: classification.licenseInfo,
+                                        tocEntries: classification.tocEntries,
+                                    }
+                                });
+                            }
+                            chapterIndex++;
+                            continue;
+                        }
+
+                        // Step 4: Apply text-level license removal and cleaning
+                        const cleaningResult = cleanText(rawText, {
+                            removeLicense: true,
+                            removePageNumbers: true,
+                            normalizeWhitespace: true,
+                        });
+                        rawText = cleaningResult.cleanedText;
+                        
+                        if (cleaningResult.metadata.pageNumbersRemoved > 0) {
+                            console.log(`[Pipeline] Removed ${cleaningResult.metadata.pageNumbersRemoved} page number artifacts`);
+                        }
+                        if (cleaningResult.metadata.detectedLicense) {
+                            console.log(`[Pipeline] Detected and removed ${cleaningResult.metadata.detectedLicense} license content`);
+                        }
+                        
+                        console.log(`[Pipeline] Chapter ${chapterIndex + 1}: Extracted ${rawText.length} chars of cleaned text.`);
 
                         // Pipeline: Clean -> Editor/Summary -> Density -> Save
                         const settings = useSettingsStore.getState();
@@ -261,7 +313,16 @@ export const processChaptersInBackground = async (bookId: string) => {
                         for (let i = 0; i < rawChunks.length; i++) {
                             const chunk = rawChunks[i];
                             const cleanedChunk = chunk;
-                            const newWords = cleanedChunk.trim().split(/\s+/).filter(w => w.length > 0);
+                            
+                            // Tokenize for RSVP: splits on whitespace AND extracts
+                            // embedded dashes (em-dash, en-dash) as standalone tokens.
+                            // This ensures dashes get their own display moment in RSVP.
+                            const tokenResult = tokenizeForRSVP(cleanedChunk);
+                            const newWords = tokenResult.tokens;
+                            
+                            if (tokenResult.metadata.dashesExtracted > 0) {
+                                console.log(`[Pipeline] Chapter ${chapterIndex + 1}, chunk ${i + 1}: Extracted ${tokenResult.metadata.dashesExtracted} dash tokens for RSVP`);
+                            }
 
                             if (newWords.length === 0) continue;
 
