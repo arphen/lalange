@@ -28,8 +28,8 @@ interface SettingsState {
     setDurationStrategy: (strategy: DurationStrategyId) => void;
 
     // Features
-    bionicEnabled: boolean;
-    setBionicEnabled: (enabled: boolean) => void;
+    saccadeEnabled: boolean;
+    setSaccadeEnabled: (enabled: boolean) => void;
     riverEnabled: boolean;
     setRiverEnabled: (enabled: boolean) => void;
 
@@ -138,8 +138,8 @@ export const useSettingsStore = create<SettingsState>()(
             durationStrategy: DEFAULT_STRATEGY_ID,
             setDurationStrategy: (durationStrategy) => set({ durationStrategy }),
 
-            bionicEnabled: true,
-            setBionicEnabled: (bionicEnabled) => set({ bionicEnabled }),
+            saccadeEnabled: true,
+            setSaccadeEnabled: (saccadeEnabled) => set({ saccadeEnabled }),
 
             riverEnabled: true,
             setRiverEnabled: (riverEnabled) => set({ riverEnabled }),

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { getBionicGradientHtml, getBionicSplit } from '../core/rsvp/bionic';
+import { getSaccadeGradientHtml, getSaccadeSplit } from '../core/rsvp/saccade';
 import { getSpeedFactor, getVisualProcessingDelay } from '../core/rsvp/timing';
 import { useSettingsStore } from '../core/store/settings';
 
@@ -56,7 +56,7 @@ export function ManifestoRsvp({ words, densities, currentIndex, onJumpToIndex }:
     const word = words[idx] || '';
 
     if (rsvpRef.current) {
-      rsvpRef.current.innerHTML = word ? getBionicGradientHtml(word) : '';
+      rsvpRef.current.innerHTML = word ? getSaccadeGradientHtml(word) : '';
     }
 
     const startPrev = Math.max(0, idx - 150);
@@ -66,7 +66,7 @@ export function ManifestoRsvp({ words, densities, currentIndex, onJumpToIndex }:
     if (prevRef.current) {
       const html = prevWords.map((w, i) => {
         const actualIndex = startPrev + i;
-        const { bold, light } = getBionicSplit(w);
+        const { bold, light } = getSaccadeSplit(w);
         const isEnd = /[.!?]["']?$/.test(w);
         const breakHtml = isEnd ? '<div class="w-full h-2"></div>' : '';
         const density = densities[actualIndex] ?? 1.0;
@@ -95,7 +95,7 @@ export function ManifestoRsvp({ words, densities, currentIndex, onJumpToIndex }:
     if (nextRef.current) {
       const html = nextWords.map((w, i) => {
         const actualIndex = startNext + i;
-        const { bold, light } = getBionicSplit(w);
+        const { bold, light } = getSaccadeSplit(w);
         const isEnd = /[.!?]["']?$/.test(w);
         const breakHtml = isEnd ? '<div class="w-full h-2"></div>' : '';
         const density = densities[actualIndex] ?? 1.0;

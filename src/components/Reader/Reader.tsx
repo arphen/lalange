@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { type BookDocType, type ChapterDocType, type ReadingStateDocType, initDB } from '../../core/sync/db';
-import { getBionicSplit, getBionicGradientHtml } from '../../core/rsvp/bionic';
+import { getSaccadeSplit, getSaccadeGradientHtml } from '../../core/rsvp/saccade';
 import { getVisualProcessingDelay, getSpeedFactor } from '../../core/rsvp/timing';
 import { Sidebar } from './Sidebar';
 import { useSettingsStore } from '../../core/store/settings';
@@ -97,7 +97,7 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
             const currentWord = words[idx];
             if (currentWord) {
                 // Use gradient for the main RSVP display
-                rsvpRef.current.innerHTML = getBionicGradientHtml(currentWord);
+                rsvpRef.current.innerHTML = getSaccadeGradientHtml(currentWord);
             }
         }
 
@@ -108,7 +108,7 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
             const prevWords = words.slice(start, end);
             const html = prevWords.map((w, i) => {
                 const actualIndex = start + i;
-                const { bold, light } = getBionicSplit(w);
+                const { bold, light } = getSaccadeSplit(w);
                 // Add line break after punctuation to simulate structure
                 const isEnd = /[.!?]$/.test(w);
                 const breakHtml = isEnd ? '<div class="w-full h-2"></div>' : '';
@@ -138,7 +138,7 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
             const nextWords = words.slice(start, end);
             const html = nextWords.map((w, i) => {
                 const actualIndex = start + i;
-                const { bold, light } = getBionicSplit(w);
+                const { bold, light } = getSaccadeSplit(w);
                 const isEnd = /[.!?]$/.test(w);
                 const breakHtml = isEnd ? '<div class="w-full h-2"></div>' : '';
 
@@ -739,10 +739,10 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
                             className="w-full max-w-2xl h-full flex items-center justify-center bg-black/20 border border-white/5 hover:border-white/10 transition-colors cursor-ns-resize"
                             onWheel={handleWheel}
                         >
-                            {/* Bionic Word */}
+                        {/* Saccade Gradient Word */}
                             <div ref={rsvpRef} className={`text-6xl md:text-8xl font-mono tracking-tight whitespace-nowrap drop-shadow-[0_0_15px_rgba(255,255,255,0.5)] ${isSummaryActive ? 'text-amber-400 italic' : 'text-white'}`}>
                                 {wordToRender && (
-                                    <span dangerouslySetInnerHTML={{ __html: getBionicGradientHtml(wordToRender) }} />
+                                    <span dangerouslySetInnerHTML={{ __html: getSaccadeGradientHtml(wordToRender) }} />
                                 )}
                             </div>
                         </div>

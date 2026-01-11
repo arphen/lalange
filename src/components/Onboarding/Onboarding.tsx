@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useSettingsStore } from '../../core/store/settings';
 import { useAIStore } from '../../core/store/ai';
 import { downloadModelToCache } from '../../core/ai/webllm';
-import { getBionicGradientHtml } from '../../core/rsvp/bionic';
+import { getSaccadeGradientHtml } from '../../core/rsvp/saccade';
 import { clsx } from 'clsx';
 import { BrandName } from '../BrandName';
 
@@ -173,7 +173,7 @@ export const Onboarding: React.FC = () => {
                                          {/* The Word */}
                                          <div 
                                             className="relative z-10 text-4xl md:text-5xl text-white font-serif tracking-tight text-center drop-shadow-[0_0_15px_rgba(255,255,255,0.5)]"
-                                            dangerouslySetInnerHTML={{ __html: getBionicGradientHtml(step === 2 ? DEMO_WORDS[rsvpIndex] : SUMMARY_WORDS[rsvpIndex]) }}
+                                            dangerouslySetInnerHTML={{ __html: getSaccadeGradientHtml(step === 2 ? DEMO_WORDS[rsvpIndex] : SUMMARY_WORDS[rsvpIndex]) }}
                                          />
                                          
                                          {/* Status */}
@@ -272,7 +272,7 @@ export const Onboarding: React.FC = () => {
                                          {/* The Word */}
                                          <div 
                                             className="relative z-10 text-3xl md:text-4xl text-amber-400 italic font-mono tracking-tight text-center drop-shadow-[0_0_15px_rgba(251,191,36,0.3)] px-8"
-                                            dangerouslySetInnerHTML={{ __html: getBionicGradientHtml(SUMMARY_WORDS[rsvpIndex]) }}
+                                            dangerouslySetInnerHTML={{ __html: getSaccadeGradientHtml(SUMMARY_WORDS[rsvpIndex]) }}
                                          />
                                          
                                          {/* Status Overlay */}
