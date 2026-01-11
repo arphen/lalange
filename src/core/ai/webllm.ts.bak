@@ -57,7 +57,7 @@ const getLlama32Config = () => {
 const LLAMA_32_CONFIG = {
     model: "/models/Llama-3.2-1B-vocab32k-q4f16_1",
     model_id: "Llama-3.2-1B-logprobs",
-    model_lib: "/models/Llama-3.2-1    model_lib: "/models/Llama-3.2-1    model_lib: "/models/Llama-3.2-1 00,
+    model_lib: "/models/Llama-3.2-1B-vocab32k-q4f16_1/Llama-3.2-1B-vocab32k.wasm",
     low_resource_required: true,
 };
 
