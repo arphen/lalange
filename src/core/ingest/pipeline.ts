@@ -1,8 +1,8 @@
 import JSZip from 'jszip';
 import * as cheerio from 'cheerio';
 import { initDB, type BookDocType, type ChapterDocType, type ImageDocType, type RawFileDocType } from '../sync/db';
-import { removeLicenseText, cleanHtmlBeforeExtraction } from './license';
-import { classifyChapter, cleanText, type ChapterClassification } from './cleaning';
+import { cleanHtmlBeforeExtraction } from './license';
+import { classifyChapter, cleanText } from './cleaning';
 import { tokenizeForRSVP } from '../rsvp/tokenize';
 import { useSettingsStore } from '../store/settings';
 import { generateUUID } from '../../utils/uuid';

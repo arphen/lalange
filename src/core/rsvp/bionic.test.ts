@@ -51,20 +51,14 @@ describe('isDashToken', () => {
 
 describe('getDashHtml', () => {
     it('should return HTML with rsvp-dash class', () => {
-        const html = getDashHtml('—');
+        const html = getDashHtml();
         expect(html).toContain('rsvp-dash');
     });
 
     it('should normalize all dashes to em-dash display', () => {
-        // All dash types should display as em-dash
-        const emDashHtml = getDashHtml('—');
-        const enDashHtml = getDashHtml('–');
-        const doubleDashHtml = getDashHtml('--');
-        
-        // All should contain em-dash character
-        expect(emDashHtml).toContain('—');
-        expect(enDashHtml).toContain('—');
-        expect(doubleDashHtml).toContain('—');
+        // The function always returns em-dash regardless of usage context
+        const html = getDashHtml();
+        expect(html).toContain('—');
     });
 });
 

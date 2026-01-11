@@ -125,25 +125,6 @@ const STANDARD_EBOOKS_PATTERNS = {
     ],
 };
 
-/**
- * Patterns for detecting other common license/boilerplate
- */
-const OTHER_LICENSE_PATTERNS = {
-    creativeCommons: [
-        /Creative Commons/i,
-        /CC BY-?(?:NC)?-?(?:SA)?-?(?:ND)?/i,
-        /creativecommons\.org\/licenses/i,
-    ],
-    publicDomain: [
-        /public domain/i,
-        /no known copyright restrictions/i,
-    ],
-    copyrightNotice: [
-        /Copyright ©?\s*\d{4}/i,
-        /All rights reserved/i,
-    ],
-};
-
 // ============================================================================
 // Page Number Detection
 // ============================================================================
@@ -154,7 +135,7 @@ const OTHER_LICENSE_PATTERNS = {
 const PAGE_NUMBER_PATTERNS = [
     // Standalone numbers that look like page numbers
     // Must be careful not to remove content numbers
-    /^[\[\(\{]?\s*\d{1,4}\s*[\]\)\}]?\s*$/gm,
+    /^[[({]?\s*\d{1,4}\s*[\])}]?\s*$/gm,
     // "Page X" or "Page: X"
     /\bpage\s*:?\s*\d{1,4}\b/gi,
     // "- X -" or "— X —" style
@@ -225,7 +206,6 @@ export function classifyChapter(
     title?: string,
     chapterIndex?: number
 ): ChapterClassification {
-    const normalizedContent = content.trim().toLowerCase();
     const normalizedTitle = (title || '').toLowerCase();
     const wordCount = content.trim().split(/\s+/).filter(w => w.length > 0).length;
 
@@ -405,7 +385,6 @@ function detectTableOfContents(
     content: string,
     htmlContent?: string
 ): { isToc: boolean; confidence: number; reason: string; entries?: { title: string; href?: string }[] } {
-    const normalizedContent = content.toLowerCase();
 
     // Check title patterns
     const hasTocTitle = TOC_PATTERNS.titlePatterns.some(p => p.test(content));
@@ -500,7 +479,7 @@ function isFrontMatter(content: string, title: string): boolean {
 /**
  * Checks if content is back matter
  */
-function isBackMatter(content: string, title: string): boolean {
+function isBackMatter(_content: string, title: string): boolean {
     const backMatterPatterns = [
         /appendix/i,
         /notes?$/i,

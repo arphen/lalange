@@ -67,7 +67,6 @@ interface AIStatusPanelProps {
  * Expandable to show detailed information.
  */
 export const AIStatusPanel: React.FC<AIStatusPanelProps> = ({ 
-    variant: _variant = 'sidebar',
     className 
 }) => {
     const {
@@ -110,18 +109,28 @@ export const AIStatusPanel: React.FC<AIStatusPanelProps> = ({
     const isSummaryIndeterminate = currentTask?.type === 'summary' && summaryProgress === null;
     
     // Calculate loading ETA
-    const loadingEta = React.useMemo(() => {
+    const [loadingEta, setLoadingEta] = React.useState<string | null>(null);
+    React.useEffect(() => {
         if (!isLoading || !modelStats.loadStartTime || progressValue <= 0 || progressValue >= 1) {
-            return null;
+            setLoadingEta(null);
+            return;
         }
-        const elapsed = Date.now() - modelStats.loadStartTime;
-        const estimated = elapsed / progressValue;
-        const remaining = estimated - elapsed;
-        if (remaining <= 0 || !isFinite(remaining)) return null;
-        
-        const mins = Math.floor(remaining / 60000);
-        const secs = Math.floor((remaining % 60000) / 1000);
-        return mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+
+        const interval = setInterval(() => {
+             const elapsed = Date.now() - modelStats.loadStartTime!;
+             const estimated = elapsed / progressValue;
+             const remaining = estimated - elapsed;
+             if (remaining <= 0 || !isFinite(remaining)) {
+                 setLoadingEta(null);
+                 return;
+             }
+             
+             const mins = Math.floor(remaining / 60000);
+             const secs = Math.floor((remaining % 60000) / 1000);
+             setLoadingEta(mins > 0 ? `${mins}m ${secs}s` : `${secs}s`);
+        }, 1000);
+
+        return () => clearInterval(interval);
     }, [isLoading, modelStats.loadStartTime, progressValue]);
 
     return (
