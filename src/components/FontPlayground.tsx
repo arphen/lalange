@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
-import { getBionicGradientHtml } from '../core/rsvp/bionic';
+import { getSaccadeGradientHtml } from '../core/rsvp/saccade';
 
 export const FontPlayground: React.FC = () => {
     const [testWord, setTestWord] = useState('Gradient');
     const [baseColor, setBaseColor] = useState('text-white');
 
-    const words = ['Hello', 'World', 'Bionic', 'Reading', 'Gradient', 'Architecture', 'Maspalomas'];
+    const words = ['Hello', 'World', 'Saccade', 'Reading', 'Gradient', 'Architecture', 'Maspalomas'];
 
     return (
         <div className="w-full h-full p-8 bg-basalt text-white overflow-y-auto font-mono">
@@ -54,7 +54,7 @@ export const FontPlayground: React.FC = () => {
                     <div>
                         <h3 className="text-xs text-gray-500 mb-4">LARGE DISPLAY (RSVP)</h3>
                         <div className={`text-8xl ${baseColor} tracking-tight`}>
-                            <span dangerouslySetInnerHTML={{ __html: getBionicGradientHtml(testWord) }} />
+                            <span dangerouslySetInnerHTML={{ __html: getSaccadeGradientHtml(testWord) }} />
                         </div>
                     </div>
 
@@ -62,7 +62,7 @@ export const FontPlayground: React.FC = () => {
                     <div>
                         <h3 className="text-xs text-gray-500 mb-4">MEDIUM DISPLAY</h3>
                         <div className={`text-4xl ${baseColor} tracking-tight`}>
-                            <span dangerouslySetInnerHTML={{ __html: getBionicGradientHtml(testWord) }} />
+                            <span dangerouslySetInnerHTML={{ __html: getSaccadeGradientHtml(testWord) }} />
                         </div>
                     </div>
 
@@ -72,7 +72,7 @@ export const FontPlayground: React.FC = () => {
                         <div className="flex flex-wrap gap-4">
                             {words.map(w => (
                                 <div key={w} className={`text-2xl ${baseColor}`}>
-                                    <span dangerouslySetInnerHTML={{ __html: getBionicGradientHtml(w) }} />
+                                    <span dangerouslySetInnerHTML={{ __html: getSaccadeGradientHtml(w) }} />
                                 </div>
                             ))}
                         </div>

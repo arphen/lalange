@@ -294,9 +294,9 @@ describe('tokenize', () => {
                 expect(props.displayTimeMultiplier).toBeGreaterThan(1.0);
             });
 
-            it('should NOT use bionic rendering for dashes', () => {
+            it('should NOT use saccade rendering for dashes', () => {
                 const props = getTokenDisplayProps('—');
-                expect(props.useBionicRendering).toBe(false);
+                expect(props.useSaccadeRendering).toBe(false);
             });
 
             it('should have special CSS class for dashes', () => {
@@ -316,9 +316,9 @@ describe('tokenize', () => {
                 expect(props.displayTimeMultiplier).toBe(1.0);
             });
 
-            it('should use bionic rendering for regular words', () => {
+            it('should use saccade rendering for regular words', () => {
                 const props = getTokenDisplayProps('hello');
-                expect(props.useBionicRendering).toBe(true);
+                expect(props.useSaccadeRendering).toBe(true);
             });
 
             it('should NOT have special CSS class for regular words', () => {
