@@ -84,17 +84,12 @@ describe('IngestionScheduler', () => {
         (initDB as any).mockResolvedValue(mockDB);
 
         // Setup Service mocks
-        // analyzeDensityRange now accepts a callback for incremental saves
-        (analyzeDensityRange as any).mockImplementation(async (_words: string[], onWindowComplete?: (result: any) => Promise<void>) => {
-            // Simulate incremental callback
-            if (onWindowComplete) {
-                await onWindowComplete({
-                    startIndex: 0,
-                    densities: [1, 1, 1],
-                    analysisData: [{ tokens: [], surprisals: [] }]
-                });
-            }
-            return { densities: [1, 1, 1], analysisData: [{ tokens: [], surprisals: [] }] };
+        // Mock analyzeDensityRange to match the actual function signature (no callback)
+        (analyzeDensityRange as any).mockImplementation(async (_words: string[]) => {
+            return {
+                densities: [1, 1, 1],
+                analysisData: [{ tokens: [], surprisals: [] }]
+            };
         });
         (generateUnifiedCompletion as any).mockResolvedValue({ response: 'Test Summary' });
     });
