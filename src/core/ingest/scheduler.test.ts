@@ -56,7 +56,11 @@ describe('IngestionScheduler', () => {
         });
 
         (useAIStore.getState as any).mockReturnValue({
-            setActivity: vi.fn()
+            setActivity: vi.fn(),
+            setCurrentTask: vi.fn(),
+            updateTaskProgress: vi.fn(),
+            startSummaryTiming: vi.fn(),
+            completeSummaryTiming: vi.fn()
         });
 
         // Setup DB mock
@@ -80,8 +84,19 @@ describe('IngestionScheduler', () => {
         (initDB as any).mockResolvedValue(mockDB);
 
         // Setup Service mocks
-        (analyzeDensityRange as any).mockResolvedValue([1, 1, 1]);
-        (generateUnifiedCompletion as any).mockResolvedValue({ response: '{"title": "Test", "summary": "Test Summary"}' });
+        // analyzeDensityRange now accepts a callback for incremental saves
+        (analyzeDensityRange as any).mockImplementation(async (_words: string[], onWindowComplete?: (result: any) => Promise<void>) => {
+            // Simulate incremental callback
+            if (onWindowComplete) {
+                await onWindowComplete({
+                    startIndex: 0,
+                    densities: [1, 1, 1],
+                    analysisData: [{ tokens: [], surprisals: [] }]
+                });
+            }
+            return { densities: [1, 1, 1], analysisData: [{ tokens: [], surprisals: [] }] };
+        });
+        (generateUnifiedCompletion as any).mockResolvedValue({ response: 'Test Summary' });
     });
 
     it('should add tasks and process them', async () => {
@@ -337,5 +352,179 @@ describe('IngestionScheduler', () => {
         // Passed score: 100.
         // So Future > Passed.
         expect(futureIdx).toBeLessThan(passedIdx);
+    });
+
+    describe('Summary LLM Response', () => {
+        beforeEach(() => {
+            // Reset mock to default for summary tests
+            (analyzeDensityRange as any).mockResolvedValue({ 
+                densities: [1, 1, 1], 
+                analysisData: [{ tokens: [], surprisals: [] }] 
+            });
+        });
+
+        it('should save plain text summary response', async () => {
+            (generateUnifiedCompletion as any).mockResolvedValue({ 
+                response: 'This is a test summary of the text.' 
+            });
+
+            mockChapter.subchapters = [{ startWordIndex: 0, endWordIndex: 100 }];
+            mockChapter.incrementalModify = vi.fn(async (fn) => {
+                const doc = { subchapters: [...mockChapter.subchapters] };
+                const result = fn(doc);
+                mockChapter.subchapters = result.subchapters;
+                return result;
+            });
+
+            scheduler.addTask({
+                id: 'summary_task',
+                bookId: 'book1',
+                chapterId: 'chapter1',
+                subchapterIndex: 0,
+                startWordIndex: 0,
+                endWordIndex: 100,
+                type: 'SUMMARY',
+                text: 'some text to summarize'
+            });
+
+            await new Promise(resolve => setTimeout(resolve, 50));
+
+            expect(mockChapter.incrementalModify).toHaveBeenCalled();
+            expect(mockChapter.subchapters[0].summary).toBe('This is a test summary of the text.');
+        });
+
+        it('should trim whitespace from summary response', async () => {
+            (generateUnifiedCompletion as any).mockResolvedValue({ 
+                response: '  \n  Summary with whitespace.  \n  ' 
+            });
+
+            mockChapter.subchapters = [{ startWordIndex: 0, endWordIndex: 100 }];
+            mockChapter.incrementalModify = vi.fn(async (fn) => {
+                const doc = { subchapters: [...mockChapter.subchapters] };
+                const result = fn(doc);
+                mockChapter.subchapters = result.subchapters;
+                return result;
+            });
+
+            scheduler.addTask({
+                id: 'summary_task2',
+                bookId: 'book1',
+                chapterId: 'chapter1',
+                subchapterIndex: 0,
+                startWordIndex: 0,
+                endWordIndex: 100,
+                type: 'SUMMARY',
+                text: 'some text'
+            });
+
+            await new Promise(resolve => setTimeout(resolve, 50));
+
+            expect(mockChapter.subchapters[0].summary).toBe('Summary with whitespace.');
+        });
+
+        it('should handle LLM service throwing an error', async () => {
+            (generateUnifiedCompletion as any).mockRejectedValue(new Error('LLM service unavailable'));
+
+            mockChapter.subchapters = [{ startWordIndex: 0, endWordIndex: 100 }];
+
+            scheduler.addTask({
+                id: 'error_task',
+                bookId: 'book1',
+                chapterId: 'chapter1',
+                subchapterIndex: 0,
+                startWordIndex: 0,
+                endWordIndex: 100,
+                type: 'SUMMARY',
+                text: 'some text'
+            });
+
+            await new Promise(resolve => setTimeout(resolve, 50));
+
+            // Should not crash, scheduler continues
+            expect(generateUnifiedCompletion).toHaveBeenCalled();
+        });
+
+        it('should handle empty response from LLM', async () => {
+            (generateUnifiedCompletion as any).mockResolvedValue({ response: '' });
+
+            mockChapter.subchapters = [{ startWordIndex: 0, endWordIndex: 100 }];
+            mockChapter.incrementalModify = vi.fn(async (fn) => {
+                const doc = { subchapters: [...mockChapter.subchapters] };
+                const result = fn(doc);
+                mockChapter.subchapters = result.subchapters;
+                return result;
+            });
+
+            scheduler.addTask({
+                id: 'empty_task',
+                bookId: 'book1',
+                chapterId: 'chapter1',
+                subchapterIndex: 0,
+                startWordIndex: 0,
+                endWordIndex: 100,
+                type: 'SUMMARY',
+                text: 'some text'
+            });
+
+            await new Promise(resolve => setTimeout(resolve, 50));
+
+            expect(mockChapter.subchapters[0].summary).toBe('');
+        });
+
+        it('should handle chapter not found in DB', async () => {
+            (generateUnifiedCompletion as any).mockResolvedValue({ 
+                response: 'Test summary.' 
+            });
+
+            // Return null for chapter
+            mockDB.chapters.findOne = vi.fn().mockReturnValue({
+                exec: vi.fn().mockResolvedValue(null)
+            });
+
+            scheduler.addTask({
+                id: 'missing_chapter_task',
+                bookId: 'book1',
+                chapterId: 'nonexistent',
+                subchapterIndex: 0,
+                startWordIndex: 0,
+                endWordIndex: 100,
+                type: 'SUMMARY',
+                text: 'some text'
+            });
+
+            await new Promise(resolve => setTimeout(resolve, 50));
+
+            // Should not crash
+            expect(generateUnifiedCompletion).toHaveBeenCalled();
+        });
+
+        it('should handle subchapter index out of bounds', async () => {
+            (generateUnifiedCompletion as any).mockResolvedValue({ 
+                response: 'Test summary.' 
+            });
+
+            mockChapter.subchapters = [{ startWordIndex: 0, endWordIndex: 100 }];
+            mockChapter.incrementalModify = vi.fn(async (fn) => {
+                const doc = { subchapters: [...mockChapter.subchapters] };
+                const result = fn(doc);
+                return result;
+            });
+
+            scheduler.addTask({
+                id: 'oob_task',
+                bookId: 'book1',
+                chapterId: 'chapter1',
+                subchapterIndex: 99, // Out of bounds
+                startWordIndex: 0,
+                endWordIndex: 100,
+                type: 'SUMMARY',
+                text: 'some text'
+            });
+
+            await new Promise(resolve => setTimeout(resolve, 50));
+
+            // Should not crash, just log warning
+            expect(mockChapter.incrementalModify).toHaveBeenCalled();
+        });
     });
 });
