@@ -190,8 +190,8 @@ export interface TokenDisplayProps {
     isPause: boolean;
     /** Suggested additional display time multiplier (1.0 = normal) */
     displayTimeMultiplier: number;
-    /** Whether to render with bionic styling */
-    useBionicRendering: boolean;
+    /** Whether to render with saccade gradient styling */
+    useSaccadeRendering: boolean;
     /** Custom CSS class for special tokens */
     cssClass?: string;
 }
@@ -202,8 +202,8 @@ export const getTokenDisplayProps = (token: string): TokenDisplayProps => {
             isPause: true,
             // Dashes should pause longer - they represent cognitive gaps
             displayTimeMultiplier: 1.5,
-            // Dashes don't need bionic rendering (they're already simple)
-            useBionicRendering: false,
+            // Dashes don't need saccade rendering (they're already simple)
+            useSaccadeRendering: false,
             cssClass: 'rsvp-pause-token',
         };
     }
@@ -211,7 +211,7 @@ export const getTokenDisplayProps = (token: string): TokenDisplayProps => {
     return {
         isPause: false,
         displayTimeMultiplier: 1.0,
-        useBionicRendering: true,
+        useSaccadeRendering: true,
         cssClass: undefined,
     };
 };
