@@ -3,7 +3,7 @@ import { BrandName } from './BrandName';
 import { AIStatusPanel } from './AIStatusPanel';
 import type { BookDocType } from '../core/sync/db';
 
-export type ViewState = 'archive' | 'reader' | 'library' | 'settings' | 'manifesto';
+export type ViewState = 'archive' | 'reader' | 'library' | 'settings' | 'manifesto' | 'research' | 'manual';
 
 interface GlobalNavSidebarProps {
   view: ViewState;
@@ -51,14 +51,16 @@ export function GlobalNavSidebar({ view, currentBook, onNavigate }: GlobalNavSid
 
       <div className="flex-1 p-4 flex flex-col gap-2">
         <NavItem
-          label={currentBook ? 'Reader' : 'Reader (no book)'}
+          label={currentBook ? 'Reader' : 'Reader'} 
           target="reader"
           active={view === 'reader'}
-          disabled={!currentBook}
-          onClick={() => currentBook && onNavigate('reader')}
+          disabled={!currentBook && view !== 'reader'} 
+          onClick={() => onNavigate('reader')}
         />
         <NavItem label="Archive" target="archive" active={view === 'archive'} onClick={() => onNavigate('archive')} />
         <NavItem label="Library" target="library" active={view === 'library'} onClick={() => onNavigate('library')} />
+        <NavItem label="Research" target="research" active={view === 'research'} onClick={() => onNavigate('research')} />
+        <NavItem label="Manual" target="manual" active={view === 'manual'} onClick={() => onNavigate('manual')} />
         <NavItem label="Settings" target="settings" active={view === 'settings'} onClick={() => onNavigate('settings')} />
       </div>
 

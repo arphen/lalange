@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import App from './App';
 
 // Mock child components to avoid complex setup
@@ -73,14 +74,22 @@ vi.mock('./core/ai/webllm', () => ({
 
 describe('App Component', () => {
     it('renders the correct header title', () => {
-        render(<App />);
+        render(
+            <MemoryRouter>
+                <App />
+            </MemoryRouter>
+        );
         // The brand name "XYZ" is split into X and YZ
         expect(screen.getByText('X')).toBeInTheDocument();
         expect(screen.getByText('YZ')).toBeInTheDocument();
     });
 
     it('renders the correct footer text with styling', () => {
-        render(<App />);
+        render(
+            <MemoryRouter>
+                <App />
+            </MemoryRouter>
+        );
         expect(screen.getByText(/Made by/i)).toBeInTheDocument();
 
         const arphen = screen.getByText('Arphen');
