@@ -47,6 +47,19 @@ export type ChapterDocType = {
         startWordIndex: number;
         endWordIndex: number;
     }[];
+    /** Metadata about chapter classification (license, TOC, etc.) */
+    metadata?: {
+        classificationType?: 'content' | 'license' | 'toc' | 'cover' | 'frontmatter' | 'backmatter' | 'image';
+        classificationReason?: string;
+        licenseInfo?: {
+            publisher: string;
+            text: string;
+        };
+        tocEntries?: {
+            title: string;
+            href?: string;
+        }[];
+    };
 };
 
 export type HighlightType = {
@@ -104,7 +117,7 @@ export const initDB = async (): Promise<MyDatabase> => {
         }
 
         const db = await createRxDatabase<MyDatabaseCollections>({
-            name: 'lalange_db_v12', // Bumped version/name to force fresh DB
+            name: 'lalange_db_v15', // Bumped version/name to force fresh DB (schema update with 'image')
             storage,
             ignoreDuplicate: import.meta.env.DEV
         });

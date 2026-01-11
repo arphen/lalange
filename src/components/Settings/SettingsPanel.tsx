@@ -350,21 +350,21 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
 
                             <div className="bg-black/20 p-8 rounded-lg border border-white/10">
                                 <div className="flex justify-between text-sm text-gray-400 mb-4">
-                                    <span>BASE VELOCITY</span>
-                                    <span className="text-dune-gold font-bold">{settings.wpm} WPM</span>
+                                    <span className="uppercase tracking-widest">Velocity Weighting</span>
+                                    <span className="text-dune-gold font-bold">{settings.wpm}</span>
                                 </div>
                                 <input
-                                    type="range" aria-label="WPM" min="100"
-                                    max="1000"
-                                    step="50"
+                                    type="range" aria-label="Velocity Weighting" 
+                                    min="50"
+                                    max="2000"
+                                    step="10"
                                     value={settings.wpm}
                                     onChange={(e) => settings.setWpm(parseInt(e.target.value))}
                                     className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-dune-gold"
                                 />
-                                <div className="flex justify-between text-[10px] text-gray-600 mt-2 uppercase tracking-widest">
-                                    <span>Slow</span>
-                                    <span>Speed Reader</span>
-                                </div>
+                                <p className="text-xs text-gray-500 mt-6 italic text-center">
+                                    "This controls the baseline frequency of the RSVP stream. It determines the standard delay weighting applied to each word before density adjustments."
+                                </p>
                             </div>
 
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">

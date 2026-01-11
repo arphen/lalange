@@ -30,6 +30,7 @@ export default {
       animation: {
         'magma-breath': 'magmaBreath 6s cubic-bezier(0.4, 0.0, 0.2, 1) infinite',
         'alisios-wind': 'alisiosWind 40s linear infinite',
+        'shimmer': 'shimmer 1.5s ease-in-out infinite',
       },
       keyframes: {
         magmaBreath: {
@@ -39,6 +40,10 @@ export default {
         alisiosWind: {
           '0%': { backgroundPosition: '0% 0%' },
           '100%': { backgroundPosition: '100% 20%' },
+        },
+        shimmer: {
+          '0%': { transform: 'translateX(-100%)' },
+          '100%': { transform: 'translateX(100%)' },
         }
       }
     },

@@ -18,12 +18,26 @@ import type {
 } from './types';
 
 /**
+ * Delay for standalone dash tokens.
+ * 
+ * From a psychoanalytic perspective, the dash is the signifier of absence—
+ * it marks a cognitive pause, a moment of suspension where meaning is
+ * organized by what is NOT said. We honor this with significant pause time.
+ */
+const DASH_TOKEN_DELAY = 400; // ms - significant pause for cognitive gap
+
+/**
  * Calculate visual processing delay based on word characteristics.
  * Includes punctuation penalties and length-based visual gain.
  * 
  * This is extracted from the original timing.ts logic.
  */
-export const calculateVisualDelay = (word: string): number => {
+export const calculateVisualDelay = (word: string, isDashToken: boolean = false): number => {
+    // Standalone dash tokens get special treatment
+    if (isDashToken) {
+        return DASH_TOKEN_DELAY;
+    }
+
     let delay = 0;
     const lastChar = word.slice(-1);
     const lastTwoChars = word.slice(-2);
@@ -54,6 +68,7 @@ export const calculateVisualDelay = (word: string): number => {
  * - Results in effective WPM lower than dial setting
  * - Simple and predictable behavior
  * - No sentence-level lookahead
+ * - Standalone dash tokens get significant pause time
  */
 export class LegacyDurationStrategy implements DurationStrategy {
     readonly id = 'legacy' as const;
@@ -63,16 +78,17 @@ export class LegacyDurationStrategy implements DurationStrategy {
 
     calculateDuration(meta: WordMeta, context: DurationContext): DurationResult {
         const { wpm, tFloor } = context;
-        const { word, density } = meta;
+        const { word, density, isDashToken } = meta;
 
         // Base interval from WPM setting (ms per word at nominal speed)
         const baseInterval = 60000 / wpm;
 
-        // Information component: scale base interval by surprisal-derived density
-        const infoTime = baseInterval * density;
+        // For dash tokens, use minimal info time (they have no semantic content)
+        // The pause comes from the visual delay instead
+        const infoTime = isDashToken ? 0 : baseInterval * density;
 
         // Visual & punctuation component (extracted from original timing.ts)
-        const visualDelay = calculateVisualDelay(word);
+        const visualDelay = calculateVisualDelay(word, isDashToken);
 
         // Total duration = floor + info + visual
         const duration = tFloor + infoTime + visualDelay;
@@ -82,8 +98,8 @@ export class LegacyDurationStrategy implements DurationStrategy {
             breakdown: {
                 base: tFloor,
                 info: infoTime,
-                visual: visualDelay - this.getPunctuationDelay(word),
-                punctuation: this.getPunctuationDelay(word),
+                visual: isDashToken ? DASH_TOKEN_DELAY : visualDelay - this.getPunctuationDelay(word),
+                punctuation: isDashToken ? 0 : this.getPunctuationDelay(word),
             }
         };
     }
