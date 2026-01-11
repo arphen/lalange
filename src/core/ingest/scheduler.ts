@@ -1,7 +1,7 @@
 import { useSettingsStore } from '../store/settings';
 import { useAIStore } from '../store/ai';
 import { initDB } from '../sync/db';
-import { analyzeDensityRange } from './analysis';
+import { analyzeDensityRange, type WindowResult } from './analysis';
 import { generateUnifiedCompletion } from '../ai/service';
 
 export type TaskType = 'DENSITY' | 'SUMMARY';
@@ -142,28 +142,31 @@ export class IngestionScheduler {
             if (this.currentChapterId && task.chapterId === this.currentChapterId) {
                 score += 5000;
                 
-                // Distance from current word
-                const distance = task.startWordIndex - this.currentWordIndex;
-                const settings = useSettingsStore.getState();
-                const chunkSize = settings.summaryChunkSize || 2500;
+                // Use chunk-based priority to ensure Density N → Summary N → Density N+1
+                // Chunks closer to cursor get higher priority
+                // Each chunk gets a 100-point band, with DENSITY getting +10 within the band
                 
-                if (distance < 0) {
-                    // Passed chunk. 
-                    // If it's SUMMARY, we still need it (for review).
-                    // If it's DENSITY, we might not need it as much if we already read it? 
-                    // But we want to fill the map.
-                    score += 100; 
-                } else if (distance === 0 || (distance > 0 && distance < chunkSize)) {
-                    // Current Chunk
-                    score += 2000;
+                // Determine if this task's chunk is before, at, or after cursor
+                const isCurrent = task.startWordIndex <= this.currentWordIndex && task.endWordIndex > this.currentWordIndex;
+                const isPassed = task.endWordIndex <= this.currentWordIndex;
+                
+                if (isPassed) {
+                    // Passed chunk - lower priority but still process for completeness
+                    // Further back = lower priority (but all passed are lower than current/future)
+                    score += 100 - task.subchapterIndex; 
+                } else if (isCurrent) {
+                    // Current chunk - highest priority within the chapter
+                    score += 3000 - (task.subchapterIndex * 100);
                 } else {
-                    // Future Chunk - closer is better
-                    // Max words ~100k. 
-                    score += 1000 - (distance / 100);
+                    // Future chunk - prioritize by subchapterIndex (lower = closer = higher priority)
+                    score += 2000 - (task.subchapterIndex * 10);
                 }
             } else if (!this.currentBookId) {
                 // No cursor set yet - use task order (lower subchapterIndex first)
-                score = 1000 - task.subchapterIndex;
+                // Group by chunk: Density 0, Summary 0, Density 1, Summary 1, etc.
+                // Higher score = higher priority. Chunk 0 should be highest.
+                // Use chunk index * 100 as base, so chunk 0 = 100000, chunk 1 = 99900, etc.
+                score = 100000 - (task.subchapterIndex * 100);
             } else {
                 // Different chapter. 
                 // We'd need chapter indexes to know if it's next or prev.
@@ -172,9 +175,10 @@ export class IngestionScheduler {
             }
 
             // 3. Task Type Priority
-            // Density > Summary (Start reading > Finish reading)
+            // Within the SAME chunk, Density runs first (+10), then Summary.
+            // This is a small bonus so it only matters for same-chunk comparisons.
             if (task.type === 'DENSITY') {
-                score += 50;
+                score += 10;
             }
 
             task.priority = score;
@@ -242,118 +246,93 @@ export class IngestionScheduler {
 
         if (task.type === 'DENSITY') {
             const { pacingModelTier } = settings;
+            
+            // Set current task for progress tracking
+            const words = task.text.trim().split(/\s+/);
+            aiState.setCurrentTask({
+                type: 'density',
+                chunkIndex: task.subchapterIndex,
+                totalChunks: 0, // We don't know total chunks here
+                wordsProcessed: 0,
+                totalWords: words.length,
+            });
             aiState.setActivity(`Scanning Density (Chunk ${task.subchapterIndex + 1})`, pacingModelTier);
             
             try {
-                // Split text into words for density analysis
-                const words = task.text.trim().split(/\s+/);
-                const { densities, analysisData } = await analyzeDensityRange(words);
-
-                // Save to DB
-                const chapter = await db.chapters.findOne(task.chapterId).exec();
-                if (chapter) {
+                // Incremental save callback - saves densities to DB after each 250-word window
+                const onWindowComplete = async (result: WindowResult) => {
+                    const chapter = await db.chapters.findOne(task.chapterId).exec();
+                    if (!chapter) return;
+                    
                     await chapter.incrementalModify(doc => {
                         const currentDensities = [...(doc.densities || [])];
-                        // Safety: ensure analysisData array exists
                         const currentAnalysisData = [...(doc.analysisData || [])];
                         
-                        // Splice in the new densities
-                        // We need to be careful about indices. 
-                        // The task.startWordIndex should align with the chapter content.
-                        for (let i = 0; i < densities.length; i++) {
-                            if (task.startWordIndex + i < currentDensities.length) {
-                                currentDensities[task.startWordIndex + i] = densities[i];
-                                // We also need to grow the analysisData array if needed because it wasn't pre-filled with 0s like densities
-                                // Actually, chapter content logic in pipeline.ts pre-fills densities with 0s. 
-                                // It does NOT pre-fill analysisData. So we might be pushing or assigning.
-                                // However, incrementalPatch in pipeline.ts only initialized densities.
-                                // So assume analysisData might be shorter. 
-                                // Wait, simple assignment at index works in JS arrays (it fills holes), but we want to be clean.
-                                currentAnalysisData[task.startWordIndex + i] = analysisData[i];
-                            }
+                        // Pre-fill arrays if needed
+                        const requiredLength = task.startWordIndex + result.startIndex + result.densities.length;
+                        while (currentDensities.length < requiredLength) {
+                            currentDensities.push(1.0); // Default density
                         }
+                        while (currentAnalysisData.length < requiredLength) {
+                            currentAnalysisData.push({ tokens: [], surprisals: [] });
+                        }
+                        
+                        // Splice in the window's densities
+                        for (let i = 0; i < result.densities.length; i++) {
+                            const targetIdx = task.startWordIndex + result.startIndex + i;
+                            currentDensities[targetIdx] = result.densities[i];
+                            currentAnalysisData[targetIdx] = result.analysisData[i] || { tokens: [], surprisals: [] };
+                        }
+                        
                         return {
                             ...doc,
                             densities: currentDensities,
                             analysisData: currentAnalysisData
                         };
                     });
-                }
+                    
+                    console.log(`[Scheduler] Incremental save: ${result.densities.length} densities at offset ${result.startIndex}`);
+                };
+
+                // Analyze with incremental saves
+                await analyzeDensityRange(words, onWindowComplete);
+                
+                // Note: Final global percentile-based densities are calculated at the end
+                // but incremental window-local densities are already saved for immediate reading
             } finally {
                 aiState.setActivity(null);
+                aiState.setCurrentTask(null);
             }
         } 
         
         else if (task.type === 'SUMMARY') {
-            const { summarizerModel, summarizerBasePrompt, summarizerFragments, enableJunkRemoval } = settings;
+            const { summarizerModel } = settings;
+            
+            // Set current task for progress tracking
+            aiState.setCurrentTask({
+                type: 'summary',
+                chunkIndex: task.subchapterIndex,
+                totalChunks: 0,
+                wordsProcessed: 0,
+                totalWords: task.text.split(/\s+/).length,
+            });
             aiState.setActivity(`Summarizing (Chunk ${task.subchapterIndex + 1})`, summarizerModel);
+            
+            // Start timing for interpolated progress
+            aiState.startSummaryTiming();
 
             try {
-                const summaryFragmentText = summarizerFragments.filter(f => f.enabled).map(f => f.text).join('\n');
-                const summarySystemPrompt = `${summarizerBasePrompt}\n${summaryFragmentText}`;
-                const specificSummaryInstruction = settings.summaryPrompt || "Summarize the following text in 5 sentences.";
+                const summaryInstruction = settings.summaryPrompt || "Summarize the following text in 5 sentences.";
 
-                let prompt = '';
-                if (enableJunkRemoval) {
-                    prompt = `
-${summarySystemPrompt}
+                const prompt = `${summaryInstruction}
 
-Analyze the following text segment from a book.
-Task:
-1. Determine if this text is "CONTENT" (narrative, story, useful info) or "JUNK" (copyright page, table of contents, list of image references, empty space, or just garbage).
-2. If CONTENT, provide a short "title" (max 5 words) and a "summary" based on this instruction: "${specificSummaryInstruction}".
-3. If JUNK, return status "JUNK".
-
-OUTPUT JSON ONLY:
-{
-  "status": "CONTENT" | "JUNK",
-  "title": "...",
-  "summary": "..."
-}
-
-TEXT:
-${task.text.substring(0, 3000)}
-`;
-                } else {
-                    prompt = `
-${summarySystemPrompt}
-
-Analyze the following text segment from a book.
-Task:
-1. Provide a short "title" (max 5 words) and a "summary" based on this instruction: "${specificSummaryInstruction}".
-
-OUTPUT JSON ONLY:
-{
-  "status": "CONTENT",
-  "title": "...",
-  "summary": "..."
-}
-
-TEXT:
-${task.text.substring(0, 3000)}
-`;
-                }
+${task.text.substring(0, 3000)}`;
 
                 const { response } = await generateUnifiedCompletion(prompt, summarizerModel);
                 
-                let title = `Part ${task.subchapterIndex + 1}`;
-                let summary = '';
-                let isJunk = false;
+                const summary = response.trim();
 
-                const jsonMatch = response.match(/\{[\s\S]*\}/);
-                if (jsonMatch) {
-                    try {
-                        const parsed = JSON.parse(jsonMatch[0]);
-                        if (enableJunkRemoval && parsed.status === 'JUNK') {
-                            isJunk = true;
-                        } else {
-                            title = parsed.title || title;
-                            summary = parsed.summary || '';
-                        }
-                    } catch (e) {
-                        console.warn("Failed to parse summary JSON", e);
-                    }
-                }
+                console.log(`[Scheduler] Summary for chunk ${task.subchapterIndex} (${summary.length} chars):`, summary.substring(0, 200));
 
                 // Save to DB
                 const chapter = await db.chapters.findOne(task.chapterId).exec();
@@ -363,23 +342,26 @@ ${task.text.substring(0, 3000)}
                         if (subchapters[task.subchapterIndex]) {
                             subchapters[task.subchapterIndex] = {
                                 ...subchapters[task.subchapterIndex],
-                                title: isJunk ? "SKIPPED (JUNK)" : title,
-                                summary: isJunk ? "Content identified as non-narrative junk." : summary
+                                summary
                             };
+                            console.log(`[Scheduler] Saved summary for subchapter ${task.subchapterIndex}`);
+                        } else {
+                            console.warn(`[Scheduler] Subchapter ${task.subchapterIndex} not found in doc.subchapters (length: ${subchapters.length})`);
                         }
-                        
-                        // If Junk, we might want to zero out densities or mark them?
-                        // For now, let's just leave them.
                         
                         return {
                             ...doc,
                             subchapters
                         };
                     });
+                } else {
+                    console.error(`[Scheduler] Chapter ${task.chapterId} not found when trying to save summary`);
                 }
 
             } finally {
+                aiState.completeSummaryTiming(); // Record duration for interpolation
                 aiState.setActivity(null);
+                aiState.setCurrentTask(null);
             }
         }
     }

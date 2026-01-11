@@ -9,6 +9,7 @@ import {
     type DurationContext,
     type WordMeta,
 } from './index';
+import { isPauseToken } from '../tokenize';
 
 describe('Duration Strategy Factory', () => {
     it('should create legacy strategy', () => {
@@ -56,6 +57,7 @@ describe('Legacy Duration Strategy', () => {
         isSentenceEnd: word.endsWith('.') || word.endsWith('!') || word.endsWith('?'),
         isClauseEnd: word.endsWith(';') || word.endsWith(':'),
         isPause: word.endsWith(','),
+        isDashToken: isPauseToken(word),
     });
 
     it('should calculate duration for normal word', () => {
@@ -125,6 +127,7 @@ describe('Sentence Budget Duration Strategy', () => {
         isSentenceEnd: word.endsWith('.') || word.endsWith('!') || word.endsWith('?'),
         isClauseEnd: word.endsWith(';') || word.endsWith(':'),
         isPause: word.endsWith(','),
+        isDashToken: isPauseToken(word),
     });
 
     it('should maintain approximate WPM budget', () => {
@@ -209,7 +212,7 @@ describe('Constant Duration Strategy', () => {
     const strategy = createConstantStrategy();
     const context: DurationContext = { wpm: 300, tFloor: 75 };
 
-    const createMeta = (word: string): WordMeta => ({
+    const createMeta = (word: string, overrides: Partial<WordMeta> = {}): WordMeta => ({
         word,
         sentenceIndex: 0,
         sentenceLength: 1,
@@ -217,6 +220,8 @@ describe('Constant Duration Strategy', () => {
         isSentenceEnd: false,
         isClauseEnd: false,
         isPause: false,
+        isDashToken: isPauseToken(word),
+        ...overrides,
     });
 
     it('should return same duration for all words', () => {
@@ -247,5 +252,123 @@ describe('Constant Duration Strategy', () => {
         
         // 60000 / 1000 = 60ms, but floor is 75
         expect(result.duration).toBe(75);
+    });
+
+    it('should give extra time to dash tokens', () => {
+        const normalResult = strategy.calculateDuration(createMeta('word'), context);
+        const dashResult = strategy.calculateDuration(createMeta('—'), context);
+        
+        // Dash should get 1.5x duration in constant strategy
+        expect(dashResult.duration).toBeGreaterThan(normalResult.duration);
+        expect(dashResult.duration).toBe(normalResult.duration * 1.5);
+    });
+});
+
+describe('Dash Token Handling', () => {
+    const context: DurationContext = { wpm: 300, tFloor: 75 };
+
+    describe('Legacy Strategy - Dash Tokens', () => {
+        const strategy = createLegacyStrategy();
+
+        const createMeta = (word: string, density = 1.0): WordMeta => ({
+            word,
+            sentenceIndex: 0,
+            sentenceLength: 1,
+            density,
+            isSentenceEnd: false,
+            isClauseEnd: false,
+            isPause: false,
+            isDashToken: isPauseToken(word),
+        });
+
+        it('should give significant pause time to em-dash tokens', () => {
+            const normalResult = strategy.calculateDuration(createMeta('word'), context);
+            const dashResult = strategy.calculateDuration(createMeta('—'), context);
+            
+            // Dash should have substantial extra time (~400ms)
+            expect(dashResult.duration).toBeGreaterThan(normalResult.duration);
+            expect(dashResult.duration).toBeGreaterThanOrEqual(475); // tFloor + 400ms dash delay
+        });
+
+        it('should give similar time to en-dash and em-dash', () => {
+            const emDash = strategy.calculateDuration(createMeta('—'), context);
+            const enDash = strategy.calculateDuration(createMeta('–'), context);
+            
+            expect(emDash.duration).toBe(enDash.duration);
+        });
+
+        it('should treat double-hyphen as dash token', () => {
+            const doubleDash = strategy.calculateDuration(createMeta('--'), context);
+            
+            expect(doubleDash.duration).toBeGreaterThanOrEqual(475);
+        });
+
+        it('should NOT add info time for dash tokens (no semantic content)', () => {
+            const dashResult = strategy.calculateDuration(createMeta('—'), context);
+            
+            // Info component should be 0 for dashes
+            expect(dashResult.breakdown?.info).toBe(0);
+        });
+    });
+
+    describe('Sentence Budget Strategy - Dash Tokens', () => {
+        let strategy: ReturnType<typeof createSentenceBudgetStrategy>;
+
+        beforeEach(() => {
+            strategy = createSentenceBudgetStrategy();
+        });
+
+        const createMeta = (word: string, sentenceIndex: number, sentenceLength: number): WordMeta => ({
+            word,
+            sentenceIndex,
+            sentenceLength,
+            density: 1.0,
+            isSentenceEnd: word.endsWith('.'),
+            isClauseEnd: false,
+            isPause: false,
+            isDashToken: isPauseToken(word),
+        });
+
+        it('should allocate more time to dash tokens in sentence', () => {
+            const words = ['I', 'thought', '—', 'no', 'wait.'];
+            const densities = [1.0, 1.0, 1.0, 1.0, 1.0];
+            
+            strategy.prepareSentence?.(words, densities, context);
+
+            const durations: number[] = [];
+            for (let i = 0; i < words.length; i++) {
+                const meta = createMeta(words[i], i, words.length);
+                const result = strategy.calculateDuration(meta, context);
+                durations.push(result.duration);
+            }
+
+            // The dash (index 2) should get more time than simple words like "I" or "no"
+            const dashDuration = durations[2];
+            const simpleDuration = durations[0]; // "I"
+            
+            expect(dashDuration).toBeGreaterThan(simpleDuration);
+        });
+    });
+
+    describe('Constant Strategy - Dash Tokens', () => {
+        const strategy = createConstantStrategy();
+
+        const createMeta = (word: string): WordMeta => ({
+            word,
+            sentenceIndex: 0,
+            sentenceLength: 1,
+            density: 1.0,
+            isSentenceEnd: false,
+            isClauseEnd: false,
+            isPause: false,
+            isDashToken: isPauseToken(word),
+        });
+
+        it('should give extra time to dash tokens even in constant mode', () => {
+            const normalResult = strategy.calculateDuration(createMeta('word'), context);
+            const dashResult = strategy.calculateDuration(createMeta('—'), context);
+            
+            expect(dashResult.duration).toBeGreaterThan(normalResult.duration);
+        });
     });
 });

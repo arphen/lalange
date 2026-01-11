@@ -8,7 +8,6 @@ import { ModelDownloadModal } from './components/ModelDownloadModal'
 import { Onboarding } from './components/Onboarding/Onboarding'
 import type { BookDocType } from './core/sync/db'
 import { useSettingsStore } from './core/store/settings'
-import { useAIStore } from './core/store/ai'
 import { clsx } from 'clsx'
 import { GlobalNavSidebar, type ViewState } from './components/GlobalNavSidebar'
 
@@ -16,7 +15,6 @@ function App() {
   const [currentBook, setCurrentBook] = useState<BookDocType | null>(null)
   const [view, setView] = useState<ViewState>('archive')
   const { theme, hasCompletedOnboarding } = useSettingsStore()
-  const aiState = useAIStore()
 
   const handleOpenBook = (book: BookDocType | null) => {
     setCurrentBook(book);
@@ -55,7 +53,6 @@ function App() {
         view={view}
         currentBook={currentBook}
         onNavigate={setView}
-        aiActivity={aiState.activity}
       />
 
       <div className="flex-1 min-w-0 min-h-0 overflow-auto flex justify-center relative">

@@ -36,7 +36,29 @@ vi.mock('./core/store/ai', () => ({
         activity: null,
         isLoading: false,
         progress: '',
-        progressValue: 0
+        progressValue: 0,
+        lifecycleState: 'idle',
+        error: null,
+        activeModelName: null,
+        tps: 0,
+        isPanelExpanded: false,
+        togglePanelExpanded: vi.fn(),
+        currentTask: null,
+        modelStats: {
+            name: null,
+            sizeBytes: 0,
+            loadStartTime: null,
+            loadEndTime: null,
+            crashCount: 0,
+            lastCrashError: null,
+            inferenceCount: 0
+        },
+        summaryTiming: {
+            durations: [],
+            currentStartTime: null,
+            averageDuration: null
+        },
+        getSummaryProgress: () => null
     })
 }));
 

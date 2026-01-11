@@ -14,6 +14,7 @@ import {
     type WordMeta,
     type DurationResult
 } from './duration';
+import { isPauseToken } from './tokenize';
 
 /**
  * Punctuation detection utilities.
@@ -32,6 +33,8 @@ const detectPunctuation = (word: string) => {
                        SENTENCE_END_PAIRS.some(p => lastTwoChars.endsWith(p)),
         isClauseEnd: CLAUSE_END_CHARS.includes(lastChar),
         isPause: PAUSE_CHARS.includes(lastChar),
+        // Standalone dash tokens (em-dash, en-dash) extracted by tokenizer
+        isDashToken: isPauseToken(word),
     };
 };
 
@@ -198,7 +201,7 @@ export const useDurationStrategy = (
 
         const word = words[wordIndex];
         const density = densities[wordIndex] ?? 1.0;
-        const { isSentenceEnd, isClauseEnd, isPause } = detectPunctuation(word);
+        const { isSentenceEnd, isClauseEnd, isPause, isDashToken } = detectPunctuation(word);
         
         // Calculate sentence-relative index
         const sentenceStartIndex = sentenceBoundary?.start ?? 0;
@@ -214,6 +217,7 @@ export const useDurationStrategy = (
             isSentenceEnd,
             isClauseEnd,
             isPause,
+            isDashToken,
         };
 
         return strategy.calculateDuration(meta, context);
