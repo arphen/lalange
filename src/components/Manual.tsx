@@ -32,14 +32,14 @@ export const Manual = () => {
         <section className="space-y-4">
             <div className="flex items-center gap-4">
                 <span className="text-4xl font-bold text-white/10">01</span>
-                <h2 className="text-xl font-bold text-dune-gold uppercase tracking-wider">The Gaze (Bionic Anchoring)</h2>
+                <h2 className="text-xl font-bold text-dune-gold uppercase tracking-wider">The Gaze (Saccade Anchoring)</h2>
             </div>
             <div className="pl-12 space-y-4">
                 <p className="leading-relaxed">
                     Do not chase the words. Simply relax your eyes and focus where it feels natural.
                 </p>
                 <p className="leading-relaxed">
-                    Arphen uses <strong>"Bionic Highlighting"</strong> (bolding the start of words) to artificially anchor your saccades. 
+                    Arphen uses <strong>"Gradient Anchoring"</strong> (a continuous font-weight gradient) to guide your saccades. 
                     Trust the stream; let the text wash over the fovea. Your eyes should remain static while the semantic content moves.
                 </p>
             </div>
