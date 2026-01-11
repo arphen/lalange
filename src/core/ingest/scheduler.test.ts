@@ -85,7 +85,15 @@ describe('IngestionScheduler', () => {
 
         // Setup Service mocks
         // Mock analyzeDensityRange to match the actual function signature (no callback)
-        (analyzeDensityRange as any).mockImplementation(async (_words: string[]) => {
+        (analyzeDensityRange as any).mockImplementation(async (_words: string[], callback: any) => {
+             // Simulate callback execution if provided
+             if (callback) {
+                await callback({
+                    densities: [1, 1, 1],
+                    analysisData: [{ tokens: [], surprisals: [] }],
+                    startIndex: 0
+                });
+            }
             return {
                 densities: [1, 1, 1],
                 analysisData: [{ tokens: [], surprisals: [] }]
