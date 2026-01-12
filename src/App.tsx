@@ -76,7 +76,8 @@ function App() {
               <Librarian />
             </div>
           } />
-          <Route path="/settings" element={<SettingsPanel onClose={() => navigate(-1)} />} />
+          <Route path="/settings" element={<Navigate to="/settings/pacing" replace />} />
+          <Route path="/settings/:tab" element={<SettingsPanel onClose={() => navigate(-1)} />} />
           <Route path="/manual" element={<Manual />} />
           <Route path="/manifesto" element={<Manifesto onBack={() => navigate('/')} />} />
           <Route path="/research" element={<Research />} />

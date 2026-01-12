@@ -1,6 +1,6 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { type BookDocType, type ChapterDocType, type ReadingStateDocType, initDB } from '../../core/sync/db';
-import { getSaccadeSplit, getSaccadeGradientHtml } from '../../core/rsvp/saccade';
+import { getDisplayPlugin, type DisplayPlugin } from '../../core/rsvp/display';
 import { getVisualProcessingDelay, getSpeedFactor } from '../../core/rsvp/timing';
 import { Sidebar } from './Sidebar';
 import { useSettingsStore } from '../../core/store/settings';
@@ -26,7 +26,16 @@ const getDensityColor = (score: number) => {
 
 export const Reader: React.FC<ReaderProps> = ({ book }) => {
     const [isPlaying, setIsPlaying] = useState(false);
-    const { wpm, setWpm, summaryWpm } = useSettingsStore();
+    const { wpm, setWpm, summaryWpm, displayPlugin: displayPluginId } = useSettingsStore();
+    
+    // Get the active display plugin
+    const displayPlugin = useMemo(() => getDisplayPlugin(displayPluginId), [displayPluginId]);
+    const displayPluginRef = useRef<DisplayPlugin>(displayPlugin);
+    
+    // Keep plugin ref in sync
+    useEffect(() => {
+        displayPluginRef.current = displayPlugin;
+    }, [displayPlugin]);
 
     // Actual WPM tracking (words displayed in last 60 seconds)
     const wordTimestampsRef = useRef<number[]>([]);
@@ -74,30 +83,38 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
 
     // Summary Mode Refs
     const [isSummaryActive, setIsSummaryActive] = useState(false);
+    const [countdown, setCountdown] = useState<number | null>(null);
+    const [transitionLabel, setTransitionLabel] = useState<string | null>(null); // To show "Chunk Summary:" or "Resuming Text:"
+    const countdownIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
     const isSummaryActiveRef = useRef(false);
     const savedChapterIndexRef = useRef(0);
     const summaryWordsRef = useRef<string[]>([]);
-
-    const saveProgress = React.useCallback(async () => {
-        if (loading || !readingState || !currentChapter) return;
-        const db = await initDB();
-        const doc = await db.reading_states.findOne(book.id).exec();
-        if (doc) {
-            await doc.incrementalPatch({
-                currentChapterId: currentChapter.id,
-                currentWordIndex: indexRef.current,
-                lastRead: Date.now()
-            });
-        }
-    }, [loading, readingState, currentChapter, book.id]);
-
-    const renderWord = React.useCallback((idx: number, words: string[]) => {
+    
+    // Define renderWord early, before it's used in startTransition or other callbacks
+    const renderWord = useCallback((idx: number, words: string[]) => {
+        const plugin = displayPluginRef.current;
+        
         // Update RSVP Display
         if (rsvpRef.current) {
             const currentWord = words[idx];
             if (currentWord) {
-                // Use gradient for the main RSVP display
-                rsvpRef.current.innerHTML = getSaccadeGradientHtml(currentWord);
+                // Use the active display plugin for rendering
+                rsvpRef.current.innerHTML = plugin.renderWord(currentWord);
+                
+                // Reset common style properties potentially set by other plugins
+                rsvpRef.current.style.transform = '';
+                rsvpRef.current.style.marginLeft = '';
+                rsvpRef.current.style.paddingLeft = '';
+                rsvpRef.current.style.fontFamily = '';
+                rsvpRef.current.style.width = '';
+                rsvpRef.current.style.textAlign = '';
+
+                // Apply plugin-specific container styling
+                const containerStyle = plugin.getContainerStyle?.(currentWord);
+                if (containerStyle) {
+                    Object.assign(rsvpRef.current.style, containerStyle);
+                }
             }
         }
 
@@ -108,7 +125,7 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
             const prevWords = words.slice(start, end);
             const html = prevWords.map((w, i) => {
                 const actualIndex = start + i;
-                const { bold, light } = getSaccadeSplit(w);
+                const { bold, light } = plugin.splitWord(w);
                 // Add line break after punctuation to simulate structure
                 const isEnd = /[.!?]$/.test(w);
                 const breakHtml = isEnd ? '<div class="w-full h-2"></div>' : '';
@@ -138,7 +155,7 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
             const nextWords = words.slice(start, end);
             const html = nextWords.map((w, i) => {
                 const actualIndex = start + i;
-                const { bold, light } = getSaccadeSplit(w);
+                const { bold, light } = plugin.splitWord(w);
                 const isEnd = /[.!?]$/.test(w);
                 const breakHtml = isEnd ? '<div class="w-full h-2"></div>' : '';
 
@@ -159,6 +176,79 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
             // Scroll to top (default)
         }
     }, []);
+
+    const startTransition = useCallback((label: string, onComplete: () => void) => {
+        // Stop playback immediately
+        setIsPlaying(false);
+        isPlayingRef.current = false;
+        
+        // Open sidebar to show context
+        setShowChapters(true);
+
+        // Clear RSVP display
+        if (rsvpRef.current) {
+            rsvpRef.current.innerHTML = '';
+        }
+        
+        let count = 3;
+        setCountdown(count);
+        setTransitionLabel(label);
+        
+        if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
+        
+        countdownIntervalRef.current = setInterval(() => {
+            count--;
+            if (count > 0) {
+                setCountdown(count);
+            } else {
+                if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
+                setCountdown(null);
+                setTransitionLabel(null);
+                onComplete();
+                // Resume playback
+                setIsPlaying(true); 
+            }
+        }, 1000);
+    }, [setIsPlaying, setCountdown, setTransitionLabel, setShowChapters]);
+
+    const handleSkipSummary = useCallback(() => {
+        // Clear countdown if running
+        if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
+        setCountdown(null);
+        setTransitionLabel(null);
+
+        // Logic to skip directly to post-summary state
+        if (isSummaryActiveRef.current || countdown) {
+            // Restore from summary mode
+            isSummaryActiveRef.current = false;
+            setIsSummaryActive(false);
+
+            // Restore index
+            indexRef.current = savedChapterIndexRef.current;
+            wpmRef.current = wpm; // Restore user WPM
+            
+            // Render correct word
+            renderWord(indexRef.current, wordsRef.current);
+            setCurrentWordIndex(indexRef.current);
+            
+            // Resume if we were playing, or just ready up
+            accumulatorRef.current = 0;
+            setIsPlaying(true);
+        }
+    }, [wpm, renderWord, countdown, setIsPlaying, setCountdown, setTransitionLabel]);
+
+    const saveProgress = React.useCallback(async () => {
+        if (loading || !readingState || !currentChapter) return;
+        const db = await initDB();
+        const doc = await db.reading_states.findOne(book.id).exec();
+        if (doc) {
+            await doc.incrementalPatch({
+                currentChapterId: currentChapter.id,
+                currentWordIndex: indexRef.current,
+                lastRead: Date.now()
+            });
+        }
+    }, [loading, readingState, currentChapter, book.id]);
 
     // Ref to hold the current chapter subscription
     const chapterSubRef = useRef<{ unsubscribe: () => void } | null>(null);
@@ -360,37 +450,53 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
                     if (!isSummaryActiveRef.current) {
                         const sub = currentChapterRef.current?.subchapters?.find(s => s.endWordIndex === indexRef.current);
                         if (sub && sub.summary) {
-                            // Enter Summary Mode
-                            isSummaryActiveRef.current = true;
-                            setIsSummaryActive(true);
+                            // Trigger Transition to Summary
+                            isPlayingRef.current = false; // Stop loop immediately
+                            
+                            startTransition('next: summary', () => {
+                                // Enter Summary Mode Logic
+                                isSummaryActiveRef.current = true;
+                                setIsSummaryActive(true);
 
-                            savedChapterIndexRef.current = indexRef.current;
+                                savedChapterIndexRef.current = indexRef.current;
 
-                            // Swap words
-                            summaryWordsRef.current = sub.summary.split(' ');
-                            indexRef.current = 0;
+                                // Swap words
+                                summaryWordsRef.current = sub.summary!.split(' ');
+                                indexRef.current = 0;
 
-                            // Slow down WPM
-                            wpmRef.current = summaryWpm;
+                                // Slow down WPM
+                                wpmRef.current = summaryWpm;
 
-                            // Force render first word of summary
-                            renderWord(0, summaryWordsRef.current);
-                            return; // Continue loop next frame
+                                // Force render first word of summary
+                                renderWord(0, summaryWordsRef.current);
+                                accumulatorRef.current = 0;
+                            });
+                            
+                            shouldRender = false;
+                            break; // Exit loop
                         }
                     }
                 } else {
                     // End of words
                     if (isSummaryActiveRef.current) {
-                        // End of Summary -> Resume Chapter
-                        isSummaryActiveRef.current = false;
-                        setIsSummaryActive(false);
+                        // Trigger Transition to Main Text
+                        isPlayingRef.current = false; // Stop loop immediately
+                        
+                        startTransition('next: text', () => {
+                            // End of Summary -> Resume Chapter Logic
+                            isSummaryActiveRef.current = false;
+                            setIsSummaryActive(false);
 
-                        // Restore
-                        indexRef.current = savedChapterIndexRef.current;
-                        wpmRef.current = wpm; // Restore user WPM
+                            // Restore
+                            indexRef.current = savedChapterIndexRef.current;
+                            wpmRef.current = wpm; // Restore user WPM
 
-                        renderWord(indexRef.current, wordsRef.current);
-                        return;
+                            renderWord(indexRef.current, wordsRef.current);
+                            accumulatorRef.current = 0;
+                        });
+
+                        shouldRender = false;
+                        break; // Exit loop
                     }
 
                     // End of Chapter
@@ -633,16 +739,29 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
     // Calculate Subchapter Progress
     const currentSubchapter = currentChapter?.subchapters?.find(s => currentWordIndex >= s.startWordIndex && currentWordIndex < s.endWordIndex);
     let subchapterProgress = 0;
-    let timeLeftStr = '';
     
+    // If playing summary, use index from saved ref because indexRef is 0
+    // But logically, if isSummaryActive is TRUE, we are "at" the end of the subchapter we just finished.
+    // The loop finds the subchapter by `s.endWordIndex === indexRef.current`.
+    // So while reading summary, we are theoretically associated with the subchapter that just ended.
+    // Wait, `savedChapterIndexRef` holds the index where we triggered summary.
+    // That index equals `sub.endWordIndex`.
+    // So we can find the subchapter index using that.
+    
+    let activeSummaryId: string | null = null;
+    if (isSummaryActive && currentChapter) {
+         const chapterId = currentChapter.id;
+         // Find sub whose end index matches saved ref
+         const subIdx = currentChapter.subchapters?.findIndex(s => s.endWordIndex === savedChapterIndexRef.current);
+         if (subIdx !== undefined && subIdx !== -1) {
+             activeSummaryId = `${chapterId}_${subIdx}`;
+         }
+    }
+
     if (currentSubchapter) {
         const total = currentSubchapter.endWordIndex - currentSubchapter.startWordIndex;
         const current = currentWordIndex - currentSubchapter.startWordIndex;
         subchapterProgress = Math.min(1, Math.max(0, current / total));
-
-        const wordsLeft = currentSubchapter.endWordIndex - currentWordIndex;
-        const minutesLeft = wordsLeft / wpm;
-        timeLeftStr = minutesLeft < 1 ? '< 1m' : `${Math.round(minutesLeft)}m`;
     }
 
     // Color based on actual speed vs target
@@ -704,6 +823,7 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
                     wpm={wpm}
                     currentWordIndex={currentWordIndex}
                     now={now}
+                    activeSummaryId={activeSummaryId}
                 />
             </div>
 
@@ -739,41 +859,56 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
                             className="w-full max-w-2xl h-full flex items-center justify-center bg-black/20 border border-white/5 hover:border-white/10 transition-colors cursor-ns-resize"
                             onWheel={handleWheel}
                         >
-                        {/* Saccade Gradient Word */}
-                            <div ref={rsvpRef} className={`text-6xl md:text-8xl font-mono tracking-tight whitespace-nowrap drop-shadow-[0_0_15px_rgba(255,255,255,0.5)] ${isSummaryActive ? 'text-amber-400 italic' : 'text-white'}`}>
+                        {/* Display Plugin Word */}
+                            <div 
+                                ref={rsvpRef} 
+                                className={`text-6xl md:text-8xl font-mono tracking-tight whitespace-nowrap drop-shadow-[0_0_15px_rgba(255,255,255,0.5)] ${displayPlugin.getContainerClass()} ${isSummaryActive ? 'text-amber-400 italic' : 'text-white'}`}
+                                style={displayPlugin.getContainerStyle?.(wordToRender) || undefined}
+                            >
                                 {wordToRender && (
-                                    <span dangerouslySetInnerHTML={{ __html: getSaccadeGradientHtml(wordToRender) }} />
+                                    <span dangerouslySetInnerHTML={{ __html: displayPlugin.renderWord(wordToRender) }} />
                                 )}
                             </div>
                         </div>
 
                         {/* Subchapter Progress Lights */}
                         {currentSubchapter && (
-                            <div className="absolute bottom-6 flex flex-col items-center gap-2 pointer-events-none">
+                            <div className="absolute bottom-2 flex flex-col items-center gap-2 pointer-events-none">
                                 <div className="flex gap-3">
                                     {[...Array(5)].map((_, i) => {
                                         const isLit = subchapterProgress >= (i / 5);
                                         return (
                                             <div
                                                 key={i}
-                                                className={`w-1.5 h-1.5 rounded-full transition-all duration-500 ${isLit ? 'bg-dune-gold shadow-[0_0_8px_var(--color-dune-gold)]' : 'bg-white/10'}`}
+                                                className={`w-1.5 h-1.5 rounded-full transition-all duration-500 ${isLit ? 'bg-white/20' : 'bg-white/5'}`}
                                             />
                                         );
                                     })}
-                                </div>
-                                <div className="text-[10px] font-mono text-white/30 tracking-widest uppercase animate-pulse">
-                                    {timeLeftStr} REMAINING
                                 </div>
                             </div>
                         )}
 
                         {/* Play/Pause Overlay - positioned over the RSVP container */}
-                        {!isPlaying && (
+                        {(!isPlaying && !countdown) && (
                             <div data-testid="play-overlay" className="absolute inset-0 flex items-center justify-center pointer-events-none animate-in fade-in duration-200">
                                 <div className="bg-black/40 backdrop-blur-sm p-6 rounded-full border border-white/10 shadow-2xl">
                                     <svg className="w-12 h-12 text-white/80 ml-1" fill="currentColor" viewBox="0 0 24 24">
                                         <path d="M8 5v14l11-7z" />
                                     </svg>
+                                </div>
+                            </div>
+                        )}
+                        
+                        {/* Countdown Overlay */}
+                        {countdown && (
+                            <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none z-50 animate-in fade-in duration-200 gap-4">
+                                {transitionLabel && (
+                                    <div className="font-mono text-sm tracking-widest uppercase text-dune-gold/70 bg-black/40 px-3 py-1 rounded backdrop-blur-sm border border-white/5">
+                                        {transitionLabel}
+                                    </div>
+                                )}
+                                <div className="font-mono text-8xl font-bold text-dune-gold drop-shadow-lg animate-pulse">
+                                    {countdown}
                                 </div>
                             </div>
                         )}
@@ -806,6 +941,20 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
 
             {/* Speed Control Overlay */}
             <div className="absolute bottom-8 right-8 z-[70] flex items-center gap-3 opacity-40 hover:opacity-100 transition-opacity duration-300">
+                
+                {/* Skip Summary Button (Only Visible when relevant) */}
+                {(isSummaryActive || (countdown && transitionLabel?.includes('summary'))) && (
+                    <button
+                        onClick={handleSkipSummary}
+                        className="p-2 mr-2 bg-black/60 backdrop-blur-sm rounded-full border border-purple-500/30 text-purple-300 hover:text-white hover:bg-purple-900/50 hover:border-purple-400 transition-all active:scale-95 animate-in fade-in slide-in-from-right-4"
+                        title="Skip Summary"
+                    >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7M5 5l7 7-7 7" />
+                        </svg>
+                    </button>
+                )}
+
                 {/* Slower Button */}
                 <button
                     onClick={handleSlower}

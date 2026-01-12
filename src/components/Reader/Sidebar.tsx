@@ -14,6 +14,7 @@ interface SidebarProps {
     className?: string;
     currentWordIndex?: number;
     now: number;
+    activeSummaryId?: string | null;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -24,10 +25,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
     wpm,
     className,
     currentWordIndex,
-    now
+    now,
+    activeSummaryId
 }) => {
     const [expandedSummary, setExpandedSummary] = useState<string | null>(null);
     useAIStore(); // Keep subscription for re-renders but ignore returned object
+
+    // Sync expanded summary with active summary from parent (Reader)
+    React.useEffect(() => {
+        if (activeSummaryId) {
+            setExpandedSummary(activeSummaryId);
+        }
+    }, [activeSummaryId]);
 
     // Filter out image chapters
     const displayChapters = chapters.filter(c => c.metadata?.classificationType !== 'image');
@@ -152,6 +161,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                     {chapter.subchapters.map((sub, idx) => {
                                         const summaryId = `${chapter.id}_${idx}`;
                                         const isExpanded = expandedSummary === summaryId;
+                                        const isPlayingSummary = activeSummaryId === summaryId;
                                         // Check if we have ANY content for this subchapter (start index exists in content array)
                                         const currentContentLength = chapter.content?.length || 0;
                                         const hasStarted = currentContentLength > sub.startWordIndex;
@@ -279,12 +289,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                                 <div 
                                                     className={clsx(
                                                         "overflow-hidden transition-all duration-300 ease-out",
-                                                        isExpanded ? "max-h-40 opacity-100 mt-1" : "max-h-0 opacity-0"
+                                                        isExpanded ? "max-h-96 opacity-100 mt-1" : "max-h-0 opacity-0"
                                                     )}
                                                 >
                                                     {hasSummary ? (
                                                         <div 
-                                                            className="text-[10px] text-gray-400 italic bg-black/30 p-2 rounded border border-white/10 relative z-10"
+                                                            className={clsx(
+                                                                "text-[10px] italic p-2 rounded border relative z-10 transition-colors",
+                                                                isPlayingSummary 
+                                                                    ? "bg-purple-900/40 text-purple-200 border-purple-500/50 shadow-[0_0_15px_rgba(168,85,247,0.2)]" 
+                                                                    : "bg-black/30 text-gray-400 border-white/10"
+                                                            )}
                                                             data-testid={`summary-content-${idx}`}
                                                         >
                                                             {sub.summary}

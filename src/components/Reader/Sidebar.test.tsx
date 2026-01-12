@@ -268,8 +268,8 @@ describe('Sidebar Component', () => {
             const button = screen.getByTestId('subchapter-btn-0');
             fireEvent.click(button);
 
-            // Summary container should be expanded (max-h-40)
-            expect(container).toHaveClass('max-h-40');
+            // Summary container should be expanded (max-h-96)
+            expect(container).toHaveClass('max-h-96');
             expect(screen.getByText('This is the summary text')).toBeInTheDocument();
         });
 
@@ -288,7 +288,7 @@ describe('Sidebar Component', () => {
             
             // Click to expand
             fireEvent.click(button);
-            expect(container).toHaveClass('max-h-40');
+            expect(container).toHaveClass('max-h-96');
 
             // Click to collapse
             fireEvent.click(button);
@@ -310,7 +310,7 @@ describe('Sidebar Component', () => {
             // Should show "Generating summary..." message
             const generatingEl = screen.getByTestId('summary-generating-0');
             expect(generatingEl).toBeInTheDocument();
-            expect(generatingEl.parentElement).toHaveClass('max-h-40');
+            expect(generatingEl.parentElement).toHaveClass('max-h-96');
         });
     });
 
