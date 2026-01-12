@@ -1,4 +1,5 @@
 import { clsx } from 'clsx';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { BrandName } from './BrandName';
 import { AIStatusPanel } from './AIStatusPanel';
 import type { BookDocType } from '../core/sync/db';
@@ -36,6 +37,26 @@ const NavItem = ({ label, active, onClick, disabled }: NavItemProps) => (
   </button>
 );
 
+const SettingsSubItem = ({ label, path }: { label: string; path: string }) => {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const isActive = location.pathname === path;
+
+  return (
+    <button
+      onClick={() => navigate(path)}
+      className={clsx(
+        "w-[calc(100%-1rem)] text-left font-mono text-[10px] tracking-wider uppercase px-3 py-1.5 ml-4 border-l transition-colors",
+        isActive
+          ? "border-dune-gold text-dune-gold bg-dune-gold/5"
+          : "border-white/10 text-white/40 hover:text-white hover:border-white/30"
+      )}
+    >
+      {label}
+    </button>
+  );
+};
+
 export function GlobalNavSidebar({ view, currentBook, onNavigate }: GlobalNavSidebarProps) {
   return (
     <div className="h-full w-64 shrink-0 border-r border-white/10 bg-black/20 backdrop-blur-sm flex flex-col">
@@ -62,6 +83,14 @@ export function GlobalNavSidebar({ view, currentBook, onNavigate }: GlobalNavSid
         <NavItem label="Research" target="research" active={view === 'research'} onClick={() => onNavigate('research')} />
         <NavItem label="Manual" target="manual" active={view === 'manual'} onClick={() => onNavigate('manual')} />
         <NavItem label="Settings" target="settings" active={view === 'settings'} onClick={() => onNavigate('settings')} />
+        
+        {view === 'settings' && (
+          <div className="flex flex-col gap-1 mb-2 animate-in slide-in-from-left-2 duration-200">
+              <SettingsSubItem label="Pacing Engine" path="/settings/pacing" />
+              <SettingsSubItem label="Summarizer" path="/settings/summarizer" />
+              <SettingsSubItem label="Librarian" path="/settings/librarian" />
+          </div>
+        )}
       </div>
 
       <div className="p-4 border-t border-white/10">

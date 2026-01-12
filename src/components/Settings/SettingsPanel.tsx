@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
+import { useParams, Navigate } from 'react-router-dom';
 import { useSettingsStore, type PromptFragment } from '../../core/store/settings';
 import { useAIStore } from '../../core/store/ai';
 import { getEngine, MODEL_INFO, type ModelTier, isModelCached, deleteModel } from '../../core/ai/webllm';
 import { getAvailableStrategies, type DurationStrategyId } from '../../core/rsvp/duration';
+import { getAllDisplayPlugins, type DisplayPluginId } from '../../core/rsvp/display';
 import { clsx } from 'clsx';
 import { BrandName } from '../BrandName';
 
@@ -13,7 +15,11 @@ interface SettingsPanelProps {
 type SettingsTab = 'librarian' | 'pacing' | 'summarizer';
 
 export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
-    const [activeTab, setActiveTab] = useState<SettingsTab>('pacing');
+    const { tab } = useParams<{ tab: string }>();
+    const activeTabRaw = (tab as SettingsTab) || 'pacing';
+    const isValidTab = ['librarian', 'pacing', 'summarizer'].includes(activeTabRaw);
+    const activeTab = isValidTab ? activeTabRaw : 'pacing';
+
     const [cachedModels, setCachedModels] = useState<Record<string, boolean>>({});
     const settings = useSettingsStore();
     const aiState = useAIStore();
@@ -32,11 +38,9 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
         checkCache().catch(console.error);
     }, [checkCache]);
 
-    const tabs: { id: SettingsTab; label: string; icon: string }[] = [
-        { id: 'pacing', label: 'Pacing Engine', icon: 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z' },
-        { id: 'summarizer', label: 'Summarizer', icon: 'M4 6h16M4 12h16M4 18h7' },
-        { id: 'librarian', label: 'Librarian (BETA)', icon: 'M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253' },
-    ];
+    if (!isValidTab) {
+        return <Navigate to="/settings/pacing" replace />;
+    }
 
     const handleDownloadModel = async (tier: ModelTier) => {
         try {
@@ -58,50 +62,22 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
     };
 
     return (
-        <div className="w-full h-full flex bg-basalt text-white font-mono overflow-hidden">
-            {/* Sidebar */}
-            <div className="w-64 flex-shrink-0 border-r border-white/10 bg-black/20 flex flex-col">
-                <div className="p-6 border-b border-white/10">
-                    <h2 className="text-xl font-bold text-dune-gold tracking-widest uppercase">SETTINGS</h2>
-                    <p className="text-xs text-gray-500 mt-1">SYSTEM CONFIGURATION</p>
-                </div>
-                <nav className="flex-1 p-4 space-y-2 overflow-y-auto">
-                    {tabs.map(tab => (
-                        <button
-                            key={tab.id}
-                            onClick={() => setActiveTab(tab.id)}
-                            className={clsx(
-                                "w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm transition-all",
-                                activeTab === tab.id
-                                    ? "bg-dune-gold text-black font-bold"
-                                    : "text-gray-400 hover:bg-white/5 hover:text-white"
-                            )}
-                        >
-                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={tab.icon} />
-                            </svg>
-                            {tab.label}
-                        </button>
-                    ))}
-                </nav>
-                <div className="p-4 border-t border-white/10">
+        <div className="w-full h-full overflow-y-auto bg-basalt text-white font-mono">
+            <div className="max-w-4xl mx-auto p-8 md:p-12">
+                <div className="mb-8 border-b border-white/10 pb-4 flex justify-between items-center">
+                     <div>
+                        <h2 className="text-xl font-bold text-dune-gold tracking-widest uppercase">
+                            SETTINGS / {activeTab.toUpperCase()}
+                        </h2>
+                        <p className="text-xs text-gray-500 mt-1">SYSTEM CONFIGURATION</p>
+                    </div>
                     <button
                         onClick={onClose}
-                        className="w-full py-2 border border-white/10 rounded text-xs text-gray-400 hover:bg-white/5 hover:text-white transition-colors"
+                        className="px-4 py-2 border border-white/10 rounded text-xs text-gray-400 hover:bg-white/5 hover:text-white transition-colors"
                     >
                         [ CLOSE ]
                     </button>
-                    <div className="mt-4 text-center">
-                        <p className="text-[10px] text-gray-600 font-mono">
-                            v0.1.0-{__COMMIT_HASH__}
-                        </p>
-                    </div>
                 </div>
-            </div>
-
-            {/* Main Content */}
-            <div className="flex-1 overflow-y-auto bg-basalt">
-                <div className="max-w-4xl mx-auto p-8 md:p-12">
 
                     {/* Librarian Tab (Includes General + Model Manager) */}
                     {activeTab === 'librarian' && (
@@ -348,6 +324,33 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                                 </div>
                             </div>
 
+                            {/* Display Style Selection */}
+                            <div className="bg-white/5 rounded-lg p-8 border border-white/10 space-y-6">
+                                <div>
+                                    <label className="block text-xs text-dune-gold mb-2 uppercase tracking-widest font-bold">Display Style</label>
+                                    <p className="text-xs text-gray-500 mb-4">
+                                        Customize the visual presentation of the RSVP stream.
+                                    </p>
+                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                        {getAllDisplayPlugins().map(plugin => (
+                                            <button
+                                                key={plugin.id}
+                                                onClick={() => settings.setDisplayPlugin(plugin.id as DisplayPluginId)}
+                                                className={clsx(
+                                                    "p-4 rounded border text-left transition-all",
+                                                    settings.displayPlugin === plugin.id
+                                                        ? "bg-dune-gold text-black border-dune-gold"
+                                                        : "bg-black/20 border-white/10 text-gray-400 hover:border-white/30 hover:text-white"
+                                                )}
+                                            >
+                                                <div className="font-bold text-sm">{plugin.name}</div>
+                                                <div className="text-[10px] opacity-70 mt-2 leading-relaxed">{plugin.description}</div>
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+
                             <div className="bg-black/20 p-8 rounded-lg border border-white/10">
                                 <div className="flex justify-between text-sm text-gray-400 mb-4">
                                     <span className="uppercase tracking-widest">Velocity Weighting</span>
@@ -443,7 +446,6 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
 
                 </div>
             </div>
-        </div>
     );
 };
 

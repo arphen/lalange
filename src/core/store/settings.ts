@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { type ModelTier } from '../ai/webllm';
 import { type DurationStrategyId, DEFAULT_STRATEGY_ID } from '../rsvp/duration';
+import { type DisplayPluginId, DEFAULT_DISPLAY_PLUGIN } from '../rsvp/display';
 
 export type ThemeMode = 'volcanic' | 'dunes' | 'ash';
 
@@ -26,6 +27,8 @@ interface SettingsState {
     setFontScale: (scale: number) => void;
     durationStrategy: DurationStrategyId;
     setDurationStrategy: (strategy: DurationStrategyId) => void;
+    displayPlugin: DisplayPluginId;
+    setDisplayPlugin: (plugin: DisplayPluginId) => void;
 
     // Features
     saccadeEnabled: boolean;
@@ -129,7 +132,7 @@ export const useSettingsStore = create<SettingsState>()(
             wpm: 300,
             setWpm: (wpm) => set({ wpm }),
 
-            summaryWpm: 200,
+            summaryWpm: 400,
             setSummaryWpm: (summaryWpm) => set({ summaryWpm }),
 
             fontScale: 1,
@@ -137,6 +140,9 @@ export const useSettingsStore = create<SettingsState>()(
 
             durationStrategy: DEFAULT_STRATEGY_ID,
             setDurationStrategy: (durationStrategy) => set({ durationStrategy }),
+
+            displayPlugin: DEFAULT_DISPLAY_PLUGIN,
+            setDisplayPlugin: (displayPlugin) => set({ displayPlugin }),
 
             saccadeEnabled: true,
             setSaccadeEnabled: (saccadeEnabled) => set({ saccadeEnabled }),
