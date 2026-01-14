@@ -6,13 +6,9 @@ import {
     isValidPluginId,
     DEFAULT_DISPLAY_PLUGIN,
     saccadePlugin,
-    orpPlugin,
     velocireaderPlugin,
     getSaccadeSplit,
     getSaccadeGradientHtml,
-    getORPIndex,
-    getORPHtml,
-    getORPOffset,
     getVelocireaderORPIndex,
     getVelocireaderHtml,
     getLuminance,
@@ -27,12 +23,6 @@ describe('Display Plugin System', () => {
             const plugin = getDisplayPlugin('saccade');
             expect(plugin.id).toBe('saccade');
             expect(plugin.name).toBe('Gradient Anchoring');
-        });
-
-        it('should return orp plugin for orp id', () => {
-            const plugin = getDisplayPlugin('orp');
-            expect(plugin.id).toBe('orp');
-            expect(plugin.name).toBe('Center Focus (ORP)');
         });
 
         it('should return velocireader plugin for velocireader id', () => {
@@ -51,7 +41,7 @@ describe('Display Plugin System', () => {
     describe('getAllDisplayPlugins', () => {
         it('should return all plugins sorted by name', () => {
             const plugins = getAllDisplayPlugins();
-            expect(plugins.length).toBeGreaterThanOrEqual(3);
+            expect(plugins.length).toBeGreaterThanOrEqual(2);
             // Check sorting
             for (let i = 1; i < plugins.length; i++) {
                 expect(plugins[i].name >= plugins[i - 1].name).toBe(true);
@@ -63,7 +53,6 @@ describe('Display Plugin System', () => {
         it('should return all plugin ids', () => {
             const ids = getAllDisplayPluginIds();
             expect(ids).toContain('saccade');
-            expect(ids).toContain('orp');
             expect(ids).toContain('velocireader');
         });
     });
@@ -71,7 +60,7 @@ describe('Display Plugin System', () => {
     describe('isValidPluginId', () => {
         it('should return true for valid ids', () => {
             expect(isValidPluginId('saccade')).toBe(true);
-            expect(isValidPluginId('orp')).toBe(true);
+            expect(isValidPluginId('velocireader')).toBe(true);
         });
 
         it('should return false for invalid ids', () => {
@@ -152,104 +141,6 @@ describe('Saccade Plugin', () => {
 
         it('should return undefined for container style', () => {
             expect(saccadePlugin.getContainerStyle?.('hello')).toBeUndefined();
-        });
-    });
-});
-
-describe('ORP Plugin', () => {
-    describe('getORPIndex', () => {
-        it('should return 0 for empty string', () => {
-            expect(getORPIndex('')).toBe(0);
-        });
-
-        it('should return 0 for 1-2 letter words', () => {
-            expect(getORPIndex('a')).toBe(0);
-            expect(getORPIndex('hi')).toBe(0);
-        });
-
-        it('should return 1 for 3-4 letter words (2nd letter)', () => {
-            expect(getORPIndex('the')).toBe(1);
-            expect(getORPIndex('test')).toBe(1);
-        });
-
-        it('should return 2 for 5-6 letter words (3rd letter)', () => {
-            expect(getORPIndex('hello')).toBe(2);
-            expect(getORPIndex('coding')).toBe(2);
-        });
-
-        it('should return 3 for 7-9 letter words (4th letter)', () => {
-            expect(getORPIndex('example')).toBe(3);
-            expect(getORPIndex('computing')).toBe(3);
-        });
-
-        it('should return ~35% for long words', () => {
-            const word = 'internationalization';
-            const index = getORPIndex(word);
-            expect(index).toBe(Math.floor(word.length * 0.35));
-        });
-    });
-
-    describe('getORPHtml', () => {
-        it('should return empty for empty string', () => {
-            expect(getORPHtml('')).toBe('');
-        });
-
-        it('should highlight the ORP letter in red', () => {
-            const html = getORPHtml('hello');
-            expect(html).toContain('text-red-500');
-            expect(html).toContain('font-bold');
-        });
-
-        it('should render all characters', () => {
-            const html = getORPHtml('test');
-            expect(html).toContain('t');
-            expect(html).toContain('e');
-            expect(html).toContain('s');
-        });
-
-        it('should handle dash tokens', () => {
-            const html = getORPHtml('—');
-            expect(html).toContain('—');
-        });
-    });
-
-    describe('getORPOffset', () => {
-        it('should return 0 for empty string', () => {
-            expect(getORPOffset('')).toBe('0');
-        });
-
-        it('should return negative ch offset for words', () => {
-            const offset = getORPOffset('hello');
-            expect(offset).toMatch(/-[\d.]+ch/);
-        });
-
-        it('should offset based on ORP index', () => {
-            // 'hello' has ORP at index 2, offset should be -(2+0.5)ch = -2.5ch
-            expect(getORPOffset('hello')).toBe('-2.5ch');
-        });
-    });
-
-    describe('orpPlugin interface', () => {
-        it('should implement renderWord', () => {
-            const html = orpPlugin.renderWord('hello');
-            expect(html).toContain('text-red-500');
-        });
-
-        it('should implement splitWord', () => {
-            const result = orpPlugin.splitWord('hello');
-            expect(result.bold).toBeTruthy();
-            expect(typeof result.light).toBe('string');
-        });
-
-        it('should return text-left for container class', () => {
-            expect(orpPlugin.getContainerClass()).toBe('text-left');
-        });
-
-        it('should return positioning style for container', () => {
-            const style = orpPlugin.getContainerStyle?.('hello');
-            expect(style).toBeDefined();
-            expect(style?.transform).toContain('translateX');
-            expect(style?.marginLeft).toBe('50%');
         });
     });
 });

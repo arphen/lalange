@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { getSaccadeGradientHtml, getSaccadeSplit } from '../core/rsvp/saccade';
+import { getDisplayPlugin } from '../core/rsvp/display';
 import { getSpeedFactor, getVisualProcessingDelay } from '../core/rsvp/timing';
 import { useSettingsStore } from '../core/store/settings';
 
@@ -22,7 +22,10 @@ interface ManifestoRsvpProps {
 }
 
 export function ManifestoRsvp({ words, densities, currentIndex, onJumpToIndex }: ManifestoRsvpProps) {
-  const { wpm, setWpm } = useSettingsStore();
+  const { wpm, setWpm, displayPlugin: displayPluginId } = useSettingsStore();
+  
+  // Get active display plugin
+  const displayPlugin = useMemo(() => getDisplayPlugin(displayPluginId), [displayPluginId]);
 
   const [isPlaying, setIsPlaying] = useState(false);
   const isPlayingRef = useRef(false);
@@ -56,7 +59,16 @@ export function ManifestoRsvp({ words, densities, currentIndex, onJumpToIndex }:
     const word = words[idx] || '';
 
     if (rsvpRef.current) {
-      rsvpRef.current.innerHTML = word ? getSaccadeGradientHtml(word) : '';
+      rsvpRef.current.innerHTML = word ? displayPlugin.renderWord(word) : '';
+      
+      // Apply plugin container styling
+      const containerStyle = displayPlugin.getContainerStyle?.(word);
+      if (containerStyle) {
+        Object.assign(rsvpRef.current.style, containerStyle);
+      } else {
+        rsvpRef.current.style.transform = '';
+        rsvpRef.current.style.marginLeft = '';
+      }
     }
 
     const startPrev = Math.max(0, idx - 150);
@@ -66,7 +78,7 @@ export function ManifestoRsvp({ words, densities, currentIndex, onJumpToIndex }:
     if (prevRef.current) {
       const html = prevWords.map((w, i) => {
         const actualIndex = startPrev + i;
-        const { bold, light } = getSaccadeSplit(w);
+        const { bold, light } = displayPlugin.splitWord(w);
         const isEnd = /[.!?]["']?$/.test(w);
         const breakHtml = isEnd ? '<div class="w-full h-2"></div>' : '';
         const density = densities[actualIndex] ?? 1.0;
@@ -95,7 +107,7 @@ export function ManifestoRsvp({ words, densities, currentIndex, onJumpToIndex }:
     if (nextRef.current) {
       const html = nextWords.map((w, i) => {
         const actualIndex = startNext + i;
-        const { bold, light } = getSaccadeSplit(w);
+        const { bold, light } = displayPlugin.splitWord(w);
         const isEnd = /[.!?]["']?$/.test(w);
         const breakHtml = isEnd ? '<div class="w-full h-2"></div>' : '';
         const density = densities[actualIndex] ?? 1.0;
@@ -115,7 +127,7 @@ export function ManifestoRsvp({ words, densities, currentIndex, onJumpToIndex }:
       nextRef.current.innerHTML = html;
       nextRef.current.scrollTop = 0;
     }
-  }, [densities, words]);
+  }, [densities, words, displayPlugin]);
 
   const handleRiverClick = useCallback((e: React.MouseEvent) => {
     const target = e.target as HTMLElement;

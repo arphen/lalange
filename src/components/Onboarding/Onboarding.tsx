@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useSettingsStore } from '../../core/store/settings';
 import { useAIStore } from '../../core/store/ai';
 import { downloadModelToCache } from '../../core/ai/webllm';
-import { getSaccadeGradientHtml } from '../../core/rsvp/saccade';
+import { getDisplayPlugin } from '../../core/rsvp/display';
 import { clsx } from 'clsx';
 import { BrandName } from '../BrandName';
 
@@ -13,10 +13,13 @@ const DEMO_WORDS = DEMO_TEXT.split(' ');
 const SUMMARY_WORDS = SUMMARY_TEXT.split(' ');
 
 export const Onboarding: React.FC = () => {
-    const { setHasCompletedOnboarding } = useSettingsStore();
+    const { setHasCompletedOnboarding, displayPlugin: displayPluginId } = useSettingsStore();
     const aiState = useAIStore();
     const [step, setStep] = useState<1 | 2 | 3>(1);
     const [downloadStarted, setDownloadStarted] = useState(false);
+    
+    // Get the active display plugin (same as Reader)
+    const displayPlugin = useMemo(() => getDisplayPlugin(displayPluginId), [displayPluginId]);
     
     // Demo RSVP State
     const [rsvpIndex, setRsvpIndex] = useState(0);
@@ -170,10 +173,11 @@ export const Onboarding: React.FC = () => {
                                          <div className="absolute top-0 bottom-0 w-px bg-red-900/30 left-1/2 -translate-x-1/2" />
                                          <div className="absolute left-0 right-0 h-px bg-red-900/30 top-1/2 -translate-y-1/2" />
                                          
-                                         {/* The Word */}
+                                         {/* The Word - Using Display Plugin */}
                                          <div 
-                                            className="relative z-10 text-4xl md:text-5xl text-white font-serif tracking-tight text-center drop-shadow-[0_0_15px_rgba(255,255,255,0.5)]"
-                                            dangerouslySetInnerHTML={{ __html: getSaccadeGradientHtml(step === 2 ? DEMO_WORDS[rsvpIndex] : SUMMARY_WORDS[rsvpIndex]) }}
+                                            className={`relative z-10 text-4xl md:text-5xl text-white font-serif tracking-tight text-center drop-shadow-[0_0_15px_rgba(255,255,255,0.5)] ${displayPlugin.getContainerClass()}`}
+                                            style={displayPlugin.getContainerStyle?.(DEMO_WORDS[rsvpIndex]) || undefined}
+                                            dangerouslySetInnerHTML={{ __html: displayPlugin.renderWord(DEMO_WORDS[rsvpIndex]) }}
                                          />
                                          
                                          {/* Status */}
@@ -269,10 +273,11 @@ export const Onboarding: React.FC = () => {
                                          <div className="absolute top-0 bottom-0 w-px bg-white/5 left-1/2 -translate-x-1/2" />
                                          <div className="absolute left-0 right-0 h-px bg-white/5 top-1/2 -translate-y-1/2" />
                                          
-                                         {/* The Word */}
+                                         {/* The Word - Using Display Plugin */}
                                          <div 
-                                            className="relative z-10 text-3xl md:text-4xl text-amber-400 italic font-mono tracking-tight text-center drop-shadow-[0_0_15px_rgba(251,191,36,0.3)] px-8"
-                                            dangerouslySetInnerHTML={{ __html: getSaccadeGradientHtml(SUMMARY_WORDS[rsvpIndex]) }}
+                                            className={`relative z-10 text-3xl md:text-4xl text-amber-400 italic font-mono tracking-tight text-center drop-shadow-[0_0_15px_rgba(251,191,36,0.3)] px-8 ${displayPlugin.getContainerClass()}`}
+                                            style={displayPlugin.getContainerStyle?.(SUMMARY_WORDS[rsvpIndex]) || undefined}
+                                            dangerouslySetInnerHTML={{ __html: displayPlugin.renderWord(SUMMARY_WORDS[rsvpIndex]) }}
                                          />
                                          
                                          {/* Status Overlay */}

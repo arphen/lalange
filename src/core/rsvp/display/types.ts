@@ -89,7 +89,7 @@ export interface DisplayPlugin {
     
     /**
      * Get any required inline styles for the RSVP container.
-     * Some plugins (like ORP) need dynamic positioning.
+     * Some plugins need dynamic positioning.
      * 
      * @param word - The current word being displayed
      * @returns CSS style object or undefined
@@ -100,4 +100,4 @@ export interface DisplayPlugin {
 /**
  * Registry of available display plugins.
  */
-export type DisplayPluginId = 'saccade' | 'orp' | 'velocireader' | 'velocireader-centered' | 'velocireader-extreme' | 'velocireader-focus' | 'velocireader-focus-slant';
+export type DisplayPluginId = 'saccade' | 'velocireader' | 'velocireader-centered' | 'velocireader-extreme' | 'velocireader-focus' | 'velocireader-focus-slant';

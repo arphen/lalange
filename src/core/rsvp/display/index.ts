@@ -9,7 +9,6 @@
 
 import { type DisplayPlugin, type DisplayPluginId } from './types';
 import { saccadePlugin } from './saccade';
-import { orpPlugin } from './orp';
 import { velocireaderPlugin } from './velocireader';
 import { velocireaderCenteredPlugin } from './velocireader-centered';
 import { velocireaderExtremePlugin } from './velocireader-extreme';
@@ -21,7 +20,6 @@ import { velocireaderFocusSlantPlugin } from './velocireader-focus-slant';
  */
 const plugins: Map<DisplayPluginId, DisplayPlugin> = new Map([
     ['saccade', saccadePlugin],
-    ['orp', orpPlugin],
     ['velocireader', velocireaderPlugin],
     ['velocireader-centered', velocireaderCenteredPlugin],
     ['velocireader-extreme', velocireaderExtremePlugin],
@@ -67,7 +65,6 @@ export function isValidPluginId(id: string): id is DisplayPluginId {
 // Re-export types and plugins for convenience
 export { type DisplayPlugin, type DisplayPluginId, type WordSplit, type RenderOptions } from './types';
 export { saccadePlugin, getSaccadeSplit, getSaccadeGradientHtml } from './saccade';
-export { orpPlugin, getORPIndex, getORPHtml, getORPOffset } from './orp';
 export { 
     velocireaderPlugin, 
     getVelocireaderORPIndex, 

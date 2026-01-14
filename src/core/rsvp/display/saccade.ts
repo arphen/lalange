@@ -7,8 +7,8 @@
  * 
  * The gradient flows: Bold (700) → SemiBold (600) → Medium (500) → Regular (400) → Light (300)
  * 
- * This approach differs from "Bionic Reading" by using a continuous gradient
- * rather than discrete bolding, creating a more natural visual flow.
+ * This approach uses a continuous gradient rather than discrete bolding,
+ * creating a more natural visual flow.
  */
 
 import { type DisplayPlugin, type WordSplit } from './types';
