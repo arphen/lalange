@@ -1,6 +1,6 @@
-import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { type BookDocType, type ChapterDocType, type ReadingStateDocType, initDB } from '../../core/sync/db';
-import { getDisplayPlugin, type DisplayPlugin } from '../../core/rsvp/display';
+import { getDisplayPlugin, type DisplayPlugin, getVelocireaderORPIndex } from '../../core/rsvp/display';
 import { getVisualProcessingDelay, getSpeedFactor } from '../../core/rsvp/timing';
 import { Sidebar } from './Sidebar';
 import { useSettingsStore } from '../../core/store/settings';
@@ -41,6 +41,9 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
     const wordTimestampsRef = useRef<number[]>([]);
     const [actualWpm, setActualWpm] = useState(0);
 
+    // Active reading time accumulator (to handle pauses correctly)
+    const processTimeRef = useRef(0);
+
     // Speed control momentum (exponential decay integration)
     // Each press adds to accumulated intensity, which decays over time
     const speedMomentumRef = useRef<{ lastPress: number; intensity: number }>({ lastPress: 0, intensity: 0 });
@@ -68,6 +71,10 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
     const prevContainerRef = useRef<HTMLDivElement>(null);
     const nextContainerRef = useRef<HTMLDivElement>(null);
     const rsvpRef = useRef<HTMLDivElement>(null);
+    
+    // Track if initial render has been done (to trigger full render once all refs are mounted)
+    const initialRenderDoneRef = useRef(false);
+    
     const requestRef = useRef<number | undefined>(undefined);
     const lastTimeRef = useRef<number | undefined>(undefined);
     const accumulatorRef = useRef<number>(0);
@@ -125,7 +132,19 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
             const prevWords = words.slice(start, end);
             const html = prevWords.map((w, i) => {
                 const actualIndex = start + i;
-                const { bold, light } = plugin.splitWord(w);
+                
+                // Gradient Bolding Logic
+                const orp = getVelocireaderORPIndex(w);
+                let innerHtml = '';
+                for (let j = 0; j < w.length; j++) {
+                    const d = Math.abs(j - orp);
+                    let c = 'font-light opacity-60 group-hover:opacity-100';
+                    if (d === 0) c = 'font-extrabold opacity-100';
+                    // Neighbors: Medium weight (less than bold), slightly reduced opacity
+                    else if (d === 1) c = 'font-medium opacity-80 group-hover:opacity-100';
+                    innerHtml += `<span class="${c}">${w[j]}</span>`;
+                }
+                
                 // Add line break after punctuation to simulate structure
                 const isEnd = /[.!?]$/.test(w);
                 const breakHtml = isEnd ? '<div class="w-full h-2"></div>' : '';
@@ -135,10 +154,10 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
 
                 return `
                     <span 
-                        class="word-span inline-block mr-1.5 mb-1 transition-all duration-300 cursor-pointer ${colorClass} opacity-60 hover:opacity-100 hover:text-white"
+                        class="word-span group inline-block mr-1.5 mb-1 transition-all duration-300 cursor-pointer ${colorClass} hover:text-white"
                         data-index="${actualIndex}"
                     >
-                        <span class="font-bold">${bold}</span><span class="font-light opacity-80">${light}</span>
+                        ${innerHtml}
                     </span>
                     ${breakHtml}
                 `;
@@ -155,7 +174,19 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
             const nextWords = words.slice(start, end);
             const html = nextWords.map((w, i) => {
                 const actualIndex = start + i;
-                const { bold, light } = plugin.splitWord(w);
+                
+                // Gradient Bolding Logic
+                const orp = getVelocireaderORPIndex(w);
+                let innerHtml = '';
+                for (let j = 0; j < w.length; j++) {
+                    const d = Math.abs(j - orp);
+                    let c = 'font-light opacity-60 group-hover:opacity-100';
+                    if (d === 0) c = 'font-extrabold opacity-100';
+                    // Neighbors: Medium weight (less than bold), slightly reduced opacity
+                    else if (d === 1) c = 'font-medium opacity-80 group-hover:opacity-100';
+                    innerHtml += `<span class="${c}">${w[j]}</span>`;
+                }
+                
                 const isEnd = /[.!?]$/.test(w);
                 const breakHtml = isEnd ? '<div class="w-full h-2"></div>' : '';
 
@@ -164,10 +195,10 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
 
                 return `
                     <span 
-                        class="word-span inline-block mr-1.5 mb-1 transition-all duration-300 cursor-pointer ${colorClass} opacity-60 hover:opacity-100 hover:text-white"
+                        class="word-span group inline-block mr-1.5 mb-1 transition-all duration-300 cursor-pointer ${colorClass} hover:text-white"
                         data-index="${actualIndex}"
                     >
-                        <span class="font-bold">${bold}</span><span class="font-light opacity-80">${light}</span>
+                        ${innerHtml}
                     </span>
                     ${breakHtml}
                 `;
@@ -287,8 +318,11 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
 
                 indexRef.current = initialIndex;
                 setCurrentWordIndex(initialIndex);
-                renderWord(initialIndex, chapterDoc.content);
+                // Don't call renderWord here - refs may not be mounted yet
+                // The useLayoutEffect will call renderWord once React has rendered the DOM
                 setLoading(false);
+                // Reset initial render flag so effects can trigger fresh render
+                initialRenderDoneRef.current = false;
                 // setShowSidebar(false); // Keep sidebar open by default
 
                 // Update state immediately if starting fresh
@@ -306,11 +340,27 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
                     setIsPlaying(true);
                 }
             } else {
-                // Live update
-                setCurrentChapter(chapterDoc);
-                wordsRef.current = chapterDoc.content;
+                // Live update - ONLY update refs to avoid re-render stutter during playback
+                // The playback loop reads from refs, so this is sufficient.
+                // We intentionally do NOT call setCurrentChapter or renderWord here
+                // to prevent flickering/stuttering during LLM density updates.
+                
+                // Update words ref only if content actually changed (rare, but possible)
+                if (chapterDoc.content.length !== wordsRef.current.length) {
+                    wordsRef.current = chapterDoc.content;
+                }
+                
+                // Always update densities - this is the main thing that changes during processing
                 densitiesRef.current = chapterDoc.densities || [];
-                renderWord(indexRef.current, chapterDoc.content);
+                
+                // Update currentChapterRef for subchapter boundary checks (without triggering re-render)
+                currentChapterRef.current = chapterDoc;
+                
+                // Only re-render context windows if NOT playing (user is paused and wants to see updates)
+                if (!isPlayingRef.current) {
+                    setCurrentChapter(chapterDoc);
+                    renderWord(indexRef.current, wordsRef.current);
+                }
             }
         });
     }, [renderWord, book.id]);
@@ -397,6 +447,8 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
         lastTimeRef.current = time;
 
         accumulatorRef.current += deltaTime;
+        processTimeRef.current += deltaTime; // Advance reading clock
+
         const baseInterval = 60000 / wpmRef.current;
 
         let shouldRender = false;
@@ -444,7 +496,7 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
                     shouldRender = true;
 
                     // Track word timestamp for actual WPM calculation
-                    wordTimestampsRef.current.push(time);
+                    wordTimestampsRef.current.push(processTimeRef.current);
 
                     // Check for Subchapter Boundary (only if NOT in summary mode)
                     if (!isSummaryActiveRef.current) {
@@ -529,7 +581,7 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
         }
 
         requestRef.current = requestAnimationFrame(loopInternal);
-    }, [wpm, renderWord, loadChapter, summaryWpm]);
+    }, [wpm, renderWord, loadChapter, summaryWpm, startTransition]);
 
     // Sync refs
     useEffect(() => {
@@ -551,6 +603,12 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
         if (!isPlaying) {
             saveProgress();
             setCurrentWordIndex(indexRef.current);
+            // When pausing, sync the chapter state and re-render context windows
+            // to reflect any density updates that occurred during playback
+            if (currentChapterRef.current) {
+                setCurrentChapter(currentChapterRef.current);
+                renderWord(indexRef.current, wordsRef.current);
+            }
         } else {
             lastTimeRef.current = undefined;
             accumulatorRef.current = 0;
@@ -559,7 +617,7 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
         return () => {
             if (requestRef.current) cancelAnimationFrame(requestRef.current);
         };
-    }, [isPlaying, saveProgress, loop]);
+    }, [isPlaying, saveProgress, loop, renderWord]);
 
     // Spacebar to toggle play/pause
     useEffect(() => {
@@ -586,38 +644,39 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
     // Calculate actual WPM from word timestamps (every 500ms)
     useEffect(() => {
         const calculateActualWpm = () => {
-            const now = performance.now();
-            const oneMinuteAgo = now - 60000;
+            const now = processTimeRef.current;
+            const measureWindow = 5000; // 5 seconds window for responsiveness
+            const oldTime = now - measureWindow;
             
-            // Filter to words displayed in the last 60 seconds
-            const recentTimestamps = wordTimestampsRef.current.filter(t => t > oneMinuteAgo);
+            // Filter to words displayed in the last window
+            const recentTimestamps = wordTimestampsRef.current.filter(t => t > oldTime);
             wordTimestampsRef.current = recentTimestamps; // Prune old entries
             
-            // Calculate WPM based on words in last minute
-            // If we have less than a minute of data, extrapolate
+            // Calculate WPM based on words in last window
             if (recentTimestamps.length >= 2) {
                 const oldestTimestamp = recentTimestamps[0];
-                const timeSpanMs = now - oldestTimestamp;
-                const timeSpanMinutes = timeSpanMs / 60000;
-                const wordsPerMinute = Math.round(recentTimestamps.length / timeSpanMinutes);
-                setActualWpm(wordsPerMinute);
-            } else if (recentTimestamps.length === 1) {
-                // Just started, show 0 for now
-                setActualWpm(0);
-            } else {
+                const newestTimestamp = recentTimestamps[recentTimestamps.length - 1];
+                
+                // Effective duration over the span of words
+                const timeSpanMs = newestTimestamp - oldestTimestamp;
+                
+                // Need at least 1 second of data to be stable
+                if (timeSpanMs > 1000) {
+                    const timeSpanMinutes = timeSpanMs / 60000;
+                    // Count words (intervals = length - 1, but we want rate of consumption)
+                    // length is number of words displayed.
+                    const wordsPerMinute = Math.round(recentTimestamps.length / timeSpanMinutes);
+                    setActualWpm(wordsPerMinute);
+                }
+            } else if (recentTimestamps.length <= 1) {
                 setActualWpm(0);
             }
         };
 
-        if (!isPlaying) {
-            // Don't reset immediately, keep last known value visible
-            return;
+        if (isPlaying) {
+            const interval = setInterval(calculateActualWpm, 500);
+            return () => clearInterval(interval);
         }
-
-        const interval = setInterval(calculateActualWpm, 500);
-        calculateActualWpm(); // Initial calculation
-        
-        return () => clearInterval(interval);
     }, [isPlaying]);
 
     // Save on unmount
@@ -658,9 +717,13 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
             const stateDoc = state.toJSON() as ReadingStateDocType;
             setReadingState(stateDoc);
 
-            // Load chapter
+            // Load chapter from saved reading position
+            // Resume from where the user left off (chapter and word index)
             if (stateDoc.currentChapterId) {
                 loadChapter(stateDoc.currentChapterId, stateDoc.currentWordIndex);
+            } else if (book.chapterIds && book.chapterIds.length > 0) {
+                // Fallback: start at first chapter if no saved state
+                loadChapter(book.chapterIds[0], 0);
             } else {
                 setLoading(false);
             }
@@ -726,9 +789,30 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
     }, [book.id]);
 
     // Effect to render word when chapter or index changes, ensuring ref is available
-    useEffect(() => {
+    // Use useLayoutEffect to render synchronously after DOM mutations, before browser paint
+    // This ensures the first word AND context windows are visible immediately when the component mounts
+    useLayoutEffect(() => {
         if (!loading && currentChapter && wordsRef.current.length > 0) {
-            renderWord(currentWordIndex, wordsRef.current);
+            // Check if all required refs are mounted before rendering
+            if (rsvpRef.current && prevContainerRef.current && nextContainerRef.current) {
+                renderWord(currentWordIndex, wordsRef.current);
+                initialRenderDoneRef.current = true;
+            }
+        }
+    }, [loading, currentChapter, currentWordIndex, renderWord]);
+
+    // Fallback effect: if the above didn't trigger (refs not ready), 
+    // use a microtask to try again after React finishes its work
+    useEffect(() => {
+        if (!loading && currentChapter && wordsRef.current.length > 0 && !initialRenderDoneRef.current) {
+            // Schedule render on next tick to ensure refs are available
+            const timer = requestAnimationFrame(() => {
+                if (rsvpRef.current) {
+                    renderWord(currentWordIndex, wordsRef.current);
+                    initialRenderDoneRef.current = true;
+                }
+            });
+            return () => cancelAnimationFrame(timer);
         }
     }, [loading, currentChapter, currentWordIndex, renderWord]);
 
@@ -773,9 +857,10 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
     // When playing, the loop updates the DOM directly.
     // When paused or when state changes (like isSummaryActive), React re-renders.
     // We need to ensure React renders the correct word so it doesn't overwrite the loop's work with stale data.
+    // Use currentChapter.content for React rendering (state-driven) rather than wordsRef (which doesn't trigger re-renders)
     const wordToRender = isSummaryActive 
         ? (summaryWordsRef.current[indexRef.current] || '')
-        : (wordsRef.current[currentWordIndex] || '');
+        : (currentChapter?.content?.[currentWordIndex] || wordsRef.current[currentWordIndex] || '');
 
     return (
         <div className="relative w-full h-full min-h-0 bg-basalt text-white overflow-hidden flex">
@@ -859,16 +944,13 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
                             className="w-full max-w-2xl h-full flex items-center justify-center bg-black/20 border border-white/5 hover:border-white/10 transition-colors cursor-ns-resize"
                             onWheel={handleWheel}
                         >
-                        {/* Display Plugin Word */}
+                        {/* Display Plugin Word - Content is set by renderWord via ref, not React JSX */}
+                        {/* This allows the playback loop to update the display at 60fps without React re-renders */}
                             <div 
                                 ref={rsvpRef} 
                                 className={`text-6xl md:text-8xl font-mono tracking-tight whitespace-nowrap drop-shadow-[0_0_15px_rgba(255,255,255,0.5)] ${displayPlugin.getContainerClass()} ${isSummaryActive ? 'text-amber-400 italic' : 'text-white'}`}
                                 style={displayPlugin.getContainerStyle?.(wordToRender) || undefined}
-                            >
-                                {wordToRender && (
-                                    <span dangerouslySetInnerHTML={{ __html: displayPlugin.renderWord(wordToRender) }} />
-                                )}
-                            </div>
+                            />
                         </div>
 
                         {/* Subchapter Progress Lights */}
@@ -967,18 +1049,30 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
                 </button>
 
                 {/* WPM Display */}
-                <div className="flex flex-col items-center px-4 py-2 bg-black/60 backdrop-blur-sm rounded-lg border border-white/10 min-w-[80px]">
-                    <div className="flex items-baseline gap-1">
-                        <span className={`text-xl font-mono font-bold tabular-nums ${speedColor}`}>
-                            {actualWpm > 0 ? actualWpm : '—'}
+                <div className="flex flex-col items-center px-4 py-2 bg-black/60 backdrop-blur-sm rounded-lg border border-white/10 min-w-[100px]">
+                    {/* Target Speed (The setting) - Prominent for feedback */}
+                    <div className="flex items-baseline gap-1 animate-in fade-in zoom-in duration-300">
+                        <span className="text-2xl font-mono font-bold text-dune-gold tabular-nums transition-all filter drop-shadow-[0_0_5px_rgba(217,119,6,0.5)]">
+                            {wpm}
                         </span>
+                        <span className="text-[10px] text-dune-gold/70 font-bold uppercase">WPM</span>
                     </div>
-                    <span className="text-[9px] text-gray-500 tracking-widest uppercase">
-                        {actualWpm > 0 ? 'WPM' : 'PAUSED'}
-                    </span>
+                    
+                    {/* Real-time Velocity (The result) - Secondary */}
                     {actualWpm > 0 && (
-                        <span className="text-[8px] text-gray-600 mt-0.5">
-                            target: {wpm}
+                        <div className="flex items-center gap-2 mt-1 border-t border-white/10 pt-1 w-full justify-center">
+                            <span className={`text-xs font-mono tabular-nums ${speedColor}`}>
+                                {actualWpm}
+                            </span>
+                            <span className="text-[8px] text-gray-500 tracking-widest uppercase">
+                                REAL
+                            </span>
+                        </div>
+                    )}
+                    
+                    {actualWpm === 0 && (
+                         <span className="text-[9px] text-gray-500 tracking-widest uppercase mt-1">
+                            PAUSED
                         </span>
                     )}
                 </div>

@@ -84,6 +84,10 @@ describe('Reader Component', () => {
 
     beforeEach(() => {
         vi.clearAllMocks();
+        // Reset the reading_states.findOne mock to return default state (chapter-1, word 0)
+        mockDb.reading_states.findOne.mockReturnValue({
+            exec: vi.fn().mockResolvedValue(mockReadingState)
+        });
         vi.mocked(dbModule.initDB).mockResolvedValue(mockDb as unknown as MyDatabase);
     });
 
@@ -223,5 +227,142 @@ describe('Reader Component', () => {
         await waitFor(() => {
             expect(screen.getByTestId('play-overlay')).toBeInTheDocument();
         });
+    });
+
+    it('should resume from saved reading position', async () => {
+        // Setup a state that is NOT at the start - user was reading Chapter 2
+        const savedState = {
+            ...mockReadingState,
+            currentChapterId: 'chapter-2',
+            currentWordIndex: 1,  // Second word of chapter 2 ("chapter")
+            toJSON: function () { return this; },
+            patch: vi.fn(),
+            incrementalPatch: vi.fn()
+        };
+        
+        // Override the mock for this test
+        mockDb.reading_states.findOne.mockReturnValue({
+            exec: vi.fn().mockResolvedValue(savedState)
+        });
+
+        render(<Reader book={mockBook} />);
+        
+        await waitFor(() => {
+            expect(screen.queryByText('INITIALIZING COCKPIT...')).not.toBeInTheDocument();
+        });
+
+        // Should resume at Chapter 2, word index 1 ("chapter"), NOT Chapter 1 ("Hello")
+        // This verifies reading position persistence works correctly
+        const rsvpContainer = screen.getByTestId('rsvp-container');
+        expect(rsvpContainer).toHaveTextContent('chapter');
+    });
+
+    it('should display the first word in the RSVP center area immediately after loading', async () => {
+        // This test specifically checks that the RSVP display (the big word in the center)
+        // shows the first word of the chapter immediately after loading completes.
+        // The user reported that this area was blank on initial load.
+        
+        render(<Reader book={mockBook} />);
+        
+        // Wait for loading to complete
+        await waitFor(() => {
+            expect(screen.queryByText('INITIALIZING COCKPIT...')).not.toBeInTheDocument();
+        });
+
+        // The RSVP display is the div with ref={rsvpRef} inside the rsvp-container
+        // It should contain the first word "Hello" rendered via the display plugin
+        const rsvpContainer = screen.getByTestId('rsvp-container');
+        
+        // Find the actual RSVP word display element (the inner div that shows the word)
+        // This is the element that was blank in the user's screenshot
+        const rsvpWordDisplay = rsvpContainer.querySelector('.text-6xl, .md\\:text-8xl');
+        
+        expect(rsvpWordDisplay).toBeInTheDocument();
+        expect(rsvpWordDisplay).not.toBeEmptyDOMElement();
+        expect(rsvpWordDisplay?.textContent?.trim()).toBe('Hello');
+    });
+
+    it('should display first word even when chapter subscription emits asynchronously', async () => {
+        // This test simulates the real-world scenario more closely:
+        // The chapter subscription callback fires asynchronously after React has
+        // already rendered the component once without any content.
+        
+        let subscribeCallback: ((doc: typeof mockChapter1) => void) | null = null;
+        
+        // Create a mock that captures the subscribe callback and calls it asynchronously
+        const asyncMockDb = {
+            ...mockDb,
+            chapters: {
+                ...mockDb.chapters,
+                findOne: vi.fn().mockImplementation((id) => ({
+                    exec: vi.fn().mockResolvedValue(
+                        id === 'chapter-1' ? mockChapter1 : mockChapter2
+                    ),
+                    $: {
+                        subscribe: vi.fn().mockImplementation((callback) => {
+                            // Store the callback but don't call it yet
+                            subscribeCallback = callback;
+                            return { unsubscribe: vi.fn() };
+                        })
+                    }
+                })),
+                find: mockDb.chapters.find
+            }
+        };
+        
+        vi.mocked(dbModule.initDB).mockResolvedValue(asyncMockDb as unknown as MyDatabase);
+
+        render(<Reader book={mockBook} />);
+        
+        // Should show loading initially
+        expect(screen.getByText('INITIALIZING COCKPIT...')).toBeInTheDocument();
+        
+        // Wait a tick for the async loadChapter to set up the subscription
+        await waitFor(() => {
+            expect(subscribeCallback).not.toBeNull();
+        });
+        
+        // Now simulate the async emission of chapter data
+        // This is what happens in the real app after RxDB emits the document
+        subscribeCallback!(mockChapter1);
+        
+        // Wait for loading to complete
+        await waitFor(() => {
+            expect(screen.queryByText('INITIALIZING COCKPIT...')).not.toBeInTheDocument();
+        });
+
+        // The RSVP container should now show "Hello"
+        const rsvpContainer = screen.getByTestId('rsvp-container');
+        const rsvpWordDisplay = rsvpContainer.querySelector('.text-6xl');
+        
+        expect(rsvpWordDisplay).toBeInTheDocument();
+        // This assertion will FAIL if the bug exists - the display will be empty
+        expect(rsvpWordDisplay?.textContent?.trim()).toBe('Hello');
+    });
+
+    it('should show first word in RSVP display element (not just container)', async () => {
+        // This test checks the EXACT element that displays the word
+        // The rsvpRef div should contain the word set via innerHTML by renderWord
+        
+        render(<Reader book={mockBook} />);
+        
+        await waitFor(() => {
+            expect(screen.queryByText('INITIALIZING COCKPIT...')).not.toBeInTheDocument();
+        });
+
+        const rsvpContainer = screen.getByTestId('rsvp-container');
+        
+        // The word display is inside the rsvp-container, with classes text-6xl md:text-8xl
+        // Find all elements with text-6xl class
+        const textDisplayElements = rsvpContainer.querySelectorAll('[class*="text-6xl"]');
+        
+        // There should be exactly one element showing the word
+        expect(textDisplayElements.length).toBeGreaterThan(0);
+        
+        const wordDisplayElement = textDisplayElements[0];
+        
+        // The element should not be empty and should contain the first word
+        expect(wordDisplayElement?.textContent?.trim()).not.toBe('');
+        expect(wordDisplayElement?.textContent).toContain('Hello');
     });
 });

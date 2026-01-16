@@ -14,6 +14,7 @@ import { velocireaderCenteredPlugin } from './velocireader-centered';
 import { velocireaderExtremePlugin } from './velocireader-extreme';
 import { velocireaderFocusPlugin } from './velocireader-focus';
 import { velocireaderFocusSlantPlugin } from './velocireader-focus-slant';
+import { velocireaderFocusCenterPlugin } from './velocireader-focus-center';
 
 /**
  * Map of all registered display plugins.
@@ -25,6 +26,7 @@ const plugins: Map<DisplayPluginId, DisplayPlugin> = new Map([
     ['velocireader-extreme', velocireaderExtremePlugin],
     ['velocireader-focus', velocireaderFocusPlugin],
     ['velocireader-focus-slant', velocireaderFocusSlantPlugin],
+    ['velocireader-focus-center', velocireaderFocusCenterPlugin],
 ]);
 
 /**
