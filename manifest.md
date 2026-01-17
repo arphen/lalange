@@ -1,10 +1,10 @@
-# **Lalange: The Architecture of the Signifier in a Post-App Store Ecosystem**
+# **XYZ: The Architecture of the Signifier in a Post-App Store Ecosystem**
 
 ## **I. Introduction: The Psychoanalysis of Velocity**
 
-The conception of "Lalange" arises at the intersection of psychoanalytic theory and high-performance software engineering. It is a project born from a desire to confront the "Real" of the text—not through the measured, ego-driven comprehension of traditional reading, but through an acceleration that bypasses the censor of the conscious mind. The user’s requirement to read at 800 to 1,000 words per minute (wpm) is not merely a metric of efficiency; it is a structural intervention in the subject’s relationship to language. In Lacanian terms, the ego functions as a mechanism of defense, a buffering agent that imposes imaginary coherence upon the chaotic flux of signifiers. By pushing the velocity of reading beyond the ego’s comfort zone, Lalange aims to induce a "trip" in this defense mechanism, allowing the signifying chain to impact the unconscious directly, akin to the concept of *lalangue*—language in its raw, material, and enjoyment-filled state before it is ordered by the laws of grammar and meaning.  
-However, the realization of this psychoanalytic reading machine faces a distinct confrontation with another form of the "Real": the constraints of the modern mobile ecosystem. The user’s transition from Android to iPhone introduces a prohibition—the Apple App Store, with its demands for registration, payment, and adherence to the "Name-of-the-Father" (Apple’s review guidelines). To build Lalange is to circumvent this symbolic authority without engaging with it. This necessitates a Progressive Web Application (PWA) architecture, a solution that places the application in the contested territory of the browser. Here, the developer must navigate the capricious laws of iOS Safari, specifically its storage eviction policies, while maintaining the performance fidelity required for a 1,000 wpm RSVP (Rapid Serial Visual Presentation) loop.  
-This report provides an exhaustive technical and theoretical roadmap for building Lalange. It addresses the architectural schism between the "Server" (the Laptop/Big Other) and the "Client" (the Phone/Subject), proposing a conflict-free, offline-first data strategy that ensures the integrity of the library even during prolonged disconnects—symbolized by the "long ferry ride." It details the heuristic algorithms required to transmute the rigid, non-semantic structure of PDFs into the fluid stream of the RSVP reader, and it outlines the integration of Generative AI (Gemini) as the "Analyst," a tool for retroactive resignification of the text.
+The conception of "XYZ" arises at the intersection of psychoanalytic theory and high-performance software engineering. It is a project born from a desire to confront the "Real" of the text—not through the measured, ego-driven comprehension of traditional reading, but through an acceleration that bypasses the censor of the conscious mind. The user’s requirement to read at 800 to 1,000 words per minute (wpm) is not merely a metric of efficiency; it is a structural intervention in the subject’s relationship to language. In Lacanian terms, the ego functions as a mechanism of defense, a buffering agent that imposes imaginary coherence upon the chaotic flux of signifiers. By pushing the velocity of reading beyond the ego’s comfort zone, XYZ aims to induce a "trip" in this defense mechanism, allowing the signifying chain to impact the unconscious directly, akin to the concept of *lalangue*—language in its raw, material, and enjoyment-filled state before it is ordered by the laws of grammar and meaning.  
+However, the realization of this psychoanalytic reading machine faces a distinct confrontation with another form of the "Real": the constraints of the modern mobile ecosystem. The user’s transition from Android to iPhone introduces a prohibition—the Apple App Store, with its demands for registration, payment, and adherence to the "Name-of-the-Father" (Apple’s review guidelines). To build XYZ is to circumvent this symbolic authority without engaging with it. This necessitates a Progressive Web Application (PWA) architecture, a solution that places the application in the contested territory of the browser. Here, the developer must navigate the capricious laws of iOS Safari, specifically its storage eviction policies, while maintaining the performance fidelity required for a 1,000 wpm RSVP (Rapid Serial Visual Presentation) loop.  
+This report provides an exhaustive technical and theoretical roadmap for building XYZ. It addresses the architectural schism between the "Server" (the Laptop/Big Other) and the "Client" (the Phone/Subject), proposing a conflict-free, offline-first data strategy that ensures the integrity of the library even during prolonged disconnects—symbolized by the "long ferry ride." It details the heuristic algorithms required to transmute the rigid, non-semantic structure of PDFs into the fluid stream of the RSVP reader, and it outlines the integration of Generative AI (Gemini) as the "Analyst," a tool for retroactive resignification of the text.
 
 ## ---
 
@@ -15,15 +15,15 @@ The decision to bypass the App Store necessitates a confrontation with the brows
 ### **2.1 The "Seven-Day Castration": Safari’s Eviction Policy**
 
 The most significant technical hurdle for a long-living offline PWA on iOS is the browser's data eviction policy. Research indicates a distinct divergence in how browsers handle data persistence, with Safari acting as a merciless agent of hygiene. Since iOS 13.4, and continuing into current iterations, WebKit has enforced a seven-day cap on all script-writable storage—including IndexedDB, LocalStorage, and the Cache API—for web pages that the user does not interact with. If the user does not tap or click on the website within seven days, the browser wipes all local data to prevent cross-site tracking.1  
-This policy poses an existential threat to Lalange. If a user loads their library on the phone but then sets it aside for a week—perhaps reading a physical book or simply being busy—they would return to find their digital library obliterated, a "castration" of their reading history. However, a critical exception exists, one that acts as the "symptom" allowing the app to survive. The eviction policy does *not* apply to PWAs that have been added to the Home Screen. When a user installs the app via the "Add to Home Screen" share action, it gains a reprieve from the seven-day limit, effectively entering a different class of storage citizenship.1  
+This policy poses an existential threat to XYZ. If a user loads their library on the phone but then sets it aside for a week—perhaps reading a physical book or simply being busy—they would return to find their digital library obliterated, a "castration" of their reading history. However, a critical exception exists, one that acts as the "symptom" allowing the app to survive. The eviction policy does *not* apply to PWAs that have been added to the Home Screen. When a user installs the app via the "Add to Home Screen" share action, it gains a reprieve from the seven-day limit, effectively entering a different class of storage citizenship.1  
 This creates a mandatory user experience (UX) requirement: the "install" action is not optional; it is structural. The application must aggressively detect if it is running in standalone mode (the display mode for installed PWAs). If it detects that it is running in a standard browser tab, it must present a blocking or highly persistent notification instructing the user to add the app to their Home Screen immediately. This is the only way to ensure that the "ferry ride" scenario—where the device might be used intermittently without server contact—does not result in data loss.
 
 ### **2.2 The Object *a* of Disk Space: Quotas and Persistence**
 
 While Android (Chrome) allows an origin to use up to 60% of the total disk size—potentially granting hundreds of gigabytes for a massive library—iOS is historically far more restrictive.6 Legacy implementations of WebSQL were capped at 50MB, and while modern IndexedDB on iOS is more generous (often allowing up to 1GB or more depending on available free space), it remains "promiscuous" with eviction if the device’s overall disk space runs low.7  
-The introduction of the **Origin Private File System (OPFS)**, part of the File System Access API, represents a significant evolution. OPFS provides a storage area that is optimized for performance and random access, distinct from the standard browser cache. It is less susceptible to the arbitrary eviction logic that governs the cache, as it is treated more like user-generated data. For Lalange, which requires storing binary blobs of EPUB and PDF files, OPFS is the superior storage target compared to converting files to Base64 strings in IndexedDB, which incurs significant memory overhead. However, Safari’s implementation of OPFS is recent, and its interaction with the 7-day rule in "browser tab" mode remains opaque, reinforcing the necessity of the Home Screen installation strategy.3
+The introduction of the **Origin Private File System (OPFS)**, part of the File System Access API, represents a significant evolution. OPFS provides a storage area that is optimized for performance and random access, distinct from the standard browser cache. It is less susceptible to the arbitrary eviction logic that governs the cache, as it is treated more like user-generated data. For XYZ, which requires storing binary blobs of EPUB and PDF files, OPFS is the superior storage target compared to converting files to Base64 strings in IndexedDB, which incurs significant memory overhead. However, Safari’s implementation of OPFS is recent, and its interaction with the 7-day rule in "browser tab" mode remains opaque, reinforcing the necessity of the Home Screen installation strategy.3
 
-| Storage Feature | iOS Safari (WebKit) | Android (Chrome) | Implication for Lalange |
+| Storage Feature | iOS Safari (WebKit) | Android (Chrome) | Implication for XYZ |
 | :---- | :---- | :---- | :---- |
 | **IndexedDB** | Supported, but subject to 7-day eviction in tabs. | Persistent, allows huge quotas (60% disk). | Use for metadata (authors, titles, reading progress). |
 | **OPFS** | Supported (Recent), high performance. | Fully supported. | Use for storing the actual book files (EPUB/PDF blobs). |
@@ -39,12 +39,12 @@ This feature is critical for the battery efficiency requirement. The silent vide
 
 **III. The Signifying Chain: High-Velocity RSVP Engine**
 
-The core of Lalange is the RSVP loop. To push 1,000 words per minute, the application must display approximately 16.6 words per second. This translates to a new word every 60 milliseconds. On a standard 60Hz display, which refreshes every 16.66ms, a single word persists for only 3 to 4 frames. This demands a rendering engine of metronomic precision, where any "jitter" or frame drop disrupts the cognitive intake and breaks the Lacanian "trip" of the ego.
+The core of XYZ is the RSVP loop. To push 1,000 words per minute, the application must display approximately 16.6 words per second. This translates to a new word every 60 milliseconds. On a standard 60Hz display, which refreshes every 16.66ms, a single word persists for only 3 to 4 frames. This demands a rendering engine of metronomic precision, where any "jitter" or frame drop disrupts the cognitive intake and breaks the Lacanian "trip" of the ego.
 
 ### **3.1 The Delta-Time Accumulator Loop**
 
 The user code repository likely employs standard JavaScript timing functions like setTimeout or setInterval. For high-velocity RSVP, these are inadequate. setTimeout does not guarantee execution at the specified interval; it merely guarantees execution *after* the interval has passed. In a single-threaded JavaScript environment, if the main thread is blocked by garbage collection or UI layout tasks, a 60ms interval might stretch to 70ms or 80ms. At 1,000 wpm, this drift accumulates rapidly, causing the reading speed to fluctuate perceptibly.13  
-To achieve the required precision, Lalange must utilize requestAnimationFrame (rAF). This API synchronizes the execution of the render loop with the browser's display refresh rate (VSync). However, simply advancing one word per frame (at 60fps) would result in a speed of 3,600 wpm—too fast even for the unconscious. Therefore, the engine must decouple the *simulation time* (the word stream) from the *render time* (the screen refresh).  
+To achieve the required precision, XYZ must utilize requestAnimationFrame (rAF). This API synchronizes the execution of the render loop with the browser's display refresh rate (VSync). However, simply advancing one word per frame (at 60fps) would result in a speed of 3,600 wpm—too fast even for the unconscious. Therefore, the engine must decouple the *simulation time* (the word stream) from the *render time* (the screen refresh).  
 The Accumulator Algorithm:  
 Instead of relying on the browser to call the function at specific intervals, the loop tracks the elapsed "wall clock" time and accumulates it.
 
@@ -99,7 +99,7 @@ For battery efficiency, calculating measureText on a Canvas or querying DOM elem
 
 ### **3.3 Battery Efficiency: The Silent DOM**
 
-Manipulating the DOM triggers the browser's layout and paint pipelines, which are energy-intensive. To ensure the "inner word loop needs to be super efficient so it doesnt eat up my phone battery," Lalange should minimize "Layout Thrashing."
+Manipulating the DOM triggers the browser's layout and paint pipelines, which are energy-intensive. To ensure the "inner word loop needs to be super efficient so it doesnt eat up my phone battery," XYZ should minimize "Layout Thrashing."
 
 * **CSS Containment**: Apply contain: strict; to the container element holding the RSVP word. This informs the browser that changes inside this box do not affect the layout of the rest of the page, allowing it to skip global recalculations.14  
 * **Canvas vs. DOM**: While Canvas is faster for raw pixel pushing, a simple text node update inside a contained div is often sufficient for text and handles accessibility better. Given the monochrome nature of the app (High Contrast), the DOM approach with will-change: content is acceptable, provided the surrounding elements are static.
@@ -122,7 +122,7 @@ EPUB is the native tongue of digital reading. It consists of XHTML files wrapped
 
 PDFs are notoriously resistant to linear reading. They do not contain "text" in the semantic sense; they contain instructions to "draw glyph X at coordinates x,y." A sentence spanning two lines is effectively two disconnect groups of characters.19  
 Heuristic Reconstruction Algorithm:  
-To create a "high fidelity translation" that preserves paragraphs and reading order, Lalange must employ a spatial heuristic algorithm using pdf.js.22
+To create a "high fidelity translation" that preserves paragraphs and reading order, XYZ must employ a spatial heuristic algorithm using pdf.js.22
 
 1. **Extraction**: Use pdf.js to get the TextContent of a page. This returns a flat array of items, each with a string and a transform matrix \`\`.  
 2. **Y-Sorting (Line Detection)**: The items must be sorted primarily by their vertical position (Y-coordinate). However, PDF coordinates can be floating-point and slightly jittery. Items are grouped into "Lines" if their Y-coordinates are within a small tolerance (e.g., 20% of the font height).  
@@ -134,7 +134,7 @@ To create a "high fidelity translation" that preserves paragraphs and reading or
 6. **Artifact Removal**: Headers and footers often appear at extreme Y-coordinates and repeat across pages. The ingestion worker should analyze the first 3-5 pages to identify repeating text blocks at the top/bottom margins and exclude them from the RSVP stream.
 
 Web Worker Implementation:  
-This reconstruction is computationally expensive. To prevent the UI from freezing (which would crash the "Lalange" experience), the entire parsing and text extraction process must run in a dedicated Web Worker. The Worker accepts the PDF binary, processes it page by page, and returns a clean array of words and pause tokens to the main thread.22
+This reconstruction is computationally expensive. To prevent the UI from freezing (which would crash the "XYZ" experience), the entire parsing and text extraction process must run in a dedicated Web Worker. The Worker accepts the PDF binary, processes it page by page, and returns a clean array of words and pause tokens to the main thread.22
 
 ## ---
 
@@ -144,7 +144,7 @@ The user requires the app to function across a laptop and a phone, handling "div
 
 ### **5.1 The Database Strategy: RxDB and the CRDT**
 
-To manage the library (metadata, covers, reading progress) and the user's highlights, Lalange requires a robust local database.
+To manage the library (metadata, covers, reading progress) and the user's highlights, XYZ requires a robust local database.
 
 * **RxDB (Reactive Database)**: This is the ideal choice. It is a NoSQL-database for JavaScript applications that focuses on offline-first interaction and data sync. It is reactive, meaning the UI updates automatically when data changes.25  
 * **CRDTs (Conflict-free Replicated Data Types)**: To handle the scenario where the user reads on the phone (offline) and modifies the library on the laptop (offline), and then syncs later, we utilize CRDTs. A CRDT ensures that all replicas of the data eventually converge to the same state without data loss.  
@@ -190,7 +190,7 @@ While the Phone is the device of the *Real* (raw speed, no context), the Desktop
 
 **VII. The Project Manifest: Implementation Instructions**
 
-The following specification is designed to be ingested by a Coding LLM (e.g., GitHub Copilot) to scaffold the Lalange repository.
+The following specification is designed to be ingested by a Coding LLM (e.g., GitHub Copilot) to scaffold the XYZ repository.
 
 ### **7.1 Tech Stack & Dependencies**
 
@@ -261,8 +261,8 @@ To satisfy the iOS constraints, the manifest.json must be explicit:
 JSON
 
 {  
-  "name": "Lalange",  
-  "short\_name": "Lalange",  
+  "name": "XYZ",  
+  "short\_name": "XYZ",  
   "start\_url": "/",  
   "display": "standalone",  
   "background\_color": "\#000000",  
@@ -279,7 +279,7 @@ JSON
 
 **VIII. Conclusion**
 
-The construction of Lalange is a traverse through the constraints of the digital ecosystem. By leveraging the **Service Worker** as the "Unconscious" that manages data behind the scenes, and **IndexedDB/OPFS** as the "Symbolic" register of the library, the application establishes a resilient, offline-first existence that defies the "Real" of iOS limitations. The use of **CRDTs** ensures that the subject’s split existence across Phone and Laptop is sutured without loss, while the high-velocity **RSVP Engine**, driven by the metronomic precision of the requestAnimationFrame loop, provides the mechanism to trip the ego and access the raw enjoyment of the text.  
+The construction of XYZ is a traverse through the constraints of the digital ecosystem. By leveraging the **Service Worker** as the "Unconscious" that manages data behind the scenes, and **IndexedDB/OPFS** as the "Symbolic" register of the library, the application establishes a resilient, offline-first existence that defies the "Real" of iOS limitations. The use of **CRDTs** ensures that the subject’s split existence across Phone and Laptop is sutured without loss, while the high-velocity **RSVP Engine**, driven by the metronomic precision of the requestAnimationFrame loop, provides the mechanism to trip the ego and access the raw enjoyment of the text.  
 This architecture satisfies every constraint: it bypasses the App Store, functions offline for days, syncs gracefully, consumes universal formats via heuristics, and integrates advanced AI analysis, all while adhering to the Lacanian premise of high-speed traversal. The project is ready for implementation.
 
 #### **Works cited**

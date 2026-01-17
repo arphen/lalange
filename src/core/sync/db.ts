@@ -117,7 +117,7 @@ export const initDB = async (): Promise<MyDatabase> => {
         }
 
         const db = await createRxDatabase<MyDatabaseCollections>({
-            name: 'lalange_db_v15', // Bumped version/name to force fresh DB (schema update with 'image')
+            name: 'xyz_db_v15', // Bumped version/name to force fresh DB (schema update with 'image')
             storage,
             ignoreDuplicate: import.meta.env.DEV
         });

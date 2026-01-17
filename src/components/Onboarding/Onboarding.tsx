@@ -17,6 +17,7 @@ export const Onboarding: React.FC = () => {
     const aiState = useAIStore();
     const [step, setStep] = useState<1 | 2 | 3>(1);
     const [downloadStarted, setDownloadStarted] = useState(false);
+    const [downloadError, setDownloadError] = useState<string | null>(null);
     
     // Get the active display plugin (same as Reader)
     const displayPlugin = useMemo(() => getDisplayPlugin(displayPluginId), [displayPluginId]);
@@ -49,10 +50,14 @@ export const Onboarding: React.FC = () => {
 
     const handleStartDownload = () => {
         setDownloadStarted(true);
+        setDownloadError(null);
         setStep(2);
         setRsvpIndex(0);
         // Trigger background download of TinyLlama
-        downloadModelToCache('tiny').catch(console.error);
+        downloadModelToCache('tiny').catch((error) => {
+            console.error("Download failed", error);
+            setDownloadError(error instanceof Error ? error.message : "Download failed. Please check connection.");
+        });
     };
 
     const handleFinish = () => {
@@ -63,31 +68,42 @@ export const Onboarding: React.FC = () => {
     // We can track completion roughly by checking if loading went back to false and we started it.
     // A more robust way is checking `isModelCached('tiny')` but that's async. 
     // For FTUE, if it finishes, aiState.isLoading becomes false.
-    const canFinish = !aiState.isLoading && downloadStarted;
+    const canFinish = !aiState.isLoading && downloadStarted && !downloadError;
 
     return (
-        <div className="w-full h-full flex flex-col bg-basalt text-white relative overflow-hidden">
+        <div 
+            className="fixed inset-0 bg-basalt text-white z-[200]"
+            style={{ 
+                position: 'fixed',
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                overflow: 'auto',
+                WebkitOverflowScrolling: 'touch',
+                overscrollBehavior: 'contain'
+            }}
+        >
             {/* Background Texture */}
-            <div className="absolute inset-0 mica-dust-layer opacity-50 pointer-events-none" />
+            <div className="fixed inset-0 mica-dust-layer opacity-50 pointer-events-none" />
 
-            <div className="relative z-10 flex-1 flex flex-col">
-                {/* Header */}
-                <div className="p-8 border-b border-white/10 flex justify-between items-center">
-                    <h1 className="flex items-center gap-3">
-                        <BrandName /> <span className="text-white/30 text-sm tracking-normal">INITIALIZATION PROTOCOL</span>
-                    </h1>
-                    <div className="text-xs font-mono text-dune-gold">
-                        STEP {step} / 3
-                    </div>
+            {/* Header - Fixed at top */}
+            <div className="sticky top-0 z-10 p-4 sm:p-8 border-b border-white/10 flex justify-between items-center bg-basalt/95 backdrop-blur-sm">
+                <h1 className="flex items-center gap-2 sm:gap-3">
+                    <BrandName /> <span className="text-white/30 text-xs sm:text-sm tracking-normal hidden sm:inline">INITIALIZATION PROTOCOL</span>
+                </h1>
+                <div className="text-xs font-mono text-dune-gold">
+                    STEP {step} / 3
                 </div>
+            </div>
 
-                {/* Content Area */}
-                <div className="flex-1 overflow-y-auto">
+            {/* Content Area - This is what scrolls */}
+            <div className="relative z-[1]">
                     {step === 1 && (
-                        <div className="max-w-3xl mx-auto mt-20 p-8 space-y-12 animate-in fade-in zoom-in-95 duration-500">
-                            <div className="space-y-6">
-                                <h2 className="text-4xl font-bold text-white">Neuro-Semantic Initialization</h2>
-                                <p className="text-lg text-gray-400 leading-relaxed font-light">
+                        <div className="max-w-3xl mx-auto mt-8 sm:mt-20 p-6 sm:p-8 pb-24 space-y-8 sm:space-y-12 animate-in fade-in zoom-in-95 duration-500">
+                            <div className="space-y-4 sm:space-y-6">
+                                <h2 className="text-2xl sm:text-4xl font-bold text-white">Neuro-Semantic Initialization</h2>
+                                <p className="text-base sm:text-lg text-gray-400 leading-relaxed font-light">
                                     You are about to install the <BrandName /> <span className="text-white font-bold">Pacing Engine</span>. 
                                     This requires downloading a local AI model (TinyLlama, ~700MB) directly to your browser storage.
                                 </p>
@@ -120,7 +136,7 @@ export const Onboarding: React.FC = () => {
 
                             <button
                                 onClick={handleStartDownload}
-                                className="w-full py-6 bg-dune-gold hover:bg-white text-black font-bold text-xl tracking-widest uppercase transition-all rounded"
+                                className="w-full py-4 sm:py-6 bg-dune-gold hover:bg-white text-black font-bold text-base sm:text-xl tracking-widest uppercase transition-all rounded"
                             >
                                 Acknowledge & Install Model
                             </button>
@@ -132,7 +148,7 @@ export const Onboarding: React.FC = () => {
                     )}
 
                     {step === 2 && (
-                        <div className="h-full flex flex-col">
+                        <div className="min-h-full flex flex-col">
                            <div className="flex-1 grid grid-cols-1 lg:grid-cols-3 gap-8 p-8 items-center max-w-7xl mx-auto w-full">
                                 
                                 {/* Column 1: The Old Way (Static) */}
@@ -197,11 +213,11 @@ export const Onboarding: React.FC = () => {
                            <div className="border-t border-white/10 bg-black/40 backdrop-blur p-6">
                                 <div className="max-w-3xl mx-auto space-y-4">
                                     <div className="flex justify-between items-end text-xs font-mono">
-                                        <span className="text-dune-gold uppercase">
-                                            {canFinish ? "INSTALLATION COMPLETE" : "INSTALLING NEURAL ENGINE..."}
+                                        <span className={clsx("text-dune-gold uppercase", downloadError && "text-red-500")}>
+                                            {downloadError ? "INSTALLATION FAILED" : (canFinish ? "INSTALLATION COMPLETE" : "INSTALLING NEURAL ENGINE...")}
                                         </span>
-                                        <span className="text-gray-400">
-                                            {aiState.isLoading ? Math.round(aiState.progressValue * 100) + "%" : (canFinish ? "100%" : "WAITING")}
+                                        <span className={clsx("text-gray-400", downloadError && "text-red-400")}>
+                                            {downloadError ? "ERROR" : (aiState.isLoading ? Math.round(aiState.progressValue * 100) + "%" : (canFinish ? "100%" : "WAITING"))}
                                         </span>
                                     </div>
                                     
@@ -210,32 +226,53 @@ export const Onboarding: React.FC = () => {
                                         <div 
                                             className={clsx(
                                                 "h-full transition-all duration-300",
-                                                canFinish ? "bg-green-500" : "bg-dune-gold"
+                                                downloadError ? "bg-red-500" : (canFinish ? "bg-green-500" : "bg-dune-gold")
                                             )}
-                                            style={{ width: canFinish ? '100%' : `${aiState.progressValue * 100}%` }}
+                                            style={{ width: downloadError ? '100%' : (canFinish ? '100%' : `${aiState.progressValue * 100}%`) }}
                                         />
                                     </div>
 
+                                    {downloadError && (
+                                        <div className="p-3 bg-red-900/20 border border-red-500/30 rounded text-red-300 text-xs font-mono">
+                                            {downloadError}
+                                        </div>
+                                    )}
+
                                     <div className="flex justify-center pt-4">
-                                        <button
-                                            disabled={!canFinish}
-                                            onClick={() => {
-                                                setStep(3);
-                                                setRsvpIndex(0);
-                                            }}
-                                            className={clsx(
-                                                "px-8 py-3 rounded font-bold tracking-widest uppercase transition-all",
-                                                canFinish 
-                                                    ? "bg-white text-black hover:bg-dune-gold"
-                                                    : "bg-gray-800 text-gray-500 cursor-not-allowed border border-white/5"
-                                            )}
-                                        >
-                                            {canFinish ? (
-                                                <span>NEXT: THE QUILTING POINT</span>
-                                            ) : "Please Wait for Install..."}
-                                        </button>
+                                        {downloadError ? (
+                                            <button
+                                                onClick={() => {
+                                                    setDownloadError(null);
+                                                    downloadModelToCache('tiny').catch((error) => {
+                                                        console.error("Download failed", error);
+                                                        setDownloadError(error instanceof Error ? error.message : "Download failed.");
+                                                    });
+                                                }}
+                                                className="px-8 py-3 bg-red-600 hover:bg-red-500 text-white font-bold tracking-widest uppercase transition-all rounded shadow-lg shadow-red-900/50"
+                                            >
+                                                RETRY INSTALLATION
+                                            </button>
+                                        ) : (
+                                            <button
+                                                disabled={!canFinish}
+                                                onClick={() => {
+                                                    setStep(3);
+                                                    setRsvpIndex(0);
+                                                }}
+                                                className={clsx(
+                                                    "px-8 py-3 rounded font-bold tracking-widest uppercase transition-all",
+                                                    canFinish 
+                                                        ? "bg-white text-black hover:bg-dune-gold"
+                                                        : "bg-gray-800 text-gray-500 cursor-not-allowed border border-white/5"
+                                                )}
+                                            >
+                                                {canFinish ? (
+                                                    <span>NEXT: THE QUILTING POINT</span>
+                                                ) : "Please Wait for Install..."}
+                                            </button>
+                                        )}
                                     </div>
-                                    {!canFinish && (
+                                    {!canFinish && !downloadError && (
                                         <p className="text-center text-[10px] text-gray-600 animate-pulse">
                                             Downloading ~700MB. Please do not close this tab.
                                         </p>
@@ -299,7 +336,7 @@ export const Onboarding: React.FC = () => {
                                 </div>
                             </div>
 
-                            <div className="flex justify-center pt-8">
+                            <div className="flex justify-center pt-8 pb-24">
                                 <button
                                     onClick={handleFinish}
                                     className="px-8 py-3 bg-dune-gold hover:bg-white text-black font-bold text-xl tracking-widest uppercase transition-all rounded"
@@ -311,6 +348,5 @@ export const Onboarding: React.FC = () => {
                     )}
                 </div>
             </div>
-        </div>
     );
 };
