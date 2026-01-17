@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://lalange.com/sitemap.xml
+Sitemap: https://xyz.com/sitemap.xml

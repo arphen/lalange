@@ -1,7 +1,7 @@
 import manifestoDensities from './manifesto.densities.json';
 
 export const MANIFESTO_PARAGRAPHS: string[] = [
-  'LALANGE represents a shift towards local-only usage of LLMs as a means to wrest control from Big AI.',
+  'XYZ represents a shift towards local-only usage of LLMs as a means to wrest control from Big AI.',
   'We utilize already available models to perform LLM-agent interactions locally on the user side, without any interaction with any other server.',
   'No logins. No tracking. Just free, open source software.',
   'Even the code on the user side could theoretically be made to be analyzed with an LLM to assert no malicious code was injected.',

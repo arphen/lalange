@@ -1,4 +1,4 @@
-# Makefile for Lalange Setup
+# Makefile for XYZ Setup
 
 .PHONY: setup install-ollama start-ollama pull-model dev test-ollama ollama-test
 

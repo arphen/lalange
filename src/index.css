@@ -40,10 +40,32 @@
 body {
   margin: 0;
   padding: 0;
-  overflow: hidden;
   background-color: var(--color-basalt);
   color: #ffffff;
   transition: background-color 0.8s var(--ease-swell), color 0.5s ease;
+  /* Note: overflow:hidden removed to allow iOS scroll in fixed overlays */
+}
+
+/* iOS scroll fix - ensure touch scrolling works in scrollable containers */
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Apply overflow hidden only to main app container, not body */
+#root {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+html, body {
+  height: 100%;
+  width: 100%;
+}
+
+.overflow-y-auto {
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
 }
 
 /* --- THEME MODES --- */

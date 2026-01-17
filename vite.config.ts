@@ -19,8 +19,8 @@ export default defineConfig(({ mode }) => {
         maximumFileSizeToCacheInBytes: 10 * 1024 * 1024, // 10MB
       },
       manifest: {
-        name: "Arphen",
-        short_name: "Arphen",
+        name: "XYZ",
+        short_name: "XYZ",
         start_url: "/",
         display: "standalone",
         background_color: "#000000",

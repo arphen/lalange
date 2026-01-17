@@ -235,7 +235,7 @@ export const useSettingsStore = create<SettingsState>()(
             setSummaryPrompt: (summaryPrompt) => set({ summaryPrompt }),
         }),
         {
-            name: 'lalange-settings',
+            name: 'xyz-settings',
         }
     )
 );
