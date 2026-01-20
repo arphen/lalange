@@ -8,9 +8,10 @@ interface BookCardProps {
     onDelete: (e: React.MouseEvent) => void;
     onStop?: (e: React.MouseEvent) => void;
     onEstimateDensity?: (e: React.MouseEvent) => void;
+    onSync?: (e: React.MouseEvent) => void;
 }
 
-export const BookCard: React.FC<BookCardProps> = ({ book, onOpen, onDelete, onStop, onEstimateDensity }) => {
+export const BookCard: React.FC<BookCardProps> = ({ book, onOpen, onDelete, onStop, onEstimateDensity, onSync }) => {
     const [chapters, setChapters] = useState<ChapterDocType[]>([]);
     const [readingTime, setReadingTime] = useState<string>('');
     const [processingStatus, setProcessingStatus] = useState<string>('');
@@ -107,6 +108,18 @@ export const BookCard: React.FC<BookCardProps> = ({ book, onOpen, onDelete, onSt
                         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
+                        </svg>
+                    </button>
+                )}
+                {onSync && (
+                    <button
+                        onClick={onSync}
+                        className={`text-gray-500 hover:text-dune-gold transition-opacity ${isProcessing ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+                        title="Sync to Phone"
+                    >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" />
                         </svg>
                     </button>
                 )}

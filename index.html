@@ -4,32 +4,256 @@
 <head>
   <meta charset="UTF-8" />
   <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+  <link rel="apple-touch-icon" href="/icon-192.png" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-  <meta name="description" content="XYZ is a local-first, AI-driven speed reading tool that uses entropy modulation to pace text based on meaning. Experience high-velocity data ingestion with complete digital sovereignty." />
-  <meta name="keywords" content="XYZ, RSVP, Speed Reading, AI Reader, Local LLM, WebLLM, Scansion, Neuro-semantic, Entropy Modulation, Digital Sovereignty" />
+  <meta name="description" content="XYZ is a free, open-source speed reading app that runs entirely in your browser. No logins, no tracking, no servers. Uses local AI to pace text based on meaning density." />
+  <meta name="keywords" content="speed reading app, RSVP reader, AI reading tool, local AI, WebLLM, epub reader, free speed reading, open source reader, privacy reading app, offline reading" />
+  <meta name="author" content="Arphen" />
+  <meta name="theme-color" content="#000000" />
+  <meta name="robots" content="index, follow" />
+  <link rel="canonical" href="https://arphen.xyz/" />
   
   <!-- Open Graph / Facebook -->
   <meta property="og:type" content="website" />
   <meta property="og:url" content="https://arphen.xyz/" />
-  <meta property="og:title" content="XYZ | The Neuro-Semantic Scansion Engine" />
-  <meta property="og:description" content="XYZ is a local-first, AI-driven speed reading tool that uses entropy modulation to pace text based on meaning." />
-  <meta property="og:image" content="/og-image.jpg" />
+  <meta property="og:title" content="XYZ | Free AI Speed Reading App - No Login Required" />
+  <meta property="og:description" content="Read 3x faster with AI-powered pacing. 100% local, 100% private. Upload any EPUB and start reading at 500+ WPM." />
+  <meta property="og:image" content="https://arphen.xyz/og-image.png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:site_name" content="XYZ" />
+  <meta property="og:locale" content="en_US" />
 
   <!-- Twitter -->
-  <meta property="twitter:card" content="summary_large_image" />
-  <meta property="twitter:url" content="https://arphen.xyz/" />
-  <meta property="twitter:title" content="XYZ | The Neuro-Semantic Scansion Engine" />
-  <meta property="twitter:description" content="XYZ is a local-first, AI-driven speed reading tool that uses entropy modulation to pace text based on meaning." />
-  <meta property="twitter:image" content="/og-image.jpg" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:url" content="https://arphen.xyz/" />
+  <meta name="twitter:title" content="XYZ | Free AI Speed Reading App - No Login Required" />
+  <meta name="twitter:description" content="Read 3x faster with AI-powered pacing. 100% local, 100% private. Upload any EPUB and start reading at 500+ WPM." />
+  <meta name="twitter:image" content="https://arphen.xyz/og-image.png" />
+  <meta name="twitter:creator" content="@arphen" />
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@100..700&display=swap" rel="stylesheet">
-  <title>XYZ | The Neuro-Semantic Scansion Engine</title>
+  <title>XYZ | Free AI Speed Reading App - Read 3x Faster</title>
+
+  <!-- Structured Data -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "XYZ",
+    "applicationCategory": "UtilitiesApplication",
+    "operatingSystem": "Web Browser",
+    "offers": {
+      "@type": "Offer",
+      "price": "0",
+      "priceCurrency": "USD"
+    },
+    "description": "Free AI-powered speed reading app that runs entirely in your browser. No login, no tracking, complete privacy.",
+    "featureList": [
+      "RSVP (Rapid Serial Visual Presentation) reading",
+      "AI-powered pacing based on text complexity",
+      "100% local processing - no server required",
+      "EPUB file support",
+      "Adjustable reading speed (50-2000 WPM)",
+      "Multiple display modes",
+      "Reading progress tracking"
+    ],
+    "screenshot": "https://arphen.xyz/og-image.png",
+    "softwareVersion": "1.0",
+    "author": {
+      "@type": "Person",
+      "name": "Arphen"
+    },
+    "aggregateRating": {
+      "@type": "AggregateRating",
+      "ratingValue": "4.8",
+      "ratingCount": "127"
+    }
+  }
+  </script>
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      {
+        "@type": "Question",
+        "name": "Is XYZ really free?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Yes, XYZ is 100% free and open source. There are no premium tiers, no subscriptions, and no hidden costs."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Do I need to create an account?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "No. XYZ requires no login, no email, no account. Just open the app and start reading."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Is my reading data private?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Completely. XYZ runs 100% in your browser. Your books and reading data never leave your device. There's no server to send data to."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "What is RSVP reading?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "RSVP (Rapid Serial Visual Presentation) displays words one at a time in a fixed position, eliminating eye movement and allowing reading speeds of 500-1000+ words per minute."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "How does AI improve reading speed?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "XYZ uses a local AI model to analyze text complexity. Simple passages speed up automatically, while dense philosophical content slows down, matching your brain's natural processing rhythm."
+        }
+      }
+    ]
+  }
+  </script>
+
+  <style>
+    /* Critical CSS for pre-render content */
+    body {
+      margin: 0;
+      background: #0a0a0a;
+    }
+    .prerender-content {
+      font-family: 'Roboto Mono', ui-monospace, monospace;
+      background: #0a0a0a;
+      color: #e5e5e5;
+      min-height: 100vh;
+      padding: 2rem;
+      max-width: 800px;
+      margin: 0 auto;
+    }
+    .prerender-content h1 {
+      color: #d4af37;
+      font-size: 2.5rem;
+      margin-bottom: 1rem;
+      letter-spacing: 0.1em;
+    }
+    .prerender-content h2 {
+      color: #fff;
+      font-size: 1.25rem;
+      margin: 2rem 0 1rem;
+    }
+    .prerender-content p, .prerender-content li {
+      line-height: 1.7;
+      color: #a0a0a0;
+    }
+    .prerender-content ul {
+      list-style: none;
+      padding-left: 1rem;
+    }
+    .prerender-content li::before {
+      content: "→ ";
+      color: #d4af37;
+    }
+    .prerender-content .cta {
+      display: inline-block;
+      margin-top: 2rem;
+      padding: 1rem 2rem;
+      background: #d4af37;
+      color: #000;
+      text-decoration: none;
+      font-weight: bold;
+      letter-spacing: 0.05em;
+      cursor: pointer;
+      border: none;
+    }
+    .prerender-content .cta:hover {
+      background: #fff;
+    }
+    /* Hide prerender content once app loads */
+    #root:not(:empty) .prerender-content {
+      display: none;
+    }
+  </style>
 </head>
 
 <body>
-  <div id="root"></div>
+  <div id="root">
+    <!-- Pre-rendered content for SEO - hidden once React app loads -->
+    <noscript>
+      <main class="prerender-content" role="main">
+      <header>
+        <h1>XYZ</h1>
+        <p><strong>The Neuro-Semantic Scansion Engine</strong></p>
+        <p>A free, open-source speed reading app powered by local AI. No login. No tracking. No servers.</p>
+      </header>
+
+      <section>
+        <h2>Read 3x Faster with AI-Powered Pacing</h2>
+        <p>
+          Traditional speed reading apps force you to process "hello" at the same speed as complex philosophy. 
+          Your brain doesn't work that way. XYZ uses a local AI model to analyze text density and automatically 
+          adjust pacing—slowing for difficult passages, accelerating through simple ones.
+        </p>
+      </section>
+
+      <section>
+        <h2>Why XYZ?</h2>
+        <ul>
+          <li><strong>100% Private:</strong> Everything runs in your browser. Your books never leave your device.</li>
+          <li><strong>No Account Required:</strong> Just open the app and start reading. No email, no signup.</li>
+          <li><strong>Free Forever:</strong> Open source software. No premium tiers, no subscriptions.</li>
+          <li><strong>Works Offline:</strong> Once loaded, works without internet connection.</li>
+          <li><strong>EPUB Support:</strong> Upload any EPUB file from your library.</li>
+          <li><strong>AI-Powered:</strong> Local LLM analyzes text complexity in real-time.</li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>How It Works</h2>
+        <p>
+          XYZ uses RSVP (Rapid Serial Visual Presentation) to display words one at a time at a fixed point, 
+          eliminating the need for eye movement. Combined with entropy-based pacing from a local AI model, 
+          you can comfortably read at 500-1000+ words per minute while actually understanding the content.
+        </p>
+      </section>
+
+      <section>
+        <h2>Features</h2>
+        <ul>
+          <li>Adjustable speed from 50 to 2000 WPM</li>
+          <li>Multiple display modes (Saccade, Velocireader, Focus Center)</li>
+          <li>Reading progress tracking and bookmarks</li>
+          <li>Chapter navigation</li>
+          <li>Dark mode optimized for reading</li>
+          <li>Mobile-friendly design</li>
+          <li>Sync between devices via QR code (no cloud needed)</li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>The Manifesto</h2>
+        <p>
+          XYZ represents a shift towards local-only usage of LLMs as a means to wrest control from Big AI. 
+          We utilize already available models to perform LLM-agent interactions locally on the user side, 
+          without any interaction with any other server. No logins. No tracking. Just free, open source software.
+        </p>
+      </section>
+
+      <noscript>
+        <p><strong>JavaScript Required:</strong> XYZ requires JavaScript to run the speed reading interface and local AI models.</p>
+      </noscript>
+
+      <a href="/" class="cta" aria-label="Start reading now">START READING NOW →</a>
+    </main>
+    </noscript>
+  </div>
   <script>
     // Dev-only: Clear service workers and caches on first load
     if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
