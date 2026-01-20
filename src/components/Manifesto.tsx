@@ -44,7 +44,7 @@ export const Manifesto: React.FC<{ onBack: () => void }> = ({ onBack }) => {
             <SeoHead
                 title="Manifesto"
                 description="XYZ represents a shift towards local-only usage of LLMs. Experience high-velocity data ingestion with complete digital sovereignty."
-                canonicalUrl="https://xyz.com/manifesto"
+                canonicalUrl="https://arphen.xyz/manifesto"
             />
             <div className="w-full h-full min-h-0 flex flex-col lg:flex-row">
                 {/* Left: Regular reading */}

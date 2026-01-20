@@ -8,7 +8,7 @@ export const Manual = () => {
       <SeoHead
           title="Field Manual"
           description="Operating protocol for high-velocity neuro-semantic ingestion. Learn how to pilot the Arphen engine."
-          canonicalUrl="https://xyz.com/manual"
+          canonicalUrl="https://arphen.xyz/manual"
       />
       <div className="max-w-3xl mx-auto space-y-12 pb-24">
         {/* Header */}

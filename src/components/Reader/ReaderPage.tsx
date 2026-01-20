@@ -48,7 +48,7 @@ export const ReaderPage = () => {
             <SeoHead
                 title={book.title}
                 description={`Read ${book.title} by ${book.author} on XYZ.`}
-                canonicalUrl={`https://xyz.com/reader/${book.id}`}
+                canonicalUrl={`https://arphen.xyz/reader/${book.id}`}
             />
             <Reader 
                 book={book} 

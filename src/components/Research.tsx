@@ -30,7 +30,7 @@ export const Research = () => {
       <SeoHead
           title="Research"
           description="Technical and theoretical analysis of Arphen: The Neuro-Semantic Scansion Engine."
-          canonicalUrl="https://xyz.com/research"
+          canonicalUrl="https://arphen.xyz/research"
       />
         
       {/* Sidebar Navigation */}

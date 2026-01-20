@@ -67,7 +67,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
             <SeoHead
                 title={`Settings - ${activeTab.charAt(0).toUpperCase() + activeTab.slice(1)}`}
                 description="Configure XYZ reader settings, LLM models, and display preferences."
-                canonicalUrl="https://xyz.com/settings"
+                canonicalUrl="https://arphen.xyz/settings"
             />
             <div className="max-w-4xl mx-auto p-8 md:p-12">
                 <div className="mb-8 border-b border-white/10 pb-4 flex justify-between items-center">

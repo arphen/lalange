@@ -2,30 +2,30 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
         xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">
   <url>
-    <loc>https://xyz.com/</loc>
+    <loc>https://arphen.xyz/</loc>
     <lastmod>2026-01-20</lastmod>
     <changefreq>weekly</changefreq>
     <priority>1.0</priority>
     <image:image>
-      <image:loc>https://xyz.com/og-image.png</image:loc>
+      <image:loc>https://arphen.xyz/og-image.png</image:loc>
       <image:title>XYZ Speed Reading App Interface</image:title>
       <image:caption>AI-powered RSVP speed reading interface</image:caption>
     </image:image>
   </url>
   <url>
-    <loc>https://xyz.com/manifesto</loc>
+    <loc>https://arphen.xyz/manifesto</loc>
     <lastmod>2026-01-20</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://xyz.com/research</loc>
+    <loc>https://arphen.xyz/research</loc>
     <lastmod>2026-01-20</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://xyz.com/manual</loc>
+    <loc>https://arphen.xyz/manual</loc>
     <lastmod>2026-01-20</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>

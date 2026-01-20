@@ -9,7 +9,7 @@ Allow: /icon-512.png
 # Block internal paths that aren't useful for search
 Disallow: /reader/*
 
-Sitemap: https://xyz.com/sitemap.xml
+Sitemap: https://arphen.xyz/sitemap.xml
 
 # Crawl-delay for politeness (optional)
 Crawl-delay: 1

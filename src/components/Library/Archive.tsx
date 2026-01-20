@@ -159,12 +159,12 @@ export const Archive: React.FC<ArchiveProps> = ({ onOpenBook }) => {
             <SeoHead
                 title="XYZ"
                 description="XYZ is a local-first, AI-driven speed reading tool that uses entropy modulation to pace text based on meaning."
-                canonicalUrl="https://xyz.com/"
+                canonicalUrl="https://arphen.xyz/"
                 schema={{
                     "@context": "https://schema.org",
                     "@type": "WebApplication",
                     "name": "XYZ",
-                    "url": "https://xyz.com/",
+                    "url": "https://arphen.xyz/",
                     "description": "Local-first AI-driven speed reading tool.",
                     "applicationCategory": "ProductivityApplication",
                     "operatingSystem": "Web",
