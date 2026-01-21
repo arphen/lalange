@@ -36,11 +36,11 @@ export const SeoHead = ({
     if (description) {
       updateMeta('description', description);
       updateMeta('og:description', description, 'property');
-      updateMeta('twitter:description', description, 'property');
+      updateMeta('twitter:description', description);
     }
 
     updateMeta('og:title', fullTitle, 'property');
-    updateMeta('twitter:title', fullTitle, 'property');
+    updateMeta('twitter:title', fullTitle);
     updateMeta('og:type', type, 'property');
 
     // Update Canonical
