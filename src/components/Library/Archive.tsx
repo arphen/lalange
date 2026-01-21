@@ -166,7 +166,7 @@ export const Archive: React.FC<ArchiveProps> = ({ onOpenBook }) => {
                     "name": "XYZ",
                     "url": "https://arphen.xyz/",
                     "description": "Local-first AI-driven speed reading tool.",
-                    "applicationCategory": "ProductivityApplication",
+                    "applicationCategory": "UtilitiesApplication",
                     "operatingSystem": "Web",
                     "offers": {
                         "@type": "Offer",
