@@ -1,4 +1,5 @@
 import React, { useCallback, useMemo, useState } from 'react';
+import { SeoHead } from './SeoHead';
 import { BrandName } from './BrandName';
 import { MANIFESTO_DENSITIES, MANIFESTO_PARAGRAPHS, MANIFESTO_WORDS } from '../content/manifesto';
 import { ManifestoRsvp } from './ManifestoRsvp';
@@ -40,6 +41,11 @@ export const Manifesto: React.FC<{ onBack: () => void }> = ({ onBack }) => {
 
     return (
         <div className="w-full h-full min-h-0 overflow-hidden font-mono">
+            <SeoHead
+                title="Manifesto"
+                description="XYZ represents a shift towards local-only usage of LLMs. Experience high-velocity data ingestion with complete digital sovereignty."
+                canonicalUrl="https://arphen.xyz/manifesto"
+            />
             <div className="w-full h-full min-h-0 flex flex-col lg:flex-row">
                 {/* Left: Regular reading */}
                 <div className="w-full lg:w-1/2 h-full min-h-0 overflow-hidden flex flex-col border-b lg:border-b-0 lg:border-r border-white/10 bg-basalt">

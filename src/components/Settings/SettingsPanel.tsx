@@ -7,6 +7,7 @@ import { getAvailableStrategies, type DurationStrategyId } from '../../core/rsvp
 import { getAllDisplayPlugins, type DisplayPluginId } from '../../core/rsvp/display';
 import { clsx } from 'clsx';
 import { BrandName } from '../BrandName';
+import { SeoHead } from '../SeoHead';
 
 interface SettingsPanelProps {
     onClose: () => void;
@@ -63,6 +64,11 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
 
     return (
         <div className="w-full h-full overflow-y-auto bg-basalt text-white font-mono">
+            <SeoHead
+                title={`Settings - ${activeTab.charAt(0).toUpperCase() + activeTab.slice(1)}`}
+                description="Configure XYZ reader settings, LLM models, and display preferences."
+                canonicalUrl="https://arphen.xyz/settings"
+            />
             <div className="max-w-4xl mx-auto p-8 md:p-12">
                 <div className="mb-8 border-b border-white/10 pb-4 flex justify-between items-center">
                      <div>

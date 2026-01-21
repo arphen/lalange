@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Reader } from './Reader';
 import { initDB, type BookDocType } from '../../core/sync/db';
+import { SeoHead } from '../SeoHead';
 
 export const ReaderPage = () => {
     const { bookId } = useParams<{ bookId: string }>();
@@ -43,9 +44,16 @@ export const ReaderPage = () => {
     }
 
     return (
-        <Reader 
-            book={book} 
-            onBack={() => navigate('/')}
-        />
+        <>
+            <SeoHead
+                title={book.title}
+                description={`Read ${book.title} by ${book.author} on XYZ.`}
+                canonicalUrl={`https://arphen.xyz/reader/${book.id}`}
+            />
+            <Reader 
+                book={book} 
+                onBack={() => navigate('/')}
+            />
+        </>
     );
 };

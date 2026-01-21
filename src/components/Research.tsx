@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { clsx } from 'clsx';
 import { ArrowLeft } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { SeoHead } from './SeoHead';
 
 type Section = 'intro' | 'psychoanalysis' | 'architecture' | 'network' | 'ethics';
 
@@ -26,6 +27,11 @@ export const Research = () => {
 
   return (
     <div className="w-full h-full overflow-hidden bg-basalt text-gray-300 font-mono flex flex-col md:flex-row">
+      <SeoHead
+          title="Research"
+          description="Technical and theoretical analysis of Arphen: The Neuro-Semantic Scansion Engine."
+          canonicalUrl="https://arphen.xyz/research"
+      />
         
       {/* Sidebar Navigation */}
       <div className="w-full md:w-64 border-b md:border-b-0 md:border-r border-white/10 p-6 flex flex-col shrink-0 bg-black/20">

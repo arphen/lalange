@@ -3,6 +3,8 @@ import { initDB, type BookDocType } from '../../core/sync/db';
 import { initialIngest, processChaptersInBackground, stopProcessing, estimateBookDensity } from '../../core/ingest/pipeline';
 import { useAIStore } from '../../core/store/ai';
 import { BookCard } from './BookCard';
+import { SyncModal } from '../Sync/SyncModal';
+import { SeoHead } from '../SeoHead';
 
 interface ArchiveProps {
     onOpenBook: (book: BookDocType) => void;
@@ -12,6 +14,7 @@ export const Archive: React.FC<ArchiveProps> = ({ onOpenBook }) => {
     const [books, setBooks] = useState<BookDocType[]>([]);
     const [loading, setLoading] = useState(false);
     const [status, setStatus] = useState('');
+    const [syncBook, setSyncBook] = useState<BookDocType | null>(null);
     const aiState = useAIStore();
 
     useEffect(() => {
@@ -95,6 +98,11 @@ export const Archive: React.FC<ArchiveProps> = ({ onOpenBook }) => {
         }
     };
 
+    const handleSync = (e: React.MouseEvent, book: BookDocType) => {
+        e.stopPropagation();
+        setSyncBook(book);
+    };
+
     const handleEstimateDensity = async (e: React.MouseEvent, bookId: string) => {
         e.stopPropagation();
         if (confirm('Start density estimation for this book? This may take a while.')) {
@@ -148,11 +156,30 @@ export const Archive: React.FC<ArchiveProps> = ({ onOpenBook }) => {
             onDragOver={handleDragOver}
             onDrop={handleDrop}
         >
+            <SeoHead
+                title="XYZ"
+                description="XYZ is a local-first, AI-driven speed reading tool that uses entropy modulation to pace text based on meaning."
+                canonicalUrl="https://arphen.xyz/"
+                schema={{
+                    "@context": "https://schema.org",
+                    "@type": "WebApplication",
+                    "name": "XYZ",
+                    "url": "https://arphen.xyz/",
+                    "description": "Local-first AI-driven speed reading tool.",
+                    "applicationCategory": "UtilitiesApplication",
+                    "operatingSystem": "Web",
+                    "offers": {
+                        "@type": "Offer",
+                        "price": "0",
+                        "priceCurrency": "USD"
+                    }
+                }}
+            />
             <div className="flex-1 overflow-y-auto p-4 md:p-8">
                 <div className="max-w-7xl mx-auto">
                     <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-12 gap-4 border-b border-white/10 pb-8">
                         <div>
-                            <h2 className="text-4xl font-mono font-bold text-dune-gold tracking-widest mb-2">ARCHIVE</h2>
+                            <h1 className="text-4xl font-mono font-bold text-dune-gold tracking-widest mb-2">ARCHIVE</h1>
                             <p className="text-gray-500 font-mono text-sm uppercase tracking-wider">
                                 {books.length} TEXTS // {books.reduce((acc, b) => acc + b.totalWords, 0).toLocaleString()} WORDS
                             </p>
@@ -212,12 +239,19 @@ export const Archive: React.FC<ArchiveProps> = ({ onOpenBook }) => {
                                     onDelete={(e) => handleDelete(e, book.id)}
                                     onStop={(e) => handleStopProcessing(e, book.id)}
                                     onEstimateDensity={(e) => handleEstimateDensity(e, book.id)}
+                                    onSync={(e) => handleSync(e, book)}
                                 />
                             ))}
                         </div>
                     )}
                 </div>
             </div>
+
+            <SyncModal
+                isOpen={!!syncBook}
+                onClose={() => setSyncBook(null)}
+                book={syncBook}
+            />
         </div>
     );
 };

@@ -1,9 +1,15 @@
 import { ArrowLeft } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { SeoHead } from './SeoHead';
 
 export const Manual = () => {
   return (
     <div className="w-full h-full overflow-y-auto bg-basalt text-gray-300 font-mono p-8 md:p-12 lg:p-16">
+      <SeoHead
+          title="Field Manual"
+          description="Operating protocol for high-velocity neuro-semantic ingestion. Learn how to pilot the Arphen engine."
+          canonicalUrl="https://arphen.xyz/manual"
+      />
       <div className="max-w-3xl mx-auto space-y-12 pb-24">
         {/* Header */}
         <div className="space-y-6 border-b border-white/10 pb-8">

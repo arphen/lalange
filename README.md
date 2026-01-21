@@ -1,77 +1,96 @@
-# React + TypeScript + Vite
+# XYZ - Free AI Speed Reading App
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+**Read 3x faster with AI-powered pacing. 100% local, 100% private.**
 
-Currently, two official plugins are available:
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](http://makeapullrequest.com)
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+XYZ is a free, open-source speed reading application that runs entirely in your browser. No servers, no logins, no tracking—just you and your books.
 
-## React Compiler
+## ✨ Features
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- **🚀 RSVP Technology** - Rapid Serial Visual Presentation displays words at a fixed point, eliminating eye movement
+- **🧠 AI-Powered Pacing** - Local LLM analyzes text complexity and adjusts speed automatically
+- **🔒 100% Private** - Everything runs in your browser. Your books never leave your device
+- **📚 EPUB Support** - Upload any EPUB file from your library
+- **⚡ 50-2000 WPM** - Adjustable reading speed to match your comfort level
+- **📱 Works Offline** - Once loaded, works without internet connection
+- **🔄 P2P Sync** - Sync between devices via QR code (no cloud needed)
 
-## Expanding the ESLint configuration
+## 🎯 Why XYZ?
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+Traditional speed reading apps force you to process simple words like "hello" at the same speed as complex philosophical concepts. Your brain doesn't work that way.
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+XYZ uses a local AI model (running entirely in your browser via WebLLM) to analyze text density and automatically adjust pacing:
+- **Simple passages** → Speed up
+- **Complex ideas** → Slow down
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+This creates a natural reading rhythm that matches how your brain actually processes information.
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+## 🚀 Quick Start
+
+1. Visit [xyz.com](https://xyz.com)
+2. Upload an EPUB file (or try the demo)
+3. Start reading!
+
+No installation, no account, no setup.
+
+## 💻 Development
+
+```bash
+# Clone the repo
+git clone https://github.com/arpheno/lalange.git
+cd lalange
+
+# Install dependencies
+npm install
+
+# Start dev server
+npm run dev
+
+# Run tests
+npm test -- --run
+
+# Build for production
+npm run build
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+## 🏗️ Tech Stack
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+- **Frontend**: React + TypeScript + Vite
+- **Styling**: Tailwind CSS
+- **AI**: WebLLM (local LLM inference via WebGPU)
+- **Storage**: RxDB + IndexedDB (local-first)
+- **Sync**: WebRTC (peer-to-peer)
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+## 📖 Documentation
 
-## Acknowledgements
+- [Field Manual](https://xyz.com/manual) - How to use XYZ effectively
+- [Research](https://xyz.com/research) - The theory behind neuro-semantic pacing
+- [Manifesto](https://xyz.com/manifesto) - Our philosophy on local-first AI
 
-This project embeds a custom version of [Web LLM](https://github.com/mlc-ai/web-llm), which is licensed under the [Apache License 2.0](packages/web-llm/LICENSE).
+## 🤝 Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add some amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🙏 Acknowledgments
+
+- [WebLLM](https://github.com/mlc-ai/web-llm) for enabling local LLM inference (embedded under Apache License 2.0)
+- [Project Gutenberg](https://www.gutenberg.org/) for free public domain books
+- The open source community
+
+---
+
+**Made with ❤️ by [Arphen](https://github.com/arpheno)**
+
+*No logins. No tracking. Just reading.*

@@ -8,9 +8,10 @@ interface BookCardProps {
     onDelete: (e: React.MouseEvent) => void;
     onStop?: (e: React.MouseEvent) => void;
     onEstimateDensity?: (e: React.MouseEvent) => void;
+    onSync?: (e: React.MouseEvent) => void;
 }
 
-export const BookCard: React.FC<BookCardProps> = ({ book, onOpen, onDelete, onStop, onEstimateDensity }) => {
+export const BookCard: React.FC<BookCardProps> = ({ book, onOpen, onDelete, onStop, onEstimateDensity, onSync }) => {
     const [chapters, setChapters] = useState<ChapterDocType[]>([]);
     const [readingTime, setReadingTime] = useState<string>('');
     const [processingStatus, setProcessingStatus] = useState<string>('');
@@ -107,6 +108,30 @@ export const BookCard: React.FC<BookCardProps> = ({ book, onOpen, onDelete, onSt
                         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
+                        </svg>
+                    </button>
+                )}
+                {onSync && (
+                    <button
+                        onClick={onSync}
+                        className={`text-gray-500 hover:text-dune-gold transition-opacity ${isProcessing ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+                        title="Sync to Phone"
+                    >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            {/* Phone outline */}
+                            <path
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                strokeWidth={1.5}
+                                d="M9.75 2.25h4.5A2.25 2.25 0 0116.5 4.5v15a2.25 2.25 0 01-2.25 2.25h-4.5A2.25 2.25 0 017.5 19.5v-15A2.25 2.25 0 019.75 2.25z"
+                            />
+                            {/* Sync/download arrow inside the phone */}
+                            <path
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                strokeWidth={1.5}
+                                d="M12 7.5v6m0 0l-2.25-2.25M12 13.5l2.25-2.25"
+                            />
                         </svg>
                     </button>
                 )}
