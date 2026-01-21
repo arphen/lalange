@@ -118,8 +118,20 @@ export const BookCard: React.FC<BookCardProps> = ({ book, onOpen, onDelete, onSt
                         title="Sync to Phone"
                     >
                         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                            {/* Phone outline */}
+                            <path
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                strokeWidth={1.5}
+                                d="M9.75 2.25h4.5A2.25 2.25 0 0116.5 4.5v15a2.25 2.25 0 01-2.25 2.25h-4.5A2.25 2.25 0 017.5 19.5v-15A2.25 2.25 0 019.75 2.25z"
+                            />
+                            {/* Sync/download arrow inside the phone */}
+                            <path
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                strokeWidth={1.5}
+                                d="M12 7.5v6m0 0l-2.25-2.25M12 13.5l2.25-2.25"
+                            />
                         </svg>
                     </button>
                 )}
