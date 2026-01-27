@@ -151,7 +151,8 @@ class TTSAudioPlayer {
         }
         
         this.isPlaying = true;
-        console.log(`[TTS Player] Starting playback from sentence ${this.currentSentenceIndex}`);
+        const hasAudio = this.audioQueue.has(this.currentSentenceIndex);
+        console.log(`[TTS Player] Starting playback from sentence ${this.currentSentenceIndex} (hasAudio: ${hasAudio}, queueSize: ${this.audioQueue.size})`);
         
         this.playCurrentSentence();
     }
@@ -300,9 +301,12 @@ class TTSAudioPlayer {
     }
     
     pause(): void {
-        if (!this.isPlaying) return;
+        if (!this.isPlaying) {
+            console.log('[TTS Player] Already paused');
+            return;
+        }
         
-        console.log('[TTS Player] Pausing');
+        console.log(`[TTS Player] Pausing at sentence ${this.currentSentenceIndex}`);
         this.isPlaying = false;
         this.stopWordTracking();
         

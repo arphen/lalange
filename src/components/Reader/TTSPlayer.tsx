@@ -185,11 +185,10 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
                 }
             },
             onBufferLow: (currentSentenceIndex) => {
-                // Generate more audio ahead
-                const nextToGenerate = currentSentenceIndex + 1;
-                if (!isGeneratingRef.current && nextToGenerate < sentences.length) {
-                    // Find first sentence without audio
-                    let firstMissing = nextToGenerate;
+                // Generate more audio - check current sentence first, then ahead
+                if (!isGeneratingRef.current && currentSentenceIndex < sentences.length) {
+                    // Find first sentence without audio (starting from current)
+                    let firstMissing = currentSentenceIndex;
                     while (firstMissing < sentences.length && ttsPlayer.hasAudioForSentence(firstMissing)) {
                         firstMissing++;
                     }
