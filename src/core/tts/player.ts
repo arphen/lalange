@@ -37,6 +37,7 @@ class TTSAudioPlayer {
     // State
     private isPlaying = false;
     private currentSentenceIndex = 0;
+    private waitingForSentenceIndex: number | null = null; // Track which sentence we're waiting for
     private options: AudioPlayerOptions = {};
     
     // For word tracking within a sentence
@@ -96,6 +97,7 @@ class TTSAudioPlayer {
         // If we're playing and waiting for this sentence, start it now
         if (this.isPlaying && sentence.index === this.currentSentenceIndex && !this.currentSource) {
             console.log(`[TTS Player] Audio arrived for sentence ${sentence.index}, playing now`);
+            this.waitingForSentenceIndex = null;
             this.playCurrentSentence();
         }
         
@@ -166,13 +168,20 @@ class TTSAudioPlayer {
         
         if (!queueItem) {
             // No audio for this sentence yet - wait for it
-            console.log(`[TTS Player] Waiting for audio for sentence ${this.currentSentenceIndex}...`);
-            useTTSStore.getState().setPlaybackState('generating');
-            
-            // Notify that we need more audio
-            this.options.onBufferLow?.(this.currentSentenceIndex);
+            // Only call onBufferLow if we haven't already requested this sentence
+            if (this.waitingForSentenceIndex !== this.currentSentenceIndex) {
+                console.log(`[TTS Player] Waiting for audio for sentence ${this.currentSentenceIndex}...`);
+                this.waitingForSentenceIndex = this.currentSentenceIndex;
+                useTTSStore.getState().setPlaybackState('generating');
+                
+                // Notify that we need more audio
+                this.options.onBufferLow?.(this.currentSentenceIndex);
+            }
             return;
         }
+        
+        // Clear waiting flag since we have audio
+        this.waitingForSentenceIndex = null;
         
         const { buffer, sentence, duration } = queueItem;
         
@@ -336,6 +345,7 @@ class TTSAudioPlayer {
         this.pause();
         this.currentSentenceIndex = 0;
         this.currentSentence = null;
+        this.waitingForSentenceIndex = null;
         useTTSStore.getState().setPlaybackState('idle');
         useTTSStore.getState().setCurrentWordIndex(0);
     }
