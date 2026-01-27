@@ -12,11 +12,15 @@ import {
     isTTSReady,
     streamSpeech,
     splitIntoSentences,
-    ttsPlayer,
     listVoices,
     type SentenceBoundary,
     type TTSAudioResult,
 } from '../../core/tts';
+import { ttsPlayer } from '../../core/tts/player';
+
+// Configuration for incremental generation
+const SENTENCES_AHEAD_BUFFER = 5; // Generate this many sentences ahead of current
+const CHECK_BUFFER_INTERVAL_MS = 2000; // How often to check if we need more audio
 
 interface TTSPlayerProps {
     /** The words to speak */
@@ -64,9 +68,34 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
     
     const generatorRef = useRef<AsyncGenerator<{ sentence: SentenceBoundary; audio: TTSAudioResult }> | null>(null);
     const isGeneratingRef = useRef(false);
+    const abortControllerRef = useRef<AbortController | null>(null);
+    const wordsRef = useRef<string[]>(words);
+    const bufferCheckIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const currentGenerationStartIndexRef = useRef<number>(0);
     
     // Split words into sentences on mount/change
     useEffect(() => {
+        // Detect if words actually changed (chapter navigation)
+        const wordsChanged = wordsRef.current !== words && 
+            (wordsRef.current.length !== words.length || 
+             wordsRef.current[0] !== words[0]);
+        
+        if (wordsChanged) {
+            console.log('[TTS UI] Words changed, clearing queue and stopping generation');
+            
+            // Stop any ongoing generation
+            if (abortControllerRef.current) {
+                abortControllerRef.current.abort();
+            }
+            isGeneratingRef.current = false;
+            generatorRef.current = null;
+            
+            // Clear the audio queue to free memory
+            ttsPlayer.clearQueue();
+            ttsPlayer.stop();
+        }
+        
+        wordsRef.current = words;
         const newSentences = splitIntoSentences(words);
         setSentences(newSentences);
     }, [words]);
@@ -84,42 +113,122 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
         }
     }, []);
     
-    // Generate and queue audio
+    // Cleanup on unmount
+    useEffect(() => {
+        return () => {
+            console.log('[TTS UI] Unmounting, cleaning up resources');
+            
+            // Stop buffer check interval
+            if (bufferCheckIntervalRef.current) {
+                clearInterval(bufferCheckIntervalRef.current);
+            }
+            
+            // Abort any ongoing generation
+            if (abortControllerRef.current) {
+                abortControllerRef.current.abort();
+            }
+            isGeneratingRef.current = false;
+            
+            // Stop playback and clear queue
+            ttsPlayer.stop();
+            ttsPlayer.clearQueue();
+        };
+    }, []);
+    
+    // Generate and queue audio incrementally (only sentences ahead of current)
     const startGeneration = useCallback(async (fromSentenceIndex: number = 0) => {
         if (isGeneratingRef.current || sentences.length === 0) return;
         
-        isGeneratingRef.current = true;
-        ttsPlayer.clearQueue();
+        // Create abort controller for this generation session
+        abortControllerRef.current = new AbortController();
+        const signal = abortControllerRef.current.signal;
         
-        const sentencesToGenerate = sentences.slice(fromSentenceIndex);
+        isGeneratingRef.current = true;
+        currentGenerationStartIndexRef.current = fromSentenceIndex;
+        
+        // Only generate a window of sentences, not all of them
+        const endIndex = Math.min(fromSentenceIndex + SENTENCES_AHEAD_BUFFER, sentences.length);
+        const sentencesToGenerate = sentences.slice(fromSentenceIndex, endIndex);
+        
+        console.log(`[TTS UI] Starting generation from sentence ${fromSentenceIndex} to ${endIndex - 1} (${sentencesToGenerate.length} sentences)`);
         
         generatorRef.current = streamSpeech(sentencesToGenerate, {
             voice,
             speed,
             onSentenceStart: (sentence) => {
+                if (signal.aborted) return;
                 console.log(`[TTS] Generating sentence ${sentence.index}: "${sentence.text.slice(0, 50)}..."`);
             },
             onSentenceComplete: (sentence, audio) => {
+                if (signal.aborted) return;
                 ttsPlayer.queueAudio(audio, sentence);
                 setDuration(ttsPlayer.getState().duration);
             },
         });
         
         try {
-            // Start generating all sentences
+            // Start generating the window of sentences
             for await (const { sentence } of generatorRef.current) {
+                if (signal.aborted) {
+                    console.log('[TTS UI] Generation aborted');
+                    break;
+                }
+                
                 // Start playing as soon as first sentence is ready
                 if (sentence.index === fromSentenceIndex && playbackState !== 'playing') {
                     await ttsPlayer.play();
                 }
             }
         } catch (err) {
-            console.error('[TTS] Generation error:', err);
+            if (!signal.aborted) {
+                console.error('[TTS] Generation error:', err);
+            }
         } finally {
             isGeneratingRef.current = false;
             generatorRef.current = null;
         }
     }, [sentences, voice, speed, playbackState, setDuration]);
+    
+    // Check if we need to generate more audio ahead
+    const checkAndGenerateAhead = useCallback(async () => {
+        if (isGeneratingRef.current || sentences.length === 0) return;
+        if (playbackState !== 'playing') return;
+        
+        const currentIdx = ttsPlayer.getState().currentSentenceIndex;
+        const neededAheadIdx = currentIdx + SENTENCES_AHEAD_BUFFER;
+        
+        // Check if we have audio for sentences ahead
+        let needsMoreAudio = false;
+        for (let i = currentIdx; i < Math.min(neededAheadIdx, sentences.length); i++) {
+            if (!ttsPlayer.hasAudioForSentence(i)) {
+                needsMoreAudio = true;
+                break;
+            }
+        }
+        
+        if (needsMoreAudio && currentIdx + 1 < sentences.length) {
+            console.log(`[TTS UI] Buffer running low at sentence ${currentIdx}, generating more`);
+            await startGeneration(currentIdx + 1);
+        }
+    }, [sentences, playbackState, startGeneration]);
+    
+    // Set up interval to check if we need more audio
+    useEffect(() => {
+        if (playbackState === 'playing') {
+            bufferCheckIntervalRef.current = setInterval(checkAndGenerateAhead, CHECK_BUFFER_INTERVAL_MS);
+        } else {
+            if (bufferCheckIntervalRef.current) {
+                clearInterval(bufferCheckIntervalRef.current);
+                bufferCheckIntervalRef.current = null;
+            }
+        }
+        
+        return () => {
+            if (bufferCheckIntervalRef.current) {
+                clearInterval(bufferCheckIntervalRef.current);
+            }
+        };
+    }, [playbackState, checkAndGenerateAhead]);
     
     // Handle play/pause toggle
     const handleToggle = useCallback(async () => {
@@ -162,8 +271,16 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
     
     // Handle stop
     const handleStop = useCallback(() => {
-        ttsPlayer.stop();
+        // Abort any ongoing generation
+        if (abortControllerRef.current) {
+            abortControllerRef.current.abort();
+        }
         isGeneratingRef.current = false;
+        
+        ttsPlayer.stop();
+        ttsPlayer.clearQueue();
+        
+        console.log(`[TTS UI] Stopped. Queue size: ${ttsPlayer.getQueueSize()}`);
     }, []);
     
     // Handle seek from slider

@@ -8,6 +8,10 @@
 import { type TTSAudioResult, type SentenceBoundary } from './kokoro';
 import { useTTSStore } from '../store/tts';
 
+// Configuration for memory management
+const MAX_QUEUED_BUFFERS = 10; // Keep at most N audio buffers in memory
+const BUFFER_CLEANUP_BEHIND = 2; // Keep N sentences behind current for seeking back
+
 export interface AudioPlayerOptions {
     onTimeUpdate?: (currentTime: number, duration: number) => void;
     onSentenceChange?: (sentenceIndex: number) => void;
@@ -19,7 +23,7 @@ class TTSAudioPlayer {
     private audioContext: AudioContext | null = null;
     private gainNode: GainNode | null = null;
     private currentSource: AudioBufferSourceNode | null = null;
-    private audioQueue: { buffer: AudioBuffer; sentence: SentenceBoundary }[] = [];
+    private audioQueue: Map<number, { buffer: AudioBuffer; sentence: SentenceBoundary }> = new Map();
     private isPlaying = false;
     private currentTime = 0;
     private startTime = 0;
@@ -29,6 +33,7 @@ class TTSAudioPlayer {
     private sentences: SentenceBoundary[] = [];
     private options: AudioPlayerOptions = {};
     private rafId: number | null = null;
+    private playedSentenceIndices: Set<number> = new Set();
     
     constructor() {
         // Initialize on first user interaction to avoid autoplay restrictions
@@ -72,7 +77,7 @@ class TTSAudioPlayer {
     }
     
     /**
-     * Queue audio for playback
+     * Queue audio for playback with memory management
      */
     queueAudio(result: TTSAudioResult, sentence: SentenceBoundary): void {
         if (!this.audioContext) {
@@ -81,7 +86,7 @@ class TTSAudioPlayer {
         
         if (this.audioContext) {
             const buffer = this.createAudioBuffer(result.samples, result.sampleRate);
-            this.audioQueue.push({ buffer, sentence });
+            this.audioQueue.set(sentence.index, { buffer, sentence });
             this.totalDuration += result.duration;
             
             // Store sentence for seeking
@@ -89,18 +94,60 @@ class TTSAudioPlayer {
                 this.sentences.push(sentence);
                 this.sentences.sort((a, b) => a.index - b.index);
             }
+            
+            // Clean up old buffers to prevent memory bloat
+            this.cleanupOldBuffers();
         }
     }
     
     /**
-     * Clear the audio queue
+     * Clean up audio buffers that are far behind current playback position
+     * Keeps memory usage bounded even during long listening sessions
+     */
+    private cleanupOldBuffers(): void {
+        const currentIdx = this.currentSentenceIndex;
+        const minIndexToKeep = currentIdx - BUFFER_CLEANUP_BEHIND;
+        
+        // Remove buffers that are too far behind
+        for (const [idx] of this.audioQueue) {
+            if (idx < minIndexToKeep) {
+                this.audioQueue.delete(idx);
+                console.log(`[TTS Player] Cleaned up audio buffer for sentence ${idx}`);
+            }
+        }
+        
+        // Also enforce max queue size (keep ahead buffers limited)
+        if (this.audioQueue.size > MAX_QUEUED_BUFFERS) {
+            const indices = Array.from(this.audioQueue.keys()).sort((a, b) => a - b);
+            const toRemove = indices.slice(0, indices.length - MAX_QUEUED_BUFFERS);
+            for (const idx of toRemove) {
+                if (idx < currentIdx - BUFFER_CLEANUP_BEHIND) {
+                    this.audioQueue.delete(idx);
+                }
+            }
+        }
+    }
+    
+    /**
+     * Clear the audio queue and release all resources
      */
     clearQueue(): void {
-        this.audioQueue = [];
+        // Explicitly clear the Map to help GC
+        this.audioQueue.clear();
         this.sentences = [];
+        this.playedSentenceIndices.clear();
         this.totalDuration = 0;
         this.currentTime = 0;
         this.currentSentenceIndex = 0;
+        
+        console.log('[TTS Player] Queue cleared, resources released');
+    }
+    
+    /**
+     * Get current queue size (for debugging/monitoring)
+     */
+    getQueueSize(): number {
+        return this.audioQueue.size;
     }
     
     /**
@@ -282,11 +329,28 @@ class TTSAudioPlayer {
         source.buffer = buffer;
         source.connect(this.gainNode);
         
+        // Track which sentence we're playing
+        const playingSentenceIndex = sentence.index;
+        
         source.onended = () => {
+            // Mark sentence as played for cleanup
+            this.playedSentenceIndices.add(playingSentenceIndex);
+            
             if (this.isPlaying && source === this.currentSource) {
                 this.currentSentenceIndex++;
                 this.options.onSentenceChange?.(this.currentSentenceIndex);
+                
+                // Clean up old buffers after advancing
+                this.cleanupOldBuffers();
+                
                 this.playNextInQueue();
+            }
+            
+            // Help GC by disconnecting
+            try {
+                source.disconnect();
+            } catch {
+                // Already disconnected
             }
         };
         
@@ -302,7 +366,8 @@ class TTSAudioPlayer {
     }
     
     private findQueueItemAtTime(time: number): { buffer: AudioBuffer; sentence: SentenceBoundary } | null {
-        for (const item of this.audioQueue) {
+        // Search in the Map by checking each item's timing
+        for (const [, item] of this.audioQueue) {
             const startTime = item.sentence.audioStartTime ?? 0;
             const endTime = item.sentence.audioEndTime ?? 0;
             
@@ -311,8 +376,11 @@ class TTSAudioPlayer {
             }
         }
         
-        // Return first unplayed item
-        return this.audioQueue.find(item => {
+        // Return first unplayed item (by sentence index order)
+        const sortedItems = Array.from(this.audioQueue.values())
+            .sort((a, b) => a.sentence.index - b.sentence.index);
+        
+        return sortedItems.find(item => {
             const startTime = item.sentence.audioStartTime ?? 0;
             return startTime >= time;
         }) ?? null;
@@ -363,14 +431,38 @@ class TTSAudioPlayer {
      * Clean up resources
      */
     dispose(): void {
+        console.log('[TTS Player] Disposing player, releasing all resources');
+        
         this.stop();
+        this.stopTimeUpdate();
         this.clearQueue();
         
+        // Disconnect and release current source
+        if (this.currentSource) {
+            try {
+                this.currentSource.disconnect();
+            } catch {
+                // Already disconnected
+            }
+            this.currentSource = null;
+        }
+        
+        // Close audio context
         if (this.audioContext) {
             this.audioContext.close().catch(console.error);
             this.audioContext = null;
             this.gainNode = null;
         }
+        
+        // Clear all references
+        this.options = {};
+    }
+    
+    /**
+     * Check if a sentence's audio is already queued
+     */
+    hasAudioForSentence(sentenceIndex: number): boolean {
+        return this.audioQueue.has(sentenceIndex);
     }
 }
 
