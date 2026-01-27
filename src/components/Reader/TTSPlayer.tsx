@@ -73,7 +73,7 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
     
     // Sync TTS word position to reader
     useEffect(() => {
-        if (playbackState === 'playing' && onPositionChange && ttsWordIndex > 0) {
+        if ((playbackState === 'playing' || playbackState === 'generating') && onPositionChange) {
             onPositionChange(ttsWordIndex);
         }
     }, [ttsWordIndex, playbackState, onPositionChange]);

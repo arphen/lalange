@@ -255,12 +255,11 @@ class TTSAudioPlayer {
     }
     
     private startWordTracking(): void {
-        if (this.rafId) {
-            cancelAnimationFrame(this.rafId);
-        }
+        this.stopWordTracking();
         
         const update = () => {
             if (!this.isPlaying || !this.audioContext || !this.currentSentence) {
+                this.rafId = null;
                 return;
             }
             
@@ -276,14 +275,21 @@ class TTSAudioPlayer {
             const wordOffset = Math.floor(progress * wordCount);
             const currentWord = sentence.startWordIndex + Math.min(wordOffset, wordCount - 1);
             
-            useTTSStore.getState().setCurrentWordIndex(currentWord);
+            const store = useTTSStore.getState();
+            if (store.currentWordIndex !== currentWord) {
+                store.setCurrentWordIndex(currentWord);
+            }
             
-            if (progress < 1 && this.isPlaying) {
+            // Keep running until sentence ends (onended will stop tracking)
+            if (this.isPlaying) {
                 this.rafId = requestAnimationFrame(update);
+            } else {
+                this.rafId = null;
             }
         };
         
-        this.rafId = requestAnimationFrame(update);
+        // Start immediately with first update
+        update();
     }
     
     private stopWordTracking(): void {
