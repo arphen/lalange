@@ -266,6 +266,38 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
                 await ttsPlayer.play(startIdx);
             }
         } else if (playbackState === 'paused') {
+            // Check if user has read ahead with RSVP - if so, start from their new position
+            const currentTTSWordIndex = useTTSStore.getState().currentWordIndex;
+            
+            if (currentWordIndex > currentTTSWordIndex) {
+                // User read ahead - find the sentence for their current position
+                const sentenceIndex = sentences.findIndex(
+                    s => currentWordIndex >= s.startWordIndex && currentWordIndex <= s.endWordIndex
+                );
+                
+                console.log(`[TTS UI] User read ahead from word ${currentTTSWordIndex} to ${currentWordIndex}, resuming from sentence ${sentenceIndex}`);
+                
+                if (sentenceIndex >= 0) {
+                    const startSentence = sentences[sentenceIndex];
+                    startSentenceIndexRef.current = sentenceIndex;
+                    
+                    // Update position and start fresh from this sentence
+                    useTTSStore.getState().setCurrentWordIndex(startSentence.startWordIndex);
+                    useTTSStore.getState().setPlaybackState('preparing');
+                    hasStartedPlaybackRef.current = true;
+                    
+                    // Clear old queued audio and regenerate from new position
+                    ttsPlayer.clearQueue();
+                    await generateFrom(sentenceIndex);
+                    
+                    if (ttsPlayer.hasAudioForSentence(sentenceIndex)) {
+                        await ttsPlayer.play(sentenceIndex);
+                    }
+                    return;
+                }
+            }
+            
+            // User didn't read ahead (or read back) - just resume from where we were
             await ttsPlayer.play();
         }
     }, [isReady, playbackState, sentences, currentWordIndex, handleInit, generateFrom]);
