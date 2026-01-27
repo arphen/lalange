@@ -70,10 +70,11 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
     const abortControllerRef = useRef<AbortController | null>(null);
     const wordsRef = useRef<string[]>(words);
     const startSentenceIndexRef = useRef<number>(0);
+    const hasStartedPlaybackRef = useRef(false); // Track if we've started with a valid position
     
-    // Sync TTS word position to reader
+    // Sync TTS word position to reader - only after playback has properly started
     useEffect(() => {
-        if ((playbackState === 'playing' || playbackState === 'generating') && onPositionChange) {
+        if ((playbackState === 'playing' || playbackState === 'generating') && onPositionChange && hasStartedPlaybackRef.current) {
             onPositionChange(ttsWordIndex);
         }
     }, [ttsWordIndex, playbackState, onPositionChange]);
@@ -92,6 +93,7 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
             }
             isGeneratingRef.current = false;
             generatorRef.current = null;
+            hasStartedPlaybackRef.current = false;
             
             // Clear player
             ttsPlayer.clearQueue();
@@ -223,8 +225,28 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
             const sentenceIndex = sentences.findIndex(
                 s => currentWordIndex >= s.startWordIndex && currentWordIndex <= s.endWordIndex
             );
-            const startIdx = Math.max(0, sentenceIndex);
+            
+            console.log(`[TTS UI] Finding sentence for word ${currentWordIndex}, found: ${sentenceIndex}, sentences count: ${sentences.length}`);
+            
+            if (sentenceIndex === -1 && sentences.length > 0) {
+                // Word index might be beyond sentences - find closest
+                const lastSentence = sentences[sentences.length - 1];
+                if (currentWordIndex > lastSentence.endWordIndex) {
+                    console.log(`[TTS UI] Word ${currentWordIndex} beyond last sentence (ends at ${lastSentence.endWordIndex}), using last sentence`);
+                }
+            }
+            
+            const startIdx = sentenceIndex >= 0 ? sentenceIndex : 0;
             startSentenceIndexRef.current = startIdx;
+            
+            // Mark that we're starting from a valid position
+            const startSentence = sentences[startIdx];
+            if (startSentence) {
+                console.log(`[TTS UI] Starting from sentence ${startIdx}: word ${startSentence.startWordIndex} to ${startSentence.endWordIndex}`);
+                // Pre-set the word index to avoid jump to 0
+                useTTSStore.getState().setCurrentWordIndex(startSentence.startWordIndex);
+                hasStartedPlaybackRef.current = true;
+            }
             
             // Show preparing state
             useTTSStore.getState().setPlaybackState('preparing');
@@ -249,6 +271,7 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
             abortControllerRef.current.abort();
         }
         isGeneratingRef.current = false;
+        hasStartedPlaybackRef.current = false;
         
         ttsPlayer.stop();
         ttsPlayer.clearQueue();
