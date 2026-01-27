@@ -214,8 +214,15 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
         });
     }, [sentences, onPositionChange, generateFrom, playbackState]);
     
-    // Handle play/pause toggle
+    // Handle play/pause toggle - PAUSE MUST BE INSTANT
     const handleToggle = useCallback(async () => {
+        // PAUSE PATH - synchronous, instant response
+        if (playbackState === 'playing' || playbackState === 'generating') {
+            ttsPlayer.pause();
+            return; // Exit immediately, no async operations
+        }
+        
+        // PLAY PATHS - these can be async
         if (!isReady) {
             await handleInit();
         }
@@ -258,8 +265,6 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
             if (ttsPlayer.hasAudioForSentence(startIdx)) {
                 await ttsPlayer.play(startIdx);
             }
-        } else if (playbackState === 'playing' || playbackState === 'generating') {
-            ttsPlayer.pause();
         } else if (playbackState === 'paused') {
             await ttsPlayer.play();
         }
