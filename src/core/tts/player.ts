@@ -36,6 +36,7 @@ class TTSAudioPlayer {
     private options: AudioPlayerOptions = {};
     private rafId: number | null = null;
     private playedSentenceIndices: Set<number> = new Set();
+    private waitingForBuffer = false; // True when we ran out of audio but should resume when more arrives
     
     constructor() {
         // Initialize on first user interaction to avoid autoplay restrictions
@@ -102,6 +103,13 @@ class TTSAudioPlayer {
             // Notify that audio is available
             this.options.onAudioQueued?.(sentence.index);
             
+            // If we were waiting for buffer (underrun recovery), resume playback now
+            if (this.waitingForBuffer) {
+                console.log('[TTS Player] Buffer replenished, resuming playback');
+                this.waitingForBuffer = false;
+                this.playNextInQueue();
+            }
+            
             // Clean up old buffers to prevent memory bloat
             this.cleanupOldBuffers();
         }
@@ -146,6 +154,7 @@ class TTSAudioPlayer {
         this.totalDuration = 0;
         this.currentTime = 0;
         this.currentSentenceIndex = 0;
+        this.waitingForBuffer = false;
         
         console.log('[TTS Player] Queue cleared, resources released');
     }
@@ -211,6 +220,7 @@ class TTSAudioPlayer {
      */
     stop(): void {
         this.pause();
+        this.waitingForBuffer = false;
         this.currentTime = 0;
         this.pauseTime = 0;
         this.currentSentenceIndex = 0;
@@ -318,18 +328,24 @@ class TTSAudioPlayer {
         // Find the queue item at current time
         const queueItem = this.findQueueItemAtTime(this.currentTime);
         if (!queueItem) {
-            // Check if we're waiting for more audio to be generated
-            console.log(`[TTS Player] No audio available at time ${this.currentTime.toFixed(2)}, queue size: ${this.audioQueue.size}`);
+            // No audio available - enter buffer underrun state
+            console.log(`[TTS Player] No audio available at time ${this.currentTime.toFixed(2)}, queue size: ${this.audioQueue.size}, waiting for buffer...`);
             
             // Notify that buffer is low - this gives the UI a chance to generate more
             this.options.onBufferLow?.();
             
-            // End of audio
-            this.isPlaying = false;
-            useTTSStore.getState().setPlaybackState('idle');
-            this.options.onEnded?.();
+            // Instead of ending playback, wait for more audio to arrive
+            // The queueAudio() method will call playNextInQueue() when new audio arrives
+            this.waitingForBuffer = true;
+            useTTSStore.getState().setPlaybackState('generating'); // Show we're waiting for more
+            
+            // Keep the time update running so UI stays responsive
+            // But we don't end playback here - we'll resume when audio arrives
             return;
         }
+        
+        // We have audio, clear the waiting flag
+        this.waitingForBuffer = false;
         
         const { buffer, sentence } = queueItem;
         console.log(`[TTS Player] Playing sentence ${sentence.index}: "${sentence.text.slice(0, 30)}..."`);

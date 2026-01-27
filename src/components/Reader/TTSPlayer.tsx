@@ -382,6 +382,10 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
         if (isPreparing) {
             return 'Preparing audio...';
         }
+        // 'generating' state when isPlaying indicates buffer underrun (waiting for audio)
+        if (playbackState === 'generating') {
+            return `${currentTimeStr} / ${durationStr} (buffering...)`;
+        }
         if (isGenerating && playbackState === 'playing') {
             return `${currentTimeStr} / ${durationStr} (buffering...)`;
         }
