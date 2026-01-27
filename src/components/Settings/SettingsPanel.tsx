@@ -2,9 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { useParams, Navigate } from 'react-router-dom';
 import { useSettingsStore, type PromptFragment } from '../../core/store/settings';
 import { useAIStore } from '../../core/store/ai';
+import { useTTSStore } from '../../core/store/tts';
 import { getEngine, MODEL_INFO, type ModelTier, isModelCached, deleteModel } from '../../core/ai/webllm';
 import { getAvailableStrategies, type DurationStrategyId } from '../../core/rsvp/duration';
 import { getAllDisplayPlugins, type DisplayPluginId } from '../../core/rsvp/display';
+import { VOICES, TTS_MODEL_OPTIONS, initTTS, type TTSQuantization } from '../../core/tts';
 import { clsx } from 'clsx';
 import { BrandName } from '../BrandName';
 import { SeoHead } from '../SeoHead';
@@ -13,12 +15,12 @@ interface SettingsPanelProps {
     onClose: () => void;
 }
 
-type SettingsTab = 'librarian' | 'pacing' | 'summarizer';
+type SettingsTab = 'librarian' | 'pacing' | 'summarizer' | 'tts';
 
 export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
     const { tab } = useParams<{ tab: string }>();
     const activeTabRaw = (tab as SettingsTab) || 'pacing';
-    const isValidTab = ['librarian', 'pacing', 'summarizer'].includes(activeTabRaw);
+    const isValidTab = ['librarian', 'pacing', 'summarizer', 'tts'].includes(activeTabRaw);
     const activeTab = isValidTab ? activeTabRaw : 'pacing';
 
     const [cachedModels, setCachedModels] = useState<Record<string, boolean>>({});
@@ -450,6 +452,9 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                         </div>
                     )}
 
+                    {/* TTS Tab */}
+                    {activeTab === 'tts' && <TTSSettings />}
+
                 </div>
             </div>
     );
@@ -564,6 +569,220 @@ const AgentConfig: React.FC<AgentConfigProps> = ({
                         ))}
                     </div>
                 </div>
+            </div>
+        </div>
+    );
+};
+
+/**
+ * TTS Settings Component
+ */
+const TTSSettings: React.FC = () => {
+    const {
+        voice,
+        setVoice,
+        quantization,
+        setQuantization,
+        speed,
+        setSpeed,
+        volume,
+        setVolume,
+        isReady,
+        isLoading,
+        loadProgress,
+        loadStatus,
+    } = useTTSStore();
+    
+    const [isDownloading, setIsDownloading] = useState(false);
+    
+    const handleDownloadModel = async () => {
+        setIsDownloading(true);
+        try {
+            await initTTS(quantization);
+        } catch (e) {
+            console.error('Failed to download TTS model:', e);
+        } finally {
+            setIsDownloading(false);
+        }
+    };
+    
+    return (
+        <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-300">
+            <div>
+                <h3 className="text-2xl font-bold text-white mb-2">Text to Speech</h3>
+                <p className="text-gray-500 text-sm">Listen to your books with local AI-powered voice synthesis.</p>
+            </div>
+
+            {/* Info Block */}
+            <div className="bg-white/5 rounded-lg border border-white/10 p-6 space-y-4">
+                <h4 className="text-purple-400 font-bold uppercase tracking-widest text-xs flex items-center gap-2">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} 
+                            d="M12 3c-4.97 0-9 4.03-9 9v7a2 2 0 002 2h1a2 2 0 002-2v-3a2 2 0 00-2-2H5v-2c0-3.87 3.13-7 7-7s7 3.13 7 7v2h-1a2 2 0 00-2 2v3a2 2 0 002 2h1a2 2 0 002-2v-7c0-4.97-4.03-9-9-9z" />
+                    </svg>
+                    Seamless Reading ↔ Listening
+                </h4>
+                <p className="text-sm text-gray-400 leading-relaxed">
+                    Switch between reading and listening at any point. When you pause audio, the reader picks up exactly where you left off. Perfect for commutes—read on the bus, listen while walking.
+                </p>
+                <h4 className="text-purple-400 font-bold uppercase tracking-widest text-xs pt-2">Powered by Kokoro</h4>
+                <p className="text-sm text-gray-400 leading-relaxed">
+                    Uses the <span className="text-white font-bold">Kokoro-82M</span> model—a frontier open-weight TTS that runs entirely in your browser. No cloud APIs, no subscription, no data sent anywhere.
+                </p>
+                <ul className="space-y-2 text-xs text-gray-500 font-mono border-l-2 border-purple-500/30 pl-4 py-2">
+                    <li>
+                        <strong className="text-gray-300">Model Size:</strong> ~92 MB (q8 quantized)
+                    </li>
+                    <li>
+                        <strong className="text-gray-300">Works on iPhone:</strong> Yes, iOS 17+ Safari with WebGPU
+                    </li>
+                    <li>
+                        <strong className="text-gray-300">Generation Speed:</strong> ~10x realtime
+                    </li>
+                </ul>
+            </div>
+
+            {/* Model Status & Download */}
+            <div className="bg-white/5 rounded-lg p-6 border border-white/10 space-y-4">
+                <div className="flex items-center justify-between">
+                    <div>
+                        <h4 className="text-xs text-purple-400 uppercase tracking-widest font-bold">TTS Model Status</h4>
+                        <p className="text-sm text-gray-400 mt-1">
+                            {isReady ? '✓ Model loaded and ready' : isLoading ? 'Loading...' : 'Model not loaded'}
+                        </p>
+                    </div>
+                    {!isReady && (
+                        <button
+                            onClick={handleDownloadModel}
+                            disabled={isLoading || isDownloading}
+                            className={clsx(
+                                "px-4 py-2 rounded text-sm font-bold transition-all",
+                                isLoading || isDownloading
+                                    ? "bg-gray-700 text-gray-400 cursor-not-allowed"
+                                    : "bg-purple-600 hover:bg-purple-500 text-white"
+                            )}
+                        >
+                            {isLoading ? 'LOADING...' : 'DOWNLOAD MODEL'}
+                        </button>
+                    )}
+                </div>
+                
+                {(isLoading || isDownloading) && (
+                    <div className="space-y-2">
+                        <div className="flex justify-between text-xs text-gray-400">
+                            <span>{loadStatus}</span>
+                            <span>{Math.round(loadProgress * 100)}%</span>
+                        </div>
+                        <div className="w-full bg-gray-800 h-1.5 rounded overflow-hidden">
+                            <div
+                                className="bg-purple-500 h-full transition-all duration-300"
+                                style={{ width: `${loadProgress * 100}%` }}
+                            />
+                        </div>
+                    </div>
+                )}
+            </div>
+
+            {/* Voice Selection */}
+            <div className="bg-white/5 rounded-lg p-6 border border-white/10 space-y-4">
+                <label className="block text-xs text-purple-400 uppercase tracking-widest font-bold">Voice</label>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                    {VOICES.filter(v => v.quality !== 'D').map(v => (
+                        <button
+                            key={v.id}
+                            onClick={() => setVoice(v.id)}
+                            className={clsx(
+                                "p-4 rounded border text-left transition-all",
+                                voice === v.id
+                                    ? "bg-purple-600 text-white border-purple-400"
+                                    : "bg-black/20 border-white/10 text-gray-400 hover:border-purple-400/50 hover:text-white"
+                            )}
+                        >
+                            <div className="flex items-center gap-2">
+                                <span className="font-bold text-sm">{v.name}</span>
+                                <span className="text-[10px] opacity-60">
+                                    {v.gender === 'female' ? '♀' : '♂'}
+                                </span>
+                            </div>
+                            <div className="text-[10px] opacity-70 mt-1">
+                                {v.accent === 'british' ? '🇬🇧 British' : '🇺🇸 American'}
+                                {v.description && ` · ${v.description}`}
+                            </div>
+                        </button>
+                    ))}
+                </div>
+            </div>
+
+            {/* Speed & Volume */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="bg-white/5 rounded-lg p-6 border border-white/10 space-y-4">
+                    <div className="flex justify-between">
+                        <label className="text-xs text-purple-400 uppercase tracking-widest font-bold">Speech Speed</label>
+                        <span className="text-purple-400 font-bold">{speed}x</span>
+                    </div>
+                    <input
+                        type="range"
+                        min="0.5"
+                        max="2"
+                        step="0.25"
+                        value={speed}
+                        onChange={(e) => setSpeed(parseFloat(e.target.value))}
+                        className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-purple-500"
+                    />
+                    <p className="text-xs text-gray-500 italic">
+                        Slower speeds are more natural, faster speeds help cover more ground.
+                    </p>
+                </div>
+                
+                <div className="bg-white/5 rounded-lg p-6 border border-white/10 space-y-4">
+                    <div className="flex justify-between">
+                        <label className="text-xs text-purple-400 uppercase tracking-widest font-bold">Volume</label>
+                        <span className="text-purple-400 font-bold">{Math.round(volume * 100)}%</span>
+                    </div>
+                    <input
+                        type="range"
+                        min="0"
+                        max="1"
+                        step="0.1"
+                        value={volume}
+                        onChange={(e) => setVolume(parseFloat(e.target.value))}
+                        className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-purple-500"
+                    />
+                </div>
+            </div>
+
+            {/* Model Quality Selection */}
+            <div className="bg-white/5 rounded-lg p-6 border border-white/10 space-y-4">
+                <label className="block text-xs text-purple-400 uppercase tracking-widest font-bold">Model Quality</label>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    {(Object.keys(TTS_MODEL_OPTIONS) as TTSQuantization[]).filter(q => ['q8', 'fp16', 'fp32'].includes(q)).map(q => {
+                        const info = TTS_MODEL_OPTIONS[q];
+                        return (
+                            <button
+                                key={q}
+                                onClick={() => setQuantization(q)}
+                                className={clsx(
+                                    "p-4 rounded border text-left transition-all",
+                                    quantization === q
+                                        ? "bg-purple-600 text-white border-purple-400"
+                                        : "bg-black/20 border-white/10 text-gray-400 hover:border-purple-400/50 hover:text-white"
+                                )}
+                            >
+                                <div className="font-bold text-sm uppercase">{q}</div>
+                                <div className="text-[10px] opacity-70 mt-1">
+                                    {Math.round(info.sizeBytes / 1_000_000)} MB
+                                </div>
+                                <div className="text-[10px] opacity-50 mt-0.5">
+                                    {info.quality} quality
+                                    {info.recommended && ' ⭐'}
+                                </div>
+                            </button>
+                        );
+                    })}
+                </div>
+                <p className="text-xs text-gray-500 italic">
+                    q8 recommended: Best balance of quality and size. fp32/fp16 for maximum quality.
+                </p>
             </div>
         </div>
     );

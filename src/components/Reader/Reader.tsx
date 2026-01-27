@@ -3,7 +3,9 @@ import { type BookDocType, type ChapterDocType, type ReadingStateDocType, initDB
 import { getDisplayPlugin, type DisplayPlugin, getVelocireaderORPIndex } from '../../core/rsvp/display';
 import { getVisualProcessingDelay, getSpeedFactor } from '../../core/rsvp/timing';
 import { Sidebar } from './Sidebar';
+import { TTSPlayer } from './TTSPlayer';
 import { useSettingsStore } from '../../core/store/settings';
+import { useTTSStore } from '../../core/store/tts';
 
 import { scheduler } from '../../core/ingest/scheduler';
 import { processChaptersInBackground } from '../../core/ingest/pipeline';
@@ -67,6 +69,10 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
     const [inspectingChapterId, setInspectingChapterId] = useState<string | null>(null);
     const inspectingChapter = chapters.find(c => c.id === inspectingChapterId);
     const [now, setNow] = useState(Date.now()); // Force re-render for live time updates
+
+    // TTS State
+    const [showTTSPlayer, setShowTTSPlayer] = useState(false);
+    const ttsPlaybackState = useTTSStore((s) => s.playbackState);
 
     const prevContainerRef = useRef<HTMLDivElement>(null);
     const nextContainerRef = useRef<HTMLDivElement>(null);
@@ -874,6 +880,27 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
                 </div>
 
                 <div className="pointer-events-auto flex items-start gap-3">
+                    {/* TTS / Listen Button */}
+                    <button
+                        onClick={() => setShowTTSPlayer(!showTTSPlayer)}
+                        className={`p-3 backdrop-blur-md rounded-full border transition-colors shadow-lg ${
+                            ttsPlaybackState === 'playing' 
+                                ? 'bg-purple-600/80 border-purple-400 text-white' 
+                                : showTTSPlayer
+                                    ? 'bg-purple-900/60 border-purple-500/50 text-purple-300'
+                                    : 'bg-black/40 border-white/10 text-white/70 hover:bg-white/10 hover:text-white'
+                        }`}
+                        title="Listen (Text to Speech)"
+                    >
+                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} 
+                                d="M12 3c-4.97 0-9 4.03-9 9v7a2 2 0 002 2h1a2 2 0 002-2v-3a2 2 0 00-2-2H5v-2c0-3.87 3.13-7 7-7s7 3.13 7 7v2h-1a2 2 0 00-2 2v3a2 2 0 002 2h1a2 2 0 002-2v-7c0-4.97-4.03-9-9-9z" />
+                        </svg>
+                        {ttsPlaybackState === 'playing' && (
+                            <span className="absolute -top-1 -right-1 w-3 h-3 bg-green-500 rounded-full animate-pulse" />
+                        )}
+                    </button>
+                    
                     {/* Chapters Button */}
                     <button
                         onClick={() => setShowChapters(!showChapters)}
@@ -1132,6 +1159,23 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
                         </div>
                     </div>
                 </div>
+            )}
+
+            {/* TTS Player */}
+            {showTTSPlayer && currentChapter && (
+                <TTSPlayer
+                    words={currentChapter.content}
+                    currentWordIndex={currentWordIndex}
+                    onPositionChange={(wordIndex) => {
+                        // Sync TTS position to RSVP reader
+                        indexRef.current = wordIndex;
+                        setCurrentWordIndex(wordIndex);
+                        renderWord(wordIndex, wordsRef.current);
+                    }}
+                    bookId={book.id}
+                    chapterId={currentChapter.id}
+                    compact={false}
+                />
             )}
 
         </div>
