@@ -7,7 +7,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
-export type TTSPlaybackState = 'idle' | 'loading' | 'playing' | 'paused' | 'generating';
+export type TTSPlaybackState = 'idle' | 'loading' | 'preparing' | 'playing' | 'paused' | 'generating';
 
 export interface TTSPosition {
     bookId: string;

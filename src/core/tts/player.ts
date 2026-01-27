@@ -17,6 +17,8 @@ export interface AudioPlayerOptions {
     onSentenceChange?: (sentenceIndex: number) => void;
     onEnded?: () => void;
     onError?: (error: Error) => void;
+    onAudioQueued?: (sentenceIndex: number) => void;
+    onBufferLow?: () => void;
 }
 
 class TTSAudioPlayer {
@@ -89,11 +91,16 @@ class TTSAudioPlayer {
             this.audioQueue.set(sentence.index, { buffer, sentence });
             this.totalDuration += result.duration;
             
+            console.log(`[TTS Player] Queued sentence ${sentence.index} (${result.duration.toFixed(2)}s), queue size: ${this.audioQueue.size}`);
+            
             // Store sentence for seeking
             if (!this.sentences.find(s => s.index === sentence.index)) {
                 this.sentences.push(sentence);
                 this.sentences.sort((a, b) => a.index - b.index);
             }
+            
+            // Notify that audio is available
+            this.options.onAudioQueued?.(sentence.index);
             
             // Clean up old buffers to prevent memory bloat
             this.cleanupOldBuffers();
@@ -311,6 +318,12 @@ class TTSAudioPlayer {
         // Find the queue item at current time
         const queueItem = this.findQueueItemAtTime(this.currentTime);
         if (!queueItem) {
+            // Check if we're waiting for more audio to be generated
+            console.log(`[TTS Player] No audio available at time ${this.currentTime.toFixed(2)}, queue size: ${this.audioQueue.size}`);
+            
+            // Notify that buffer is low - this gives the UI a chance to generate more
+            this.options.onBufferLow?.();
+            
             // End of audio
             this.isPlaying = false;
             useTTSStore.getState().setPlaybackState('idle');
@@ -319,6 +332,7 @@ class TTSAudioPlayer {
         }
         
         const { buffer, sentence } = queueItem;
+        console.log(`[TTS Player] Playing sentence ${sentence.index}: "${sentence.text.slice(0, 30)}..."`);
         
         // Calculate offset into the buffer
         const sentenceStartTime = sentence.audioStartTime ?? 0;
@@ -339,6 +353,13 @@ class TTSAudioPlayer {
             if (this.isPlaying && source === this.currentSource) {
                 this.currentSentenceIndex++;
                 this.options.onSentenceChange?.(this.currentSentenceIndex);
+                
+                // Check if buffer is running low (less than 2 sentences ahead)
+                const aheadCount = this.countSentencesAhead();
+                if (aheadCount < 2) {
+                    console.log(`[TTS Player] Buffer low: only ${aheadCount} sentences ahead`);
+                    this.options.onBufferLow?.();
+                }
                 
                 // Clean up old buffers after advancing
                 this.cleanupOldBuffers();
@@ -365,25 +386,59 @@ class TTSAudioPlayer {
         }
     }
     
+    /**
+     * Count how many sentences are buffered ahead of current position
+     */
+    private countSentencesAhead(): number {
+        let count = 0;
+        for (const [idx] of this.audioQueue) {
+            if (idx > this.currentSentenceIndex) {
+                count++;
+            }
+        }
+        return count;
+    }
+    
     private findQueueItemAtTime(time: number): { buffer: AudioBuffer; sentence: SentenceBoundary } | null {
-        // Search in the Map by checking each item's timing
-        for (const [, item] of this.audioQueue) {
+        // If queue is empty, nothing to play
+        if (this.audioQueue.size === 0) {
+            console.log('[TTS Player] findQueueItemAtTime: Queue is empty');
+            return null;
+        }
+        
+        // Get sorted items for predictable ordering
+        const sortedItems = Array.from(this.audioQueue.values())
+            .sort((a, b) => a.sentence.index - b.sentence.index);
+        
+        // If time is at the very start (0 or close to it), return the first available item
+        if (time < 0.1) {
+            console.log(`[TTS Player] findQueueItemAtTime: time=${time.toFixed(2)}, returning first item (sentence ${sortedItems[0]?.sentence.index})`);
+            return sortedItems[0] ?? null;
+        }
+        
+        // Search for item containing this time
+        for (const item of sortedItems) {
             const startTime = item.sentence.audioStartTime ?? 0;
-            const endTime = item.sentence.audioEndTime ?? 0;
+            const endTime = item.sentence.audioEndTime ?? Infinity;
             
             if (time >= startTime && time < endTime) {
                 return item;
             }
         }
         
-        // Return first unplayed item (by sentence index order)
-        const sortedItems = Array.from(this.audioQueue.values())
-            .sort((a, b) => a.sentence.index - b.sentence.index);
-        
-        return sortedItems.find(item => {
+        // Return first item that starts after current time (for seeking ahead)
+        const nextItem = sortedItems.find(item => {
             const startTime = item.sentence.audioStartTime ?? 0;
             return startTime >= time;
-        }) ?? null;
+        });
+        
+        if (nextItem) {
+            return nextItem;
+        }
+        
+        // If we're past all audio, return null (playback should end)
+        console.log(`[TTS Player] findQueueItemAtTime: No item found for time ${time.toFixed(2)}`);
+        return null;
     }
     
     private findSentenceIndexAtTime(time: number): number {
