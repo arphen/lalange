@@ -14,10 +14,12 @@ export const SyncPage: React.FC = () => {
     const room = searchParams.get('room');
     const key = searchParams.get('key');
     const bookId = searchParams.get('bookId');
+    
+    // Validate params outside of effect
+    const hasValidParams = Boolean(room && key);
 
     useEffect(() => {
-        if (!room || !key) {
-            setError('Missing sync parameters (room or key).');
+        if (!hasValidParams || !room || !key) {
             return;
         }
 
@@ -68,7 +70,23 @@ export const SyncPage: React.FC = () => {
             replicationStatesRef.current.forEach(rs => rs.cancel());
             replicationStatesRef.current = [];
         };
-    }, [room, key, bookId]);
+    }, [hasValidParams, room, key, bookId]);
+
+    // Show error for invalid params (outside of effect)
+    if (!hasValidParams) {
+        return (
+            <div className="flex flex-col items-center justify-center h-screen bg-basalt text-white p-4">
+                <div className="text-magma-vent text-xl font-mono mb-4">ERROR</div>
+                <p className="mb-4 text-center">Missing sync parameters (room or key).</p>
+                <button 
+                    onClick={() => navigate('/')}
+                    className="px-6 py-2 border border-white/20 hover:bg-white/10 font-mono text-sm"
+                >
+                    RETURN HOME
+                </button>
+            </div>
+        );
+    }
 
     const handleStartReading = () => {
         if (bookId) {

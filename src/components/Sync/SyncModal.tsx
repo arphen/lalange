@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import type { BookDocType } from '../../core/sync/db';
 import { generateUUID } from '../../utils/uuid';
@@ -11,36 +11,37 @@ interface SyncModalProps {
 }
 
 export const SyncModal: React.FC<SyncModalProps> = ({ isOpen, onClose, book }) => {
-    const [status, setStatus] = useState<string>('Initializing...');
-    const [qrUrl, setQrUrl] = useState<string>('');
+    const [status, setStatus] = useState<string>('Waiting for connection...');
     const replicationStatesRef = useRef<ReplicationState[]>([]);
+    
+    // Generate stable room/secret IDs per book session
+    const syncIds = useMemo(() => {
+        if (!book) return null;
+        return { roomId: generateUUID(), secret: generateUUID() };
+    }, [book]);
+    
+    // Compute QR URL without setState
+    const qrUrl = useMemo(() => {
+        if (!book || !syncIds) return '';
+        const url = new URL(window.location.origin);
+        url.pathname = '/sync';
+        url.searchParams.set('room', syncIds.roomId);
+        url.searchParams.set('key', syncIds.secret);
+        url.searchParams.set('bookId', book.id);
+        return url.toString();
+    }, [book, syncIds]);
 
     useEffect(() => {
-        if (!isOpen || !book) {
+        if (!isOpen || !book || !syncIds) {
             // Cleanup on close
             replicationStatesRef.current.forEach(rs => rs.cancel());
             replicationStatesRef.current = [];
             return;
         }
 
-        const roomId = generateUUID();
-        const secret = generateUUID();
-        
-        // Construct the URL that the phone will open
-        const url = new URL(window.location.origin);
-        url.pathname = '/sync';
-        url.searchParams.set('room', roomId);
-        url.searchParams.set('key', secret);
-        // We can pass the book ID to automatically open it after sync, 
-        // essentially "Deep Linking" into the book reader
-        url.searchParams.set('bookId', book.id);
-        
-        setQrUrl(url.toString());
-        setStatus('Waiting for connection...');
-
         const start = async () => {
             try {
-                const states = await startBookSync(roomId, secret, (isActive) => {
+                const states = await startBookSync(syncIds.roomId, syncIds.secret, (isActive) => {
                     setStatus(isActive ? 'Client Connected. Syncing...' : 'Waiting for connection...');
                 }, (err) => {
                     console.error('Sync Error:', err);
@@ -58,7 +59,7 @@ export const SyncModal: React.FC<SyncModalProps> = ({ isOpen, onClose, book }) =
             replicationStatesRef.current.forEach(rs => rs.cancel());
             replicationStatesRef.current = [];
         };
-    }, [isOpen, book]);
+    }, [isOpen, book, syncIds]);
 
     if (!isOpen || !book) return null;
 
