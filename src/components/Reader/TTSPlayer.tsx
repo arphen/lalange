@@ -18,9 +18,8 @@ import {
 } from '../../core/tts';
 import { ttsPlayer } from '../../core/tts/player';
 
-// Configuration for incremental generation
-const SENTENCES_AHEAD_BUFFER = 5; // Generate this many sentences ahead of current
-const CHECK_BUFFER_INTERVAL_MS = 500; // How often to check if we need more audio (reduced from 2000)
+// Configuration
+const SENTENCES_AHEAD_BUFFER = 5; // Generate this many sentences ahead
 
 interface TTSPlayerProps {
     /** The words to speak */
@@ -53,10 +52,10 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
         volume,
         speed,
         voice,
+        currentWordIndex: ttsWordIndex,
         setVolume,
         setSpeed,
         setVoice,
-        setDuration,
     } = useTTSStore();
     
     const { current: currentTimeStr, duration: durationStr } = useFormattedTime();
@@ -70,31 +69,31 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
     const isGeneratingRef = useRef(false);
     const abortControllerRef = useRef<AbortController | null>(null);
     const wordsRef = useRef<string[]>(words);
-    const bufferCheckIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-    const currentGenerationStartIndexRef = useRef<number>(0);
-    const pendingPlayRef = useRef(false); // Track if we're waiting to start playback
-    const [isPreparing, setIsPreparing] = useState(false);
+    const startSentenceIndexRef = useRef<number>(0);
+    
+    // Sync TTS word position to reader
+    useEffect(() => {
+        if (playbackState === 'playing' && onPositionChange && ttsWordIndex > 0) {
+            onPositionChange(ttsWordIndex);
+        }
+    }, [ttsWordIndex, playbackState, onPositionChange]);
     
     // Split words into sentences on mount/change
     useEffect(() => {
-        // Detect if words actually changed (chapter navigation)
         const wordsChanged = wordsRef.current !== words && 
-            (wordsRef.current.length !== words.length || 
-             wordsRef.current[0] !== words[0]);
+            (wordsRef.current.length !== words.length || wordsRef.current[0] !== words[0]);
         
         if (wordsChanged) {
-            console.log('[TTS UI] Words changed, clearing queue and stopping generation');
+            console.log('[TTS UI] Words changed, resetting');
             
-            // Stop any ongoing generation
+            // Stop generation
             if (abortControllerRef.current) {
                 abortControllerRef.current.abort();
             }
             isGeneratingRef.current = false;
             generatorRef.current = null;
-            pendingPlayRef.current = false;
-            setIsPreparing(false);
             
-            // Clear the audio queue to free memory
+            // Clear player
             ttsPlayer.clearQueue();
             ttsPlayer.stop();
         }
@@ -120,73 +119,50 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
     // Cleanup on unmount
     useEffect(() => {
         return () => {
-            console.log('[TTS UI] Unmounting, cleaning up resources');
-            
-            // Stop buffer check interval
-            if (bufferCheckIntervalRef.current) {
-                clearInterval(bufferCheckIntervalRef.current);
-            }
-            
-            // Abort any ongoing generation
             if (abortControllerRef.current) {
                 abortControllerRef.current.abort();
             }
             isGeneratingRef.current = false;
-            pendingPlayRef.current = false;
-            
-            // Stop playback and clear queue
             ttsPlayer.stop();
             ttsPlayer.clearQueue();
         };
     }, []);
     
-    // Generate and queue audio incrementally (only sentences ahead of current)
-    const startGeneration = useCallback(async (fromSentenceIndex: number = 0, shouldAutoPlay: boolean = false) => {
+    // Generate audio starting from a sentence index
+    const generateFrom = useCallback(async (fromSentenceIndex: number) => {
         if (isGeneratingRef.current || sentences.length === 0) return;
+        if (fromSentenceIndex >= sentences.length) return;
         
-        // Create abort controller for this generation session
+        // Create abort controller
         abortControllerRef.current = new AbortController();
         const signal = abortControllerRef.current.signal;
         
         isGeneratingRef.current = true;
-        currentGenerationStartIndexRef.current = fromSentenceIndex;
+        useTTSStore.getState().setGenerating(true);
         
-        // Mark that we want to play as soon as audio is ready
-        if (shouldAutoPlay) {
-            pendingPlayRef.current = true;
-            setIsPreparing(true);
-            useTTSStore.getState().setPlaybackState('preparing');
-        }
-        
-        // Only generate a window of sentences, not all of them
+        // Generate a window of sentences
         const endIndex = Math.min(fromSentenceIndex + SENTENCES_AHEAD_BUFFER, sentences.length);
         const sentencesToGenerate = sentences.slice(fromSentenceIndex, endIndex);
         
-        console.log(`[TTS UI] Starting generation from sentence ${fromSentenceIndex} to ${endIndex - 1} (${sentencesToGenerate.length} sentences)`);
+        console.log(`[TTS UI] Generating sentences ${fromSentenceIndex} to ${endIndex - 1}`);
         
         generatorRef.current = streamSpeech(sentencesToGenerate, {
             voice,
             speed,
             onSentenceStart: (sentence) => {
                 if (signal.aborted) return;
-                console.log(`[TTS] Generating sentence ${sentence.index}: "${sentence.text.slice(0, 50)}..."`);
+                console.log(`[TTS] Generating: "${sentence.text.slice(0, 50)}..."`);
             },
             onSentenceComplete: (sentence, audio) => {
                 if (signal.aborted) return;
                 ttsPlayer.queueAudio(audio, sentence);
-                setDuration(ttsPlayer.getState().duration);
             },
         });
         
         try {
-            // Generate all sentences in the window
             // eslint-disable-next-line @typescript-eslint/no-unused-vars
             for await (const _ of generatorRef.current) {
-                if (signal.aborted) {
-                    console.log('[TTS UI] Generation aborted');
-                    break;
-                }
-                // Playback is now triggered by onAudioQueued callback, not here
+                if (signal.aborted) break;
             }
         } catch (err) {
             if (!signal.aborted) {
@@ -194,51 +170,48 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
             }
         } finally {
             isGeneratingRef.current = false;
+            useTTSStore.getState().setGenerating(false);
             generatorRef.current = null;
         }
-    }, [sentences, voice, speed, setDuration]);
+    }, [sentences, voice, speed]);
     
-    // Check if we need to generate more audio ahead
-    const checkAndGenerateAhead = useCallback(async () => {
-        if (isGeneratingRef.current || sentences.length === 0) return;
-        
-        const currentIdx = ttsPlayer.getState().currentSentenceIndex;
-        const neededAheadIdx = currentIdx + SENTENCES_AHEAD_BUFFER;
-        
-        // Check if we have audio for sentences ahead
-        let needsMoreAudio = false;
-        let firstMissingIdx = -1;
-        for (let i = currentIdx; i < Math.min(neededAheadIdx, sentences.length); i++) {
-            if (!ttsPlayer.hasAudioForSentence(i)) {
-                needsMoreAudio = true;
-                firstMissingIdx = i;
-                break;
-            }
-        }
-        
-        if (needsMoreAudio && firstMissingIdx < sentences.length) {
-            console.log(`[TTS UI] Buffer running low at sentence ${currentIdx}, generating from ${firstMissingIdx}`);
-            await startGeneration(firstMissingIdx, false);
-        }
-    }, [sentences, startGeneration]);
-    
-    // Set up interval to check if we need more audio
+    // Set up player callbacks
     useEffect(() => {
-        if (playbackState === 'playing') {
-            bufferCheckIntervalRef.current = setInterval(checkAndGenerateAhead, CHECK_BUFFER_INTERVAL_MS);
-        } else {
-            if (bufferCheckIntervalRef.current) {
-                clearInterval(bufferCheckIntervalRef.current);
-                bufferCheckIntervalRef.current = null;
-            }
-        }
-        
-        return () => {
-            if (bufferCheckIntervalRef.current) {
-                clearInterval(bufferCheckIntervalRef.current);
-            }
-        };
-    }, [playbackState, checkAndGenerateAhead]);
+        ttsPlayer.setOptions({
+            onSentenceChange: (sentenceIndex) => {
+                const sentence = sentences[sentenceIndex];
+                if (sentence && onPositionChange) {
+                    onPositionChange(sentence.startWordIndex);
+                }
+            },
+            onBufferLow: (currentSentenceIndex) => {
+                // Generate more audio ahead
+                const nextToGenerate = currentSentenceIndex + 1;
+                if (!isGeneratingRef.current && nextToGenerate < sentences.length) {
+                    // Find first sentence without audio
+                    let firstMissing = nextToGenerate;
+                    while (firstMissing < sentences.length && ttsPlayer.hasAudioForSentence(firstMissing)) {
+                        firstMissing++;
+                    }
+                    if (firstMissing < sentences.length) {
+                        console.log(`[TTS UI] Buffer low, generating from ${firstMissing}`);
+                        generateFrom(firstMissing);
+                    }
+                }
+            },
+            onAudioQueued: (sentenceIndex, queueSize) => {
+                // If this is the first audio and we're waiting to start, play now
+                if (sentenceIndex === startSentenceIndexRef.current && playbackState === 'preparing') {
+                    console.log(`[TTS UI] First audio ready, starting playback`);
+                    ttsPlayer.play(sentenceIndex);
+                }
+                console.log(`[TTS UI] Audio queued: sentence ${sentenceIndex}, queue size: ${queueSize}`);
+            },
+            onEnded: () => {
+                console.log('[TTS] Playback ended');
+            },
+        });
+    }, [sentences, onPositionChange, generateFrom, playbackState]);
     
     // Handle play/pause toggle
     const handleToggle = useCallback(async () => {
@@ -246,80 +219,43 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
             await handleInit();
         }
         
-        if (playbackState === 'idle' || playbackState === 'loading' || playbackState === 'preparing') {
+        if (playbackState === 'idle' || playbackState === 'preparing') {
             // Find sentence containing current word
             const sentenceIndex = sentences.findIndex(
                 s => currentWordIndex >= s.startWordIndex && currentWordIndex <= s.endWordIndex
             );
-            // Pass shouldAutoPlay=true so playback starts as soon as first sentence is ready
-            await startGeneration(Math.max(0, sentenceIndex), true);
-        } else {
-            await ttsPlayer.toggle();
+            const startIdx = Math.max(0, sentenceIndex);
+            startSentenceIndexRef.current = startIdx;
+            
+            // Show preparing state
+            useTTSStore.getState().setPlaybackState('preparing');
+            
+            // Start generating
+            await generateFrom(startIdx);
+            
+            // If audio is already queued, start playing
+            if (ttsPlayer.hasAudioForSentence(startIdx)) {
+                await ttsPlayer.play(startIdx);
+            }
+        } else if (playbackState === 'playing' || playbackState === 'generating') {
+            ttsPlayer.pause();
+        } else if (playbackState === 'paused') {
+            await ttsPlayer.play();
         }
-    }, [isReady, playbackState, sentences, currentWordIndex, handleInit, startGeneration]);
-    
-    // Sync word position from audio playback and handle auto-play when audio is ready
-    useEffect(() => {
-        ttsPlayer.setOptions({
-            onTimeUpdate: () => {
-                if (onPositionChange) {
-                    const wordIndex = ttsPlayer.getCurrentWordIndex();
-                    onPositionChange(wordIndex);
-                }
-            },
-            onSentenceChange: (sentenceIndex) => {
-                // Update reading position
-                const sentence = sentences[sentenceIndex];
-                if (sentence && onPositionChange) {
-                    onPositionChange(sentence.startWordIndex);
-                }
-            },
-            onEnded: () => {
-                console.log('[TTS] Playback ended');
-                setIsPreparing(false);
-                pendingPlayRef.current = false;
-            },
-            onAudioQueued: async (sentenceIndex) => {
-                // If we were waiting to play and this is the first sentence, start playback
-                if (pendingPlayRef.current && sentenceIndex === currentGenerationStartIndexRef.current) {
-                    console.log(`[TTS UI] First audio ready (sentence ${sentenceIndex}), starting playback`);
-                    pendingPlayRef.current = false;
-                    setIsPreparing(false);
-                    await ttsPlayer.play();
-                }
-            },
-            onBufferLow: () => {
-                // Trigger more generation when buffer is running low
-                console.log('[TTS UI] Buffer low callback triggered');
-                checkAndGenerateAhead();
-            },
-        });
-    }, [sentences, onPositionChange, checkAndGenerateAhead]);
+    }, [isReady, playbackState, sentences, currentWordIndex, handleInit, generateFrom]);
     
     // Handle stop
     const handleStop = useCallback(() => {
-        // Abort any ongoing generation
         if (abortControllerRef.current) {
             abortControllerRef.current.abort();
         }
         isGeneratingRef.current = false;
-        pendingPlayRef.current = false;
-        setIsPreparing(false);
         
         ttsPlayer.stop();
         ttsPlayer.clearQueue();
         
-        console.log(`[TTS UI] Stopped. Queue size: ${ttsPlayer.getQueueSize()}`);
+        console.log('[TTS UI] Stopped');
     }, []);
-    
-    // Handle seek from slider
-    const handleSeek = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-        const time = parseFloat(e.target.value);
-        ttsPlayer.seekTo(time);
-    }, []);
-    
-    // Calculate progress
-    const progress = useTTSStore(s => s.duration > 0 ? (s.currentTime / s.duration) * 100 : 0);
     
     // Voice options
     const voices = listVoices();
@@ -361,48 +297,31 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
         </svg>
     );
     
-    // Render states
+    // Button content
     const getButtonContent = () => {
-        if (isLoading) {
-            return <LoadingSpinner />;
-        }
-        if (isPreparing || (isGenerating && playbackState !== 'playing')) {
-            return <LoadingSpinner />;
-        }
-        if (playbackState === 'playing') {
-            return <PauseIcon />;
-        }
+        if (isLoading) return <LoadingSpinner />;
+        if (playbackState === 'preparing') return <LoadingSpinner />;
+        if (playbackState === 'generating') return <LoadingSpinner />;
+        if (playbackState === 'playing') return <PauseIcon />;
         return <PlayIcon />;
     };
     
+    // Status text
     const getStatusText = () => {
-        if (isLoading) {
-            return `${loadStatus} (${Math.round(loadProgress * 100)}%)`;
-        }
-        if (isPreparing) {
-            return 'Preparing audio...';
-        }
-        // 'generating' state when isPlaying indicates buffer underrun (waiting for audio)
-        if (playbackState === 'generating') {
-            return `${currentTimeStr} / ${durationStr} (buffering...)`;
-        }
-        if (isGenerating && playbackState === 'playing') {
-            return `${currentTimeStr} / ${durationStr} (buffering...)`;
-        }
-        if (isGenerating) {
-            return 'Generating audio...';
-        }
+        if (isLoading) return `${loadStatus} (${Math.round(loadProgress * 100)}%)`;
+        if (playbackState === 'preparing') return 'Preparing audio...';
+        if (playbackState === 'generating') return `${currentTimeStr} / ${durationStr} (buffering...)`;
         if (playbackState === 'playing') {
+            if (isGenerating) return `${currentTimeStr} / ${durationStr} (buffering...)`;
             return `${currentTimeStr} / ${durationStr}`;
         }
-        if (playbackState === 'paused') {
-            return `Paused at ${currentTimeStr}`;
-        }
-        if (error) {
-            return error;
-        }
+        if (playbackState === 'paused') return `Paused at ${currentTimeStr}`;
+        if (error) return error;
         return 'Tap to listen';
     };
+    
+    // Is button currently showing action?
+    const isButtonActive = playbackState === 'playing' || playbackState === 'generating';
     
     // Compact player (minimized)
     if (compact && !isExpanded) {
@@ -448,7 +367,7 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
                         onClick={handleToggle}
                         disabled={isLoading}
                         className={`flex items-center justify-center w-14 h-14 rounded-full transition-all duration-300 ${
-                            playbackState === 'playing'
+                            isButtonActive
                                 ? 'bg-purple-600 hover:bg-purple-500 shadow-lg shadow-purple-500/30'
                                 : 'bg-white/10 hover:bg-white/20'
                         } disabled:opacity-50 disabled:cursor-not-allowed`}
@@ -475,30 +394,6 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
                         </button>
                     )}
                 </div>
-                
-                {/* Progress Bar */}
-                {(playbackState === 'playing' || playbackState === 'paused') && (
-                    <div className="space-y-1">
-                        <input
-                            type="range"
-                            min="0"
-                            max={useTTSStore.getState().duration || 100}
-                            value={useTTSStore.getState().currentTime}
-                            onChange={handleSeek}
-                            className="w-full h-1 bg-white/20 rounded-full appearance-none cursor-pointer
-                                       [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 
-                                       [&::-webkit-slider-thumb]:bg-purple-500 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:cursor-pointer
-                                       [&::-webkit-slider-thumb]:shadow-lg [&::-webkit-slider-thumb]:shadow-purple-500/50"
-                            style={{
-                                background: `linear-gradient(to right, rgb(168, 85, 247) ${progress}%, rgba(255,255,255,0.2) ${progress}%)`
-                            }}
-                        />
-                        <div className="flex justify-between text-[10px] text-white/40 font-mono">
-                            <span>{currentTimeStr}</span>
-                            <span>{durationStr}</span>
-                        </div>
-                    </div>
-                )}
                 
                 {/* Voice & Speed */}
                 <div className="flex gap-2">

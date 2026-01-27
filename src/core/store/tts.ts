@@ -32,6 +32,7 @@ interface TTSState {
     currentTime: number;
     duration: number;
     currentSentence: number;
+    currentWordIndex: number;
     volume: number;
     speed: number;
     
@@ -55,6 +56,7 @@ interface TTSState {
     setCurrentTime: (time: number) => void;
     setDuration: (duration: number) => void;
     setCurrentSentence: (index: number) => void;
+    setCurrentWordIndex: (index: number) => void;
     setVolume: (volume: number) => void;
     setSpeed: (speed: number) => void;
     
@@ -84,6 +86,7 @@ export const useTTSStore = create<TTSState>()(
             currentTime: 0,
             duration: 0,
             currentSentence: 0,
+            currentWordIndex: 0,
             volume: 1.0,
             speed: 1.0,
             
@@ -110,6 +113,7 @@ export const useTTSStore = create<TTSState>()(
             setCurrentTime: (time) => set({ currentTime: time }),
             setDuration: (duration) => set({ duration }),
             setCurrentSentence: (index) => set({ currentSentence: index }),
+            setCurrentWordIndex: (index) => set({ currentWordIndex: index }),
             setVolume: (volume) => set({ volume: Math.max(0, Math.min(1, volume)) }),
             setSpeed: (speed) => set({ speed: Math.max(0.5, Math.min(2, speed)) }),
             
