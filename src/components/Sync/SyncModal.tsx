@@ -1,6 +1,8 @@
-import React from 'react';
+import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import type { BookDocType } from '../../core/sync/db';
+import { generateUUID } from '../../utils/uuid';
+import { startBookSync, type ReplicationState } from '../../core/sync/replication';
 
 interface SyncModalProps {
     isOpen: boolean;
@@ -9,17 +11,57 @@ interface SyncModalProps {
 }
 
 export const SyncModal: React.FC<SyncModalProps> = ({ isOpen, onClose, book }) => {
-    if (!isOpen || !book) return null;
+    const [status, setStatus] = useState<string>('Waiting for connection...');
+    const replicationStatesRef = useRef<ReplicationState[]>([]);
+    
+    // Generate stable room/secret IDs per book session
+    const syncIds = useMemo(() => {
+        if (!book) return null;
+        return { roomId: generateUUID(), secret: generateUUID() };
+    }, [book]);
+    
+    // Compute QR URL without setState
+    const qrUrl = useMemo(() => {
+        if (!book || !syncIds) return '';
+        const url = new URL(window.location.origin);
+        url.pathname = '/sync';
+        url.searchParams.set('room', syncIds.roomId);
+        url.searchParams.set('key', syncIds.secret);
+        url.searchParams.set('bookId', book.id);
+        return url.toString();
+    }, [book, syncIds]);
 
-    // TODO: In the future, this will be a WebRTC handshake URL or similar.
-    // For now, we'll just encode a placeholder URL or the Book ID.
-    // The "phone exchange.md" mentions a "Scanning the QR code" which authenticates via Key Exchange.
-    // Let's assume a deep link schema for now or just the ID for testing.
-    const syncData = JSON.stringify({
-        type: 'sync-handshake',
-        bookId: book.id,
-        title: book.title
-    });
+    useEffect(() => {
+        if (!isOpen || !book || !syncIds) {
+            // Cleanup on close
+            replicationStatesRef.current.forEach(rs => rs.cancel());
+            replicationStatesRef.current = [];
+            return;
+        }
+
+        const start = async () => {
+            try {
+                const states = await startBookSync(syncIds.roomId, syncIds.secret, (isActive) => {
+                    setStatus(isActive ? 'Client Connected. Syncing...' : 'Waiting for connection...');
+                }, (err) => {
+                    console.error('Sync Error:', err);
+                    setStatus('Error connecting. Check console.');
+                });
+                replicationStatesRef.current = states;
+            } catch (e) {
+                console.error(e);
+                setStatus('Failed to start sync service.');
+            }
+        };
+        start();
+
+        return () => {
+            replicationStatesRef.current.forEach(rs => rs.cancel());
+            replicationStatesRef.current = [];
+        };
+    }, [isOpen, book, syncIds]);
+
+    if (!isOpen || !book) return null;
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
@@ -39,14 +81,29 @@ export const SyncModal: React.FC<SyncModalProps> = ({ isOpen, onClose, book }) =
                         Scan with your phone to sync "{book.title}"
                     </p>
 
-                    <div className="bg-white p-4 rounded-lg inline-block mb-6">
-                        <QRCodeSVG
-                            value={syncData}
-                            size={200}
-                            level="H"
-                            includeMargin={true}
-                        />
-                    </div>
+                    {qrUrl && (
+                        <div className="bg-white p-4 rounded-lg inline-block mb-6 relative group">
+                             <QRCodeSVG
+                                value={qrUrl}
+                                size={200}
+                                level="L"
+                                includeMargin={true}
+                            />
+                            {/* Overlay to click-to-copy or dev usage */}
+                            <a 
+                                href={qrUrl} 
+                                target="_blank" 
+                                rel="noreferrer"
+                                className="absolute inset-0 flex items-center justify-center bg-black/80 opacity-0 group-hover:opacity-100 transition-opacity text-white font-mono text-xs font-bold cursor-pointer"
+                            >
+                                OPEN LINK (DEBUG)
+                            </a>
+                        </div>
+                    )}
+
+                    <p className="text-xs font-mono text-magma-vent uppercase tracking-wider mb-2">
+                        {status}
+                    </p>
 
                     <p className="text-xs font-mono text-gray-500 max-w-xs mx-auto">
                         Keep this window open. Your phone will connect via local peer-to-peer sync.

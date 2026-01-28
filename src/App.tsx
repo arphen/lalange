@@ -9,6 +9,7 @@ import { Research } from './components/Research'
 import { Manual } from './components/Manual'
 import { ModelDownloadModal } from './components/ModelDownloadModal'
 import { Onboarding } from './components/Onboarding/Onboarding'
+import { SyncPage } from './components/Sync/SyncPage'
 import { useSettingsStore } from './core/store/settings'
 import { clsx } from 'clsx'
 import { GlobalNavSidebar, type ViewState } from './components/GlobalNavSidebar'
@@ -70,6 +71,7 @@ function App() {
 
         <Routes>
           <Route path="/" element={<Archive onOpenBook={(book) => navigate(`/reader/${book.id}`)} />} />
+          <Route path="/sync" element={<SyncPage />} />
           <Route path="/reader/:bookId" element={<ReaderPage />} />
           <Route path="/library" element={
             <div className="w-full h-full max-w-4xl p-4 flex flex-col">

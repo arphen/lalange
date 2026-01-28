@@ -212,6 +212,25 @@ export const readingStateSchema = {
                     createdAt: { type: 'number' }
                 }
             }
+        },
+        // TTS Position - syncs between devices for seamless reading/listening
+        ttsPosition: {
+            type: 'object',
+            properties: {
+                chapterId: { type: 'string' },
+                sentenceIndex: { type: 'number' },
+                wordIndex: { type: 'number' },
+                audioTime: { type: 'number' }, // Seconds into audio
+                timestamp: { type: 'number' }  // When position was saved
+            }
+        },
+        // TTS Settings - syncs user preferences
+        ttsSettings: {
+            type: 'object',
+            properties: {
+                voice: { type: 'string' },
+                speed: { type: 'number' }
+            }
         }
     },
     required: ['bookId']

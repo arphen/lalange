@@ -72,12 +72,27 @@ export type HighlightType = {
     createdAt: number;
 };
 
+export type TTSPositionType = {
+    chapterId: string;
+    sentenceIndex: number;
+    wordIndex: number;
+    audioTime: number;
+    timestamp: number;
+};
+
+export type TTSSettingsType = {
+    voice: string;
+    speed: number;
+};
+
 export type ReadingStateDocType = {
     bookId: string;
     currentChapterId?: string;
     currentWordIndex: number;
     lastRead: number;
     highlights: HighlightType[];
+    ttsPosition?: TTSPositionType;
+    ttsSettings?: TTSSettingsType;
 };
 
 export type BookCollection = RxCollection<BookDocType>;
@@ -117,7 +132,7 @@ export const initDB = async (): Promise<MyDatabase> => {
         }
 
         const db = await createRxDatabase<MyDatabaseCollections>({
-            name: 'xyz_db_v15', // Bumped version/name to force fresh DB (schema update with 'image')
+            name: 'xyz_db_v16', // Bumped version/name to force fresh DB (schema update with 'tts')
             storage,
             ignoreDuplicate: import.meta.env.DEV
         });
