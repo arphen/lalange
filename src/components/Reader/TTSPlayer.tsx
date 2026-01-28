@@ -39,6 +39,8 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
     words,
     currentWordIndex,
     onPositionChange,
+    bookId,
+    chapterId,
     compact = false,
 }) => {
     const {
@@ -71,6 +73,8 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
     const wordsRef = useRef<string[]>(words);
     const startSentenceIndexRef = useRef<number>(0);
     const hasStartedPlaybackRef = useRef(false); // Track if we've started with a valid position
+    const bookIdRef = useRef<string | undefined>(bookId);
+    const chapterIdRef = useRef<string | undefined>(chapterId);
     
     // Sync TTS word position to reader - only after playback has properly started
     useEffect(() => {
@@ -78,6 +82,38 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
             onPositionChange(ttsWordIndex);
         }
     }, [ttsWordIndex, playbackState, onPositionChange]);
+    
+    // Full reset when book or chapter changes - this MUST come before words effect
+    useEffect(() => {
+        const bookChanged = bookIdRef.current !== bookId;
+        const chapterChanged = chapterIdRef.current !== chapterId;
+        
+        if (bookChanged || chapterChanged) {
+            console.log(`[TTS UI] Book/chapter changed (book: ${bookIdRef.current} -> ${bookId}, chapter: ${chapterIdRef.current} -> ${chapterId}), full reset`);
+            
+            // Abort any ongoing generation
+            if (abortControllerRef.current) {
+                abortControllerRef.current.abort();
+                abortControllerRef.current = null;
+            }
+            
+            // Reset all refs
+            isGeneratingRef.current = false;
+            generatorRef.current = null;
+            hasStartedPlaybackRef.current = false;
+            startSentenceIndexRef.current = 0;
+            
+            // Full player reset - stop, clear queue, reset state
+            ttsPlayer.stop();
+            ttsPlayer.clearQueue();
+            
+            // Reset sentences
+            setSentences([]);
+        }
+        
+        bookIdRef.current = bookId;
+        chapterIdRef.current = chapterId;
+    }, [bookId, chapterId]);
     
     // Split words into sentences on mount/change
     useEffect(() => {
@@ -302,18 +338,27 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
         }
     }, [isReady, playbackState, sentences, currentWordIndex, handleInit, generateFrom]);
     
-    // Handle stop
+    // Handle stop - full reset of all TTS resources
     const handleStop = useCallback(() => {
+        console.log('[TTS UI] Full stop - clearing all resources');
+        
+        // Abort any ongoing generation
         if (abortControllerRef.current) {
             abortControllerRef.current.abort();
+            abortControllerRef.current = null;
         }
-        isGeneratingRef.current = false;
-        hasStartedPlaybackRef.current = false;
         
+        // Reset all generation state
+        isGeneratingRef.current = false;
+        generatorRef.current = null;
+        hasStartedPlaybackRef.current = false;
+        startSentenceIndexRef.current = 0;
+        
+        // Full player reset
         ttsPlayer.stop();
         ttsPlayer.clearQueue();
         
-        console.log('[TTS UI] Stopped');
+        console.log('[TTS UI] Stopped and cleared all resources');
     }, []);
     
     // Voice options
