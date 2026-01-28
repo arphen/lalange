@@ -18,7 +18,7 @@ export const SyncModal: React.FC<SyncModalProps> = ({ isOpen, onClose, book }) =
     const syncIds = useMemo(() => {
         if (!book) return null;
         return { roomId: generateUUID(), secret: generateUUID() };
-    }, [book]);
+    }, [book?.id]);
     
     // Compute QR URL without setState
     const qrUrl = useMemo(() => {

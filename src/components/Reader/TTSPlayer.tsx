@@ -117,8 +117,13 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
     
     // Split words into sentences on mount/change
     useEffect(() => {
-        const wordsChanged = wordsRef.current !== words && 
-            (wordsRef.current.length !== words.length || wordsRef.current[0] !== words[0]);
+        const prev = wordsRef.current;
+        // Detect changes: different length, different first word, or different last word
+        const wordsChanged = prev !== words && (
+            prev.length !== words.length || 
+            prev[0] !== words[0] || 
+            prev[prev.length - 1] !== words[words.length - 1]
+        );
         
         if (wordsChanged) {
             console.log('[TTS UI] Words changed, resetting');
