@@ -16,7 +16,7 @@ export default defineConfig(({ mode }) => {
     !isDev && VitePWA({
       registerType: 'autoUpdate',
       workbox: {
-        maximumFileSizeToCacheInBytes: 25 * 1024 * 1024, // 25MB - needed for ONNX WASM runtime
+        maximumFileSizeToCacheInBytes: 128 * 1024 * 1024, // 128MB - needed for ONNX WASM runtime and large TTS model files
       },
       manifest: {
         name: "XYZ",
