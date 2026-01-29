@@ -507,3 +507,153 @@ export const estimateBookDensity = async (bookId: string) => {
         console.log(`[Pipeline] Density estimation finished/stopped for book: ${bookId}`);
     }
 };
+
+export interface DensityProgress {
+    processedWords: number;
+    totalWords: number;
+    currentChapter: string;
+}
+
+/**
+ * Estimate density for an entire book with progress callback.
+ * Used by SyncModal to prepare book before showing QR code.
+ */
+export const estimateBookDensityWithProgress = async (
+    bookId: string,
+    onProgress?: (progress: DensityProgress) => void
+) => {
+    if (activeJobs.has(bookId)) {
+        console.log(`[Pipeline] Job already running for book ${bookId}`);
+        return;
+    }
+    activeJobs.add(bookId);
+    processingState.set(bookId, { stopped: false });
+
+    console.log(`[Pipeline] Starting density estimation with progress for book: ${bookId}`);
+    const db = await initDB();
+
+    try {
+        const book = await db.books.findOne(bookId).exec();
+        if (!book) return;
+
+        // Calculate total words across all chapters
+        const chapters: { id: string; title: string; wordCount: number }[] = [];
+        let totalWords = 0;
+
+        for (const chapterId of book.chapterIds) {
+            const chapterDoc = await db.chapters.findOne(chapterId).exec();
+            if (!chapterDoc || chapterDoc.content.length === 0) continue;
+            chapters.push({
+                id: chapterId,
+                title: chapterDoc.title,
+                wordCount: chapterDoc.content.length
+            });
+            totalWords += chapterDoc.content.length;
+        }
+
+        let globalProcessedWords = 0;
+
+        for (const chapterInfo of chapters) {
+            if (processingState.get(bookId)?.stopped) break;
+
+            const chapterDoc = await db.chapters.findOne(chapterInfo.id).exec();
+            if (!chapterDoc) continue;
+
+            // Check if chapter already has complete density
+            const existingDensities = chapterDoc.densities || [];
+            const existingProcessed = existingDensities.filter(d => d > 0).length;
+            if (existingProcessed >= chapterInfo.wordCount * 0.95) {
+                // Already processed, skip
+                globalProcessedWords += chapterInfo.wordCount;
+                onProgress?.({
+                    processedWords: globalProcessedWords,
+                    totalWords,
+                    currentChapter: chapterInfo.title
+                });
+                continue;
+            }
+
+            console.log(`[Pipeline] Estimating density for chapter: ${chapterInfo.title}`);
+            await chapterDoc.incrementalPatch({ status: 'processing' });
+
+            const allWords = chapterDoc.content;
+            const allDensities = [...(chapterDoc.densities || new Array(allWords.length).fill(0))];
+            
+            // Ensure densities array is right size
+            while (allDensities.length < allWords.length) {
+                allDensities.push(0);
+            }
+
+            let localProcessedIndex = 0;
+            const DENSITY_CHUNK_SIZE = 200;
+
+            // Find where we left off (first 0 density)
+            const startFrom = allDensities.findIndex(d => d === 0);
+            if (startFrom > 0) {
+                localProcessedIndex = startFrom;
+                globalProcessedWords += startFrom;
+            }
+
+            while (localProcessedIndex < allWords.length) {
+                if (processingState.get(bookId)?.stopped) break;
+
+                const start = localProcessedIndex;
+                let end = Math.min(start + DENSITY_CHUNK_SIZE, allWords.length);
+
+                // Align sentence boundary
+                let lookAhead = 0;
+                while (end + lookAhead < allWords.length && lookAhead < 50) {
+                    const w = allWords[end + lookAhead - 1];
+                    if (w.match(/[.!?]["']?$/)) {
+                        end += lookAhead;
+                        break;
+                    }
+                    lookAhead++;
+                }
+
+                const chunkWords = allWords.slice(start, end);
+                const { densities } = await analyzeDensityRange(chunkWords);
+
+                // Update densities
+                for (let k = 0; k < densities.length; k++) {
+                    if (start + k < allDensities.length) {
+                        allDensities[start + k] = densities[k];
+                    }
+                }
+
+                // Save periodically
+                const freshDoc = await db.chapters.findOne(chapterInfo.id).exec();
+                if (freshDoc) {
+                    await freshDoc.incrementalModify((docData) => ({
+                        ...docData,
+                        densities: [...allDensities]
+                    }));
+                }
+
+                const wordsProcessed = end - start;
+                globalProcessedWords += wordsProcessed;
+                localProcessedIndex = end;
+
+                onProgress?.({
+                    processedWords: globalProcessedWords,
+                    totalWords,
+                    currentChapter: chapterInfo.title
+                });
+            }
+
+            await chapterDoc.incrementalPatch({ status: 'ready' });
+        }
+
+        // Final progress update
+        onProgress?.({
+            processedWords: totalWords,
+            totalWords,
+            currentChapter: ''
+        });
+
+    } finally {
+        activeJobs.delete(bookId);
+        processingState.delete(bookId);
+        console.log(`[Pipeline] Density estimation with progress finished/stopped for book: ${bookId}`);
+    }
+};
