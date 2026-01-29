@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { startBookSync, type ReplicationState } from '../../core/sync/replication';
 import { initDB } from '../../core/sync/db';
@@ -19,10 +19,10 @@ export const SyncPage: React.FC = () => {
     // Validate params outside of effect
     const hasValidParams = Boolean(room && key);
     
-    const addLog = (msg: string) => {
+    const addLog = useCallback((msg: string) => {
         const timestamp = new Date().toLocaleTimeString();
         setDebugLog(prev => [...prev.slice(-9), `[${timestamp}] ${msg}`]);
-    };
+    }, []);
 
     useEffect(() => {
         if (!hasValidParams || !room || !key) {
@@ -90,7 +90,7 @@ export const SyncPage: React.FC = () => {
             }
             replicationStatesRef.current = [];
         };
-    }, [hasValidParams, room, key, bookId]);
+    }, [hasValidParams, room, key, bookId, addLog]);
 
     // Show error for invalid params (outside of effect)
     if (!hasValidParams) {

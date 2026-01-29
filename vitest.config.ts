@@ -1,9 +1,16 @@
 /// <reference types="vitest" />
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import path from 'path'
 
 export default defineConfig({
     plugins: [react()],
+    resolve: {
+        alias: {
+            // Mock virtual:pwa-register for tests
+            'virtual:pwa-register': path.resolve(__dirname, 'src/test/__mocks__/pwa-register.ts'),
+        },
+    },
     test: {
         globals: true,
         environment: 'jsdom',

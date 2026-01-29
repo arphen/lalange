@@ -135,7 +135,11 @@ export const initDB = async (): Promise<MyDatabase> => {
             name: 'xyz_db_v17', // Bumped to force fresh DB (multiInstance change)
             storage,
             ignoreDuplicate: import.meta.env.DEV,
-            multiInstance: false // Disable multi-tab leader election - required for WebRTC replication to start immediately
+            // multiInstance: false disables multi-tab leader election.
+            // This is required for WebRTC sync to start immediately without waiting for leadership.
+            // Tradeoff: Users should not open the app in multiple tabs simultaneously to avoid
+            // potential consistency issues. The app's PWA nature (standalone mode) mitigates this.
+            multiInstance: false
         });
 
         await db.addCollections({

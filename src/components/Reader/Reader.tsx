@@ -28,7 +28,12 @@ const getDensityColor = (score: number) => {
 
 export const Reader: React.FC<ReaderProps> = ({ book }) => {
     const [isPlaying, setIsPlaying] = useState(false);
-    const { wpm, setWpm, summaryWpm, displayPlugin: displayPluginId } = useSettingsStore();
+    
+    // Use individual selectors for all settings to minimize re-renders
+    const wpm = useSettingsStore((s) => s.wpm);
+    const setWpm = useSettingsStore((s) => s.setWpm);
+    const summaryWpm = useSettingsStore((s) => s.summaryWpm);
+    const displayPluginId = useSettingsStore((s) => s.displayPlugin);
     
     // River (context panel) toggles - use selectors for performance
     const riverTopEnabled = useSettingsStore((s) => s.riverTopEnabled);

@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 
 // Type for the registerSW function from vite-plugin-pwa
 type RegisterSWOptions = {
@@ -20,42 +20,58 @@ type RegisterSWOptions = {
 export const UpdatePrompt: React.FC = () => {
     const [showPrompt, setShowPrompt] = useState(false);
     const [updateFn, setUpdateFn] = useState<((reload?: boolean) => Promise<void>) | null>(null);
+    const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
     
     useEffect(() => {
         // Only run in production (PWA is disabled in dev - see vite.config.ts)
         if (import.meta.env.DEV || import.meta.env.MODE === 'test') return;
         
-        // Use Function constructor to avoid Vite's static analysis of the import
-        // This prevents the build from failing when the virtual module isn't available
-        const loadPWA = new Function('return import("virtual:pwa-register")') as () => Promise<{ registerSW: (opts: RegisterSWOptions) => (reload?: boolean) => Promise<void> }>;
+        // Use dynamic import with try/catch to handle the virtual module not existing
+        // This pattern avoids eval-like constructs while still handling test environments
+        const loadPWA = async () => {
+            try {
+                // Dynamic import of virtual module - wrapped in try/catch for environments
+                // where the module doesn't exist (tests, non-PWA builds)
+                const pwaModule = await import('virtual:pwa-register');
+                const { registerSW } = pwaModule as { registerSW: (opts: RegisterSWOptions) => (reload?: boolean) => Promise<void> };
+                
+                const updateSW = registerSW({
+                    onNeedRefresh() {
+                        // New content available, show the prompt
+                        setShowPrompt(true);
+                        setUpdateFn(() => updateSW);
+                    },
+                    onOfflineReady() {
+                        console.log('[SW] App ready for offline use');
+                    },
+                    onRegisteredSW(swUrl: string, registration: ServiceWorkerRegistration | undefined) {
+                        // Check for updates every 5 minutes
+                        if (registration) {
+                            intervalRef.current = setInterval(() => {
+                                registration.update();
+                            }, 5 * 60 * 1000);
+                        }
+                        console.log('[SW] Registered:', swUrl);
+                    },
+                    onRegisterError(error: Error) {
+                        console.error('[SW] Registration error:', error);
+                    },
+                });
+            } catch (err) {
+                // PWA module not available (e.g., in tests)
+                const error = err as Error;
+                console.debug('[SW] PWA not available:', error.message);
+            }
+        };
         
-        loadPWA().then(({ registerSW }) => {
-            const updateSW = registerSW({
-                onNeedRefresh() {
-                    // New content available, show the prompt
-                    setShowPrompt(true);
-                    setUpdateFn(() => updateSW);
-                },
-                onOfflineReady() {
-                    console.log('[SW] App ready for offline use');
-                },
-                onRegisteredSW(swUrl: string, registration: ServiceWorkerRegistration | undefined) {
-                    // Check for updates every 5 minutes
-                    if (registration) {
-                        setInterval(() => {
-                            registration.update();
-                        }, 5 * 60 * 1000);
-                    }
-                    console.log('[SW] Registered:', swUrl);
-                },
-                onRegisterError(error: Error) {
-                    console.error('[SW] Registration error:', error);
-                },
-            });
-        }).catch((err) => {
-            // PWA module not available (e.g., in tests)
-            console.debug('[SW] PWA not available:', err.message);
-        });
+        void loadPWA();
+        
+        // Cleanup interval on unmount
+        return () => {
+            if (intervalRef.current) {
+                clearInterval(intervalRef.current);
+            }
+        };
     }, []);
 
     const handleUpdate = useCallback(() => {

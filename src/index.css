@@ -99,11 +99,11 @@ body.theme-ash {
   .btn-magma {
     @apply relative px-14 py-5 rounded-full border-none text-white font-extrabold uppercase tracking-widest cursor-pointer overflow-hidden;
     background: var(--color-magma-vent);
-    /* Battery: Only animate on hover, not continuously */
-    will-change: transform, box-shadow;
   }
 
   .btn-magma:hover {
+    /* Battery: Only hint will-change on hover to save GPU memory */
+    will-change: transform, box-shadow;
     animation: magmaBreath var(--anim-breath) var(--ease-swell) infinite;
   }
 
