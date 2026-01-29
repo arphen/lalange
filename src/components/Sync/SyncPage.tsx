@@ -7,6 +7,7 @@ export const SyncPage: React.FC = () => {
     const [searchParams] = useSearchParams();
     const navigate = useNavigate();
     const [status, setStatus] = useState('Initializing...');
+    const [debugLog, setDebugLog] = useState<string[]>([]);
     const [error, setError] = useState<string | null>(null);
     const [progress, setProgress] = useState(0);
     const replicationStatesRef = useRef<ReplicationState[]>([]);
@@ -17,6 +18,11 @@ export const SyncPage: React.FC = () => {
     
     // Validate params outside of effect
     const hasValidParams = Boolean(room && key);
+    
+    const addLog = (msg: string) => {
+        const timestamp = new Date().toLocaleTimeString();
+        setDebugLog(prev => [...prev.slice(-9), `[${timestamp}] ${msg}`]);
+    };
 
     useEffect(() => {
         if (!hasValidParams || !room || !key) {
@@ -25,29 +31,39 @@ export const SyncPage: React.FC = () => {
 
         const start = async () => {
             try {
+                addLog('Starting sync...');
                 setStatus('Connecting to host...');
+                addLog(`Room: ${room.slice(0, 8)}...`);
+                addLog(`BookId: ${bookId || 'none'}`);
+                
                 const states = await startBookSync(room, key, (isActive) => {
-                    console.log('Sync active:', isActive);
+                    addLog(`Peer active: ${isActive}`);
                     setStatus(isActive ? 'Connected! Receiving data...' : 'Waiting for host...');
                 }, (err) => {
-                    console.error(err);
+                    addLog(`Error: ${err}`);
                     setError('Connection failed.');
+                }, (debugMsg) => {
+                    addLog(debugMsg);
                 });
                 replicationStatesRef.current = states;
+                addLog(`Sync started with ${states.length} pools`);
                 
                 // Monitor sync progress via DB changes?
                 // For now, simpler: check if the book exists every few seconds.
                 if (bookId) {
                     const db = await initDB();
+                    addLog('DB initialized, monitoring for book...');
                     const interval = setInterval(async () => {
                         const doc = await db.books.findOne(bookId).exec();
                         if (doc) {
                             setStatus('Book metadata received. Downloading chapters...');
+                            addLog('Book found in DB!');
                             // Check chapters count
                             const chapterCount = await db.chapters.count({ selector: { bookId } }).exec();
                             if (doc.chapterIds && chapterCount >= doc.chapterIds.length) {
                                 setStatus('Sync Complete!');
                                 setProgress(100);
+                                addLog('Sync complete!');
                                 clearInterval(interval);
                             } else {
                                 const expected = doc.chapterIds ? doc.chapterIds.length : 1;
@@ -60,6 +76,7 @@ export const SyncPage: React.FC = () => {
 
             } catch (e) {
                 console.error(e);
+                addLog(`Exception: ${e}`);
                 setError('Failed to start sync service.');
             }
         };
@@ -156,6 +173,18 @@ export const SyncPage: React.FC = () => {
                 >
                     {progress < 100 && bookId !== null ? 'SYNCING...' : 'OPEN READER'}
                 </button>
+            </div>
+            
+            {/* Debug log area - visible on phone */}
+            <div className="w-full max-w-xs mt-4 bg-black/50 border border-white/10 rounded p-3 max-h-40 overflow-y-auto">
+                <div className="text-[10px] font-mono text-gray-500 uppercase mb-2">Debug Log</div>
+                {debugLog.length === 0 ? (
+                    <div className="text-[10px] font-mono text-gray-600">Waiting...</div>
+                ) : (
+                    debugLog.map((log, i) => (
+                        <div key={i} className="text-[10px] font-mono text-gray-400 break-all">{log}</div>
+                    ))
+                )}
             </div>
         </div>
     );

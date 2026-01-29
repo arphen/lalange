@@ -132,9 +132,10 @@ export const initDB = async (): Promise<MyDatabase> => {
         }
 
         const db = await createRxDatabase<MyDatabaseCollections>({
-            name: 'xyz_db_v16', // Bumped version/name to force fresh DB (schema update with 'tts')
+            name: 'xyz_db_v17', // Bumped to force fresh DB (multiInstance change)
             storage,
-            ignoreDuplicate: import.meta.env.DEV
+            ignoreDuplicate: import.meta.env.DEV,
+            multiInstance: false // Disable multi-tab leader election - required for WebRTC replication to start immediately
         });
 
         await db.addCollections({

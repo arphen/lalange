@@ -97,10 +97,10 @@ export const AIStatusPanel: React.FC<AIStatusPanelProps> = ({
             return;
         }
         
-        // Update progress every 100ms for smooth animation
+        // Update progress every 250ms (was 100ms - smoother on battery)
         const interval = setInterval(() => {
             setSummaryProgress(getSummaryProgress());
-        }, 100);
+        }, 250);
         
         return () => clearInterval(interval);
     }, [currentTask?.type, summaryTiming.currentStartTime, getSummaryProgress]);
@@ -128,7 +128,7 @@ export const AIStatusPanel: React.FC<AIStatusPanelProps> = ({
              const mins = Math.floor(remaining / 60000);
              const secs = Math.floor((remaining % 60000) / 1000);
              setLoadingEta(mins > 0 ? `${mins}m ${secs}s` : `${secs}s`);
-        }, 1000);
+        }, 2000); // Update ETA every 2s (was 1s)
 
         return () => clearInterval(interval);
     }, [isLoading, modelStats.loadStartTime, progressValue]);

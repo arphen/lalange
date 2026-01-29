@@ -10,6 +10,7 @@ import { Manual } from './components/Manual'
 import { ModelDownloadModal } from './components/ModelDownloadModal'
 import { Onboarding } from './components/Onboarding/Onboarding'
 import { SyncPage } from './components/Sync/SyncPage'
+import { UpdatePrompt } from './components/UpdatePrompt'
 import { useSettingsStore } from './core/store/settings'
 import { clsx } from 'clsx'
 import { GlobalNavSidebar, type ViewState } from './components/GlobalNavSidebar'
@@ -18,6 +19,9 @@ function App() {
   const { theme, hasCompletedOnboarding } = useSettingsStore()
   const navigate = useNavigate();
   const location = useLocation();
+
+  // /sync page is completely standalone - no sidebar, no AI modal, no onboarding
+  const isSyncPage = location.pathname === '/sync';
 
   // Determine current view for sidebar highlighting
   let view: ViewState = 'archive';
@@ -35,6 +39,11 @@ function App() {
     if (theme === 'ash') document.body.classList.add('theme-ash');
     // volcanic is default (no class)
   }, [theme]);
+
+  // Sync page bypasses onboarding and all app chrome
+  if (isSyncPage) {
+    return <SyncPage />;
+  }
 
   if (!hasCompletedOnboarding) {
         return <Onboarding />;
@@ -98,6 +107,9 @@ function App() {
           </button>
         </div>
       )}
+
+      {/* PWA Update Prompt */}
+      <UpdatePrompt />
     </div>
   )
 }
