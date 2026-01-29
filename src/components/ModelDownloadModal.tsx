@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useSettingsStore } from '../core/store/settings';
 import { MODEL_INFO, type ModelTier, isModelCached, getEngine } from '../core/ai/webllm';
 import { clsx } from 'clsx';
@@ -10,13 +11,19 @@ import { BrandName } from './BrandName';
  * not in a blocking modal.
  */
 export const ModelDownloadModal: React.FC = () => {
+    const location = useLocation();
     const { editorModel, setEditorModel, setLibrarianModelTier, setSummarizerModel } = useSettingsStore();
     const [isOpen, setIsOpen] = useState(false);
     const [selectedTier, setSelectedTier] = useState<ModelTier>(editorModel);
     const [error, setError] = useState<string | null>(null);
     const [isInitializing, setIsInitializing] = useState(false);
 
+    // Skip AI engine check on sync page - it's receive-only and doesn't need AI
+    const isSyncPage = location.pathname === '/sync';
+
     useEffect(() => {
+        if (isSyncPage) return; // Don't prompt for AI download on sync page
+        
         const checkCache = async () => {
             const cached = await isModelCached(editorModel);
             if (!cached) {
@@ -24,7 +31,7 @@ export const ModelDownloadModal: React.FC = () => {
             }
         };
         checkCache();
-    }, [editorModel]);
+    }, [editorModel, isSyncPage]);
 
     const handleDownload = async () => {
         // Update all models to the selected tier for consistency
