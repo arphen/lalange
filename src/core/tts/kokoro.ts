@@ -151,16 +151,21 @@ export async function initTTS(
         
         onProgress?.(0.1, `Initializing TTS (${quantization}, ${targetDevice})...`);
         
-        // For WebGPU, fp32 is recommended; for WASM, q8 is fine
-        const dtype = targetDevice === 'webgpu' && quantization === 'q8' ? 'fp32' : quantization;
+        // For WebGPU, fp32 is recommended for performance; for WASM, q8 is fine.
+        // We respect the caller's explicit quantization choice but warn about potential performance.
+        if (targetDevice === 'webgpu' && quantization === 'q8') {
+            console.warn('[TTS] Using q8 quantization on WebGPU. This may be slower; consider using fp32 for best performance.');
+        }
+        const dtype = quantization;
         
         ttsInstance = await KokoroTTS.from_pretrained(TTS_MODEL_ID, {
             dtype,
             device: targetDevice,
             progress_callback: (progress: { status: string; progress?: number; file?: string }) => {
                 if (progress.progress !== undefined) {
-                    // progress.progress is 0-100, normalize to 0-1
-                    const normalizedProgress = progress.progress > 1 ? progress.progress / 100 : progress.progress;
+                    // progress.progress is 0-100 or 0-1, normalize to 0-1 and clamp to [0, 1]
+                    const rawProgress = progress.progress > 1 ? progress.progress / 100 : progress.progress;
+                    const normalizedProgress = Math.max(0, Math.min(1, rawProgress));
                     const pct = 0.1 + normalizedProgress * 0.9;
                     const file = progress.file?.split('/').pop() || '';
                     onProgress?.(pct, `Downloading ${file}...`);
@@ -379,15 +384,43 @@ export function findWordForAudioTime(
         }
     }
     
-    // Fallback: find closest sentence by start time
-    let closestSentence = sentences[0];
+    // Fallback: find closest sentence by time and handle out-of-range audioTime
+    if (sentences.length === 0) {
+        return 0;
+    }
+    
+    let closestSentence: SentenceBoundary | undefined;
+    let maxEndTime = -Infinity;
+    
     for (const sentence of sentences) {
-        if (sentence.audioStartTime !== undefined && sentence.audioStartTime <= audioTime) {
+        if (sentence.audioStartTime === undefined) {
+            continue;
+        }
+        
+        const endTime = sentence.audioEndTime ?? sentence.audioStartTime;
+        
+        // Track the furthest point in time covered by any sentence
+        if (endTime > maxEndTime) {
+            maxEndTime = endTime;
+        }
+        
+        // Find the last sentence that starts before or at audioTime
+        if (sentence.audioStartTime <= audioTime) {
             closestSentence = sentence;
         }
     }
     
-    return closestSentence?.startWordIndex ?? 0;
+    if (!closestSentence) {
+        // No sentences with timing information; fall back to first sentence or index 0
+        return sentences[0]?.startWordIndex ?? 0;
+    }
+    
+    // If audioTime is beyond all sentences, snap to the end of the last sentence
+    if (audioTime > maxEndTime && maxEndTime !== -Infinity) {
+        return closestSentence.endWordIndex;
+    }
+    
+    return closestSentence.startWordIndex;
 }
 
 /**

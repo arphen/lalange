@@ -67,7 +67,10 @@ export const SyncPage: React.FC = () => {
         start();
 
         return () => {
-            replicationStatesRef.current.forEach(rs => rs.cancel());
+            const states = replicationStatesRef.current;
+            if (Array.isArray(states)) {
+                states.forEach(rs => rs.cancel());
+            }
             replicationStatesRef.current = [];
         };
     }, [hasValidParams, room, key, bookId]);
