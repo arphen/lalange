@@ -7,17 +7,17 @@ if (typeof process === 'undefined' || typeof process.nextTick !== 'function') {
     };
 }
 
-import { getConnectionHandlerSimplePeer } from 'rxdb/plugins/replication-webrtc';
+import { replicateWebRTC, getConnectionHandlerSimplePeer } from 'rxdb/plugins/replication-webrtc';
 import { initDB, type MyDatabase } from './db';
-import { type RxReplicationState } from 'rxdb/plugins/replication';
-import { type RxDocumentData } from 'rxdb';
+import type { RxCollection } from 'rxdb';
 
 // Use a public signaling server for testing, or a local one if available.
 // RxDB provides a default one for demos: wss://signaling.rxdb.info
 // For production, we should host our own.
 const SIGNALING_SERVER_URL = 'wss://signaling.rxdb.info';
 
-export type ReplicationState = RxReplicationState<RxDocumentData<unknown>, unknown>;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type ReplicationState = { cancel: () => Promise<void>; error$: any; peerStates$: any };
 
 export async function startBookSync(
     roomId: string,
@@ -30,16 +30,13 @@ export async function startBookSync(
     const replicationStates: ReplicationState[] = [];
 
     for (const collectionName of collections) {
-        const collection = db[collectionName as keyof MyDatabase['collections']];
+        const collection = db[collectionName as keyof MyDatabase['collections']] as RxCollection;
         if (!collection) continue;
 
-        // RxDB WebRTC sync is not typed on collections, need to cast
-        const collectionWithSync = collection as typeof collection & {
-            syncWebRTC: (options: unknown) => Promise<ReplicationState>;
-        };
-        const replicationState = await collectionWithSync.syncWebRTC({
-            topic: `${roomId}-${collectionName}`,
-            connectionHandler: getConnectionHandlerSimplePeer({
+        const pool = await replicateWebRTC({
+            collection,
+            topic: `${roomId}-${collectionName}-${secret}`, // Include secret in topic for room isolation
+            connectionHandlerCreator: getConnectionHandlerSimplePeer({
                 signalingServerUrl: SIGNALING_SERVER_URL,
                 // SimplePeer uses Google's public STUN servers by default, but we can make it explicit.
                 // STUN servers help peers find each other through NATs (common in home Wi-Fi).
@@ -52,21 +49,21 @@ export async function startBookSync(
                 }
             }),
             pull: {},
-            push: {},
-            password: secret
+            push: {}
         });
 
-        replicationState.error$.subscribe((err: unknown) => {
+        pool.error$.subscribe((err: unknown) => {
             console.error(`Replication error on ${collectionName}:`, err);
             if (onError) onError(err);
         });
 
-        replicationState.active$.subscribe((active: boolean) => {
-            console.log(`Replication active on ${collectionName}:`, active);
-            if (onStatusChange) onStatusChange(active);
+        pool.peerStates$.subscribe((peerStates: Map<unknown, unknown>) => {
+            const isActive = peerStates.size > 0;
+            console.log(`Replication peers on ${collectionName}:`, peerStates.size);
+            if (onStatusChange) onStatusChange(isActive);
         });
 
-        replicationStates.push(replicationState);
+        replicationStates.push(pool);
     }
 
     return replicationStates;
