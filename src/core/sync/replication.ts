@@ -1,3 +1,12 @@
+// Polyfill process.nextTick for SimplePeer (required by RxDB WebRTC replication in browser)
+// See: https://rxdb.info/replication-webrtc.html
+if (typeof process === 'undefined' || typeof process.nextTick !== 'function') {
+    (globalThis as Record<string, unknown>).process = {
+        ...(typeof process !== 'undefined' ? process : {}),
+        nextTick: (fn: () => void, ...args: unknown[]) => setTimeout(() => fn(...(args as [])), 0)
+    };
+}
+
 import { getConnectionHandlerSimplePeer } from 'rxdb/plugins/replication-webrtc';
 import { initDB, type MyDatabase } from './db';
 import { type RxReplicationState } from 'rxdb/plugins/replication';
