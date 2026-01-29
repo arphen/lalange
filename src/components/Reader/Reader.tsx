@@ -105,7 +105,8 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
     const summaryWordsRef = useRef<string[]>([]);
     
     // Define renderWord early, before it's used in startTransition or other callbacks
-    const renderWord = useCallback((idx: number, words: string[]) => {
+    // Performance: renderContext=false skips the expensive prev/next context panel updates
+    const renderWord = useCallback((idx: number, words: string[], renderContext: boolean = true) => {
         const plugin = displayPluginRef.current;
         
         // Update RSVP Display
@@ -132,7 +133,8 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
         }
 
         // Render Previous Context (Last ~150 words for better vertical fill)
-        if (prevContainerRef.current) {
+        // Performance: Skip when renderContext=false (during rapid playback)
+        if (renderContext && prevContainerRef.current) {
             const start = Math.max(0, idx - 150);
             const end = idx;
             const prevWords = words.slice(start, end);
@@ -174,7 +176,8 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
         }
 
         // Render Next Context (Next ~150 words)
-        if (nextContainerRef.current) {
+        // Performance: Skip when renderContext=false (during rapid playback)
+        if (renderContext && nextContainerRef.current) {
             const start = idx + 1;
             const end = Math.min(words.length, idx + 151);
             const nextWords = words.slice(start, end);
@@ -583,7 +586,9 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
 
         if (shouldRender) {
             const activeWords = isSummaryActiveRef.current ? summaryWordsRef.current : wordsRef.current;
-            renderWord(indexRef.current, activeWords);
+            // Performance: Only render full context every 3rd word (RSVP always updates)
+            const shouldRenderContext = indexRef.current % 3 === 0;
+            renderWord(indexRef.current, activeWords, shouldRenderContext);
         }
 
         requestRef.current = requestAnimationFrame(loopInternal);
@@ -954,7 +959,7 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
                     >
                         <div 
                             ref={prevContainerRef} 
-                            className="w-full max-w-2xl h-full flex flex-wrap content-end justify-start p-8 md:p-16 font-mono text-lg md:text-xl leading-relaxed select-none overflow-hidden border-x border-white/5 cursor-ns-resize" 
+                            className="reader-context-panel w-full max-w-2xl h-full flex flex-wrap content-end justify-start p-8 md:p-16 font-mono text-lg md:text-xl leading-relaxed select-none overflow-hidden border-x border-white/5 cursor-ns-resize" 
                             onClick={handleRiverClick}
                             onWheel={handleWheel}
                         ></div>
@@ -1029,7 +1034,7 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
                     >
                         <div 
                             ref={nextContainerRef} 
-                            className="w-full max-w-2xl h-full flex flex-wrap content-start justify-start p-8 md:p-16 font-mono text-lg md:text-xl leading-relaxed select-none overflow-hidden border-x border-white/5 cursor-ns-resize" 
+                            className="reader-context-panel w-full max-w-2xl h-full flex flex-wrap content-start justify-start p-8 md:p-16 font-mono text-lg md:text-xl leading-relaxed select-none overflow-hidden border-x border-white/5 cursor-ns-resize" 
                             onClick={handleRiverClick}
                             onWheel={handleWheel}
                         ></div>

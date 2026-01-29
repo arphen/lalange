@@ -14,9 +14,11 @@ export default defineConfig(({ mode }) => {
     basicSsl(),
     react(),
     !isDev && VitePWA({
-      registerType: 'autoUpdate',
+      registerType: 'prompt', // Show update prompt instead of auto-updating
       workbox: {
         maximumFileSizeToCacheInBytes: 128 * 1024 * 1024, // 128MB - needed for ONNX WASM runtime and large TTS model files
+        // Don't precache LLM model files - they're managed by web-llm in IndexedDB
+        globIgnores: ['**/local_models/**', '**/*.wasm'],
       },
       manifest: {
         name: "XYZ",

@@ -82,10 +82,10 @@ export const BookCard: React.FC<BookCardProps> = ({ book, onOpen, onDelete, onSt
 
         calculateReadingTime();
 
-        // Update every second if there are processing chapters
+        // Update every 5 seconds if there are processing chapters (battery optimization)
         const hasProcessing = chapters.some(c => c.status === 'processing');
         if (hasProcessing) {
-            const interval = setInterval(calculateReadingTime, 1000);
+            const interval = setInterval(calculateReadingTime, 5000);
             return () => clearInterval(interval);
         }
     }, [chapters]);

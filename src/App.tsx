@@ -10,6 +10,7 @@ import { Manual } from './components/Manual'
 import { ModelDownloadModal } from './components/ModelDownloadModal'
 import { Onboarding } from './components/Onboarding/Onboarding'
 import { SyncPage } from './components/Sync/SyncPage'
+import { UpdatePrompt } from './components/UpdatePrompt'
 import { useSettingsStore } from './core/store/settings'
 import { clsx } from 'clsx'
 import { GlobalNavSidebar, type ViewState } from './components/GlobalNavSidebar'
@@ -106,6 +107,9 @@ function App() {
           </button>
         </div>
       )}
+
+      {/* PWA Update Prompt */}
+      <UpdatePrompt />
     </div>
   )
 }

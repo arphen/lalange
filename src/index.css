@@ -99,7 +99,11 @@ body.theme-ash {
   .btn-magma {
     @apply relative px-14 py-5 rounded-full border-none text-white font-extrabold uppercase tracking-widest cursor-pointer overflow-hidden;
     background: var(--color-magma-vent);
+    /* Battery: Only animate on hover, not continuously */
     will-change: transform, box-shadow;
+  }
+
+  .btn-magma:hover {
     animation: magmaBreath var(--anim-breath) var(--ease-swell) infinite;
   }
 
@@ -117,7 +121,19 @@ body.theme-ash {
     background: var(--gradient-mica);
     mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.7' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
     -webkit-mask-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.7' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
-    animation: alisiosWind 40s linear infinite;
+    /* Battery: Paused by default, enable via .animate-mica parent */
+    animation: alisiosWind 40s linear infinite paused;
+  }
+
+  /* Enable mica animation only when explicitly wanted (hover, active states) */
+  .animate-mica .mica-dust-layer {
+    animation-play-state: running;
+  }
+
+  /* Performance: CSS containment for heavy containers */
+  .reader-context-panel {
+    contain: content;
+    content-visibility: auto;
   }
 
   .text-gradient-gold {
