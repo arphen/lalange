@@ -30,6 +30,12 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
     const [isPlaying, setIsPlaying] = useState(false);
     const { wpm, setWpm, summaryWpm, displayPlugin: displayPluginId } = useSettingsStore();
     
+    // River (context panel) toggles - use selectors for performance
+    const riverTopEnabled = useSettingsStore((s) => s.riverTopEnabled);
+    const riverBottomEnabled = useSettingsStore((s) => s.riverBottomEnabled);
+    const setRiverTopEnabled = useSettingsStore((s) => s.setRiverTopEnabled);
+    const setRiverBottomEnabled = useSettingsStore((s) => s.setRiverBottomEnabled);
+    
     // Get the active display plugin
     const displayPlugin = useMemo(() => getDisplayPlugin(displayPluginId), [displayPluginId]);
     const displayPluginRef = useRef<DisplayPlugin>(displayPlugin);
@@ -82,6 +88,7 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
     const initialRenderDoneRef = useRef(false);
     
     const requestRef = useRef<number | undefined>(undefined);
+    const timeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
     const lastTimeRef = useRef<number | undefined>(undefined);
     const accumulatorRef = useRef<number>(0);
 
@@ -133,8 +140,8 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
         }
 
         // Render Previous Context (Last ~150 words for better vertical fill)
-        // Performance: Skip when renderContext=false (during rapid playback)
-        if (renderContext && prevContainerRef.current) {
+        // Performance: Skip when renderContext=false (during rapid playback) or riverTopEnabled=false
+        if (renderContext && riverTopEnabled && prevContainerRef.current) {
             const start = Math.max(0, idx - 150);
             const end = idx;
             const prevWords = words.slice(start, end);
@@ -176,8 +183,8 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
         }
 
         // Render Next Context (Next ~150 words)
-        // Performance: Skip when renderContext=false (during rapid playback)
-        if (renderContext && nextContainerRef.current) {
+        // Performance: Skip when renderContext=false (during rapid playback) or riverBottomEnabled=false
+        if (renderContext && riverBottomEnabled && nextContainerRef.current) {
             const start = idx + 1;
             const end = Math.min(words.length, idx + 151);
             const nextWords = words.slice(start, end);
@@ -215,7 +222,7 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
             nextContainerRef.current.innerHTML = html;
             // Scroll to top (default)
         }
-    }, []);
+    }, [riverTopEnabled, riverBottomEnabled]);
 
     const startTransition = useCallback((label: string, onComplete: () => void) => {
         // Stop playback immediately
@@ -448,6 +455,26 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
         }
     };
 
+    // === BATTERY-OPTIMIZED PLAYBACK LOOP ===
+    // Instead of polling at 60fps with rAF, we use setTimeout to sleep until
+    // close to the next word, then use rAF for precise final timing.
+    // This reduces CPU wake-ups from ~60/sec to ~5-10/sec (80-90% reduction).
+    
+    const calculateTargetInterval = useCallback((wordIndex: number, words: string[], densities: number[]) => {
+        const currentWord = words[wordIndex] || '';
+        const density = densities[wordIndex];
+        const currentDensity = (density !== undefined && density > 0) ? density : 1.0;
+        
+        const speedFactor = getSpeedFactor(wpmRef.current);
+        const baseInterval = 60000 / wpmRef.current;
+        
+        const T_floor = 75 * speedFactor;
+        const infoTime = baseInterval * currentDensity;
+        const visualDelay = getVisualProcessingDelay(currentWord, speedFactor);
+        
+        return T_floor + infoTime + visualDelay;
+    }, []);
+
     const loop = React.useCallback(function loopInternal(time: number) {
         if (!isPlayingRef.current) return;
 
@@ -456,143 +483,99 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
         lastTimeRef.current = time;
 
         accumulatorRef.current += deltaTime;
-        processTimeRef.current += deltaTime; // Advance reading clock
+        processTimeRef.current += deltaTime;
 
-        const baseInterval = 60000 / wpmRef.current;
+        const activeWords = isSummaryActiveRef.current ? summaryWordsRef.current : wordsRef.current;
+        const activeDensities = isSummaryActiveRef.current ? [] : densitiesRef.current;
+        const targetInterval = calculateTargetInterval(indexRef.current, activeWords, activeDensities);
 
-        let shouldRender = false;
-
-        if (accumulatorRef.current > Math.max(1000, baseInterval * 10)) {
-            accumulatorRef.current = baseInterval;
+        // Cap accumulator to prevent huge jumps
+        if (accumulatorRef.current > Math.max(1000, targetInterval * 10)) {
+            accumulatorRef.current = targetInterval;
         }
 
-        while (true) {
-            const activeWords = isSummaryActiveRef.current ? summaryWordsRef.current : wordsRef.current;
-            const activeDensities = isSummaryActiveRef.current ? [] : densitiesRef.current;
+        const timeRemaining = targetInterval - accumulatorRef.current;
 
-            const currentWord = activeWords[indexRef.current] || '';
-            const density = activeDensities[indexRef.current];
-            
-            // Use density if available, otherwise default to 1.0 (Normal)
-            const currentDensity = (density !== undefined && density > 0) ? density : 1.0;
-            
-            // === COGNITIVE STACK IMPLEMENTATION ===
-            // T_display = T_floor + (K_info * Surprisal) + (K_vis * sqrt(L)) + P_punc
-            // All additive components scale down at higher target WPMs
-            
-            // Speed factor: reduces cognitive delays at higher WPM targets
-            const speedFactor = getSpeedFactor(wpmRef.current);
-            
-            // 1. T_floor (Physiological minimum) - scales with speed
-            // At 150 WPM: 75ms, at 600 WPM: ~19ms, at 1000+ WPM: ~8ms minimum
-            const T_floor = 75 * speedFactor;
+        // If we have significant time remaining, use setTimeout to sleep
+        // This is the key battery optimization - don't poll at 60fps!
+        if (timeRemaining > 50) {
+            // Sleep for most of the remaining time, leaving 40ms for rAF precision
+            const sleepTime = Math.max(10, timeRemaining - 40);
+            timeoutRef.current = setTimeout(() => {
+                if (isPlayingRef.current) {
+                    requestRef.current = requestAnimationFrame(loopInternal);
+                }
+            }, sleepTime);
+            return;
+        }
 
-            // 2. Information component (Surprisal)
-            // baseInterval represents the user's preferred "beat". 
-            // currentDensity is the multiplier derived from LLM surprisal (around 1.0).
-            const infoTime = baseInterval * currentDensity;
+        // We're close to the target - process word advancement
+        if (accumulatorRef.current >= targetInterval) {
+            if (indexRef.current < activeWords.length - 1) {
+                indexRef.current++;
+                accumulatorRef.current -= targetInterval;
 
-            // 3. Visual & Punctuation component (scaled by speedFactor)
-            const visualDelay = getVisualProcessingDelay(currentWord, speedFactor);
+                // Track word timestamp for actual WPM calculation
+                wordTimestampsRef.current.push(processTimeRef.current);
 
-            // Total Duration
-            const targetInterval = T_floor + infoTime + visualDelay;
-
-            if (accumulatorRef.current >= targetInterval) {
-                if (indexRef.current < activeWords.length - 1) {
-                    indexRef.current++;
-                    accumulatorRef.current -= targetInterval;
-                    shouldRender = true;
-
-                    // Track word timestamp for actual WPM calculation
-                    wordTimestampsRef.current.push(processTimeRef.current);
-
-                    // Check for Subchapter Boundary (only if NOT in summary mode)
-                    if (!isSummaryActiveRef.current) {
-                        const sub = currentChapterRef.current?.subchapters?.find(s => s.endWordIndex === indexRef.current);
-                        if (sub && sub.summary) {
-                            // Trigger Transition to Summary
-                            isPlayingRef.current = false; // Stop loop immediately
-                            
-                            startTransition('next: summary', () => {
-                                // Enter Summary Mode Logic
-                                isSummaryActiveRef.current = true;
-                                setIsSummaryActive(true);
-
-                                savedChapterIndexRef.current = indexRef.current;
-
-                                // Swap words
-                                summaryWordsRef.current = sub.summary!.split(' ');
-                                indexRef.current = 0;
-
-                                // Slow down WPM
-                                wpmRef.current = summaryWpm;
-
-                                // Force render first word of summary
-                                renderWord(0, summaryWordsRef.current);
-                                accumulatorRef.current = 0;
-                            });
-                            
-                            shouldRender = false;
-                            break; // Exit loop
-                        }
-                    }
-                } else {
-                    // End of words
-                    if (isSummaryActiveRef.current) {
-                        // Trigger Transition to Main Text
-                        isPlayingRef.current = false; // Stop loop immediately
+                // Check for Subchapter Boundary (only if NOT in summary mode)
+                if (!isSummaryActiveRef.current) {
+                    const sub = currentChapterRef.current?.subchapters?.find(s => s.endWordIndex === indexRef.current);
+                    if (sub && sub.summary) {
+                        isPlayingRef.current = false;
                         
-                        startTransition('next: text', () => {
-                            // End of Summary -> Resume Chapter Logic
-                            isSummaryActiveRef.current = false;
-                            setIsSummaryActive(false);
-
-                            // Restore
-                            indexRef.current = savedChapterIndexRef.current;
-                            wpmRef.current = wpm; // Restore user WPM
-
-                            renderWord(indexRef.current, wordsRef.current);
+                        startTransition('next: summary', () => {
+                            isSummaryActiveRef.current = true;
+                            setIsSummaryActive(true);
+                            savedChapterIndexRef.current = indexRef.current;
+                            summaryWordsRef.current = sub.summary!.split(' ');
+                            indexRef.current = 0;
+                            wpmRef.current = summaryWpm;
+                            renderWord(0, summaryWordsRef.current);
                             accumulatorRef.current = 0;
                         });
-
-                        shouldRender = false;
-                        break; // Exit loop
-                    }
-
-                    // End of Chapter
-                    shouldRender = true;
-
-                    // Find next chapter
-                    const chapters = chaptersRef.current;
-                    const currentChapter = currentChapterRef.current;
-                    const currentIndex = chapters.findIndex(c => c.id === currentChapter?.id);
-
-                    if (currentIndex !== -1 && currentIndex < chapters.length - 1) {
-                        const nextChapter = chapters[currentIndex + 1];
-                        // Auto-play next chapter
-                        loadChapter(nextChapter.id, 0, true);
-                        // Break loop, loadChapter will restart it via setIsPlaying(true)
-                        break;
-                    } else {
-                        setIsPlaying(false);
-                        break;
+                        return;
                     }
                 }
+
+                // Render the new word
+                const shouldRenderContext = indexRef.current % 3 === 0;
+                renderWord(indexRef.current, activeWords, shouldRenderContext);
+
             } else {
-                break;
+                // End of words
+                if (isSummaryActiveRef.current) {
+                    isPlayingRef.current = false;
+                    
+                    startTransition('next: text', () => {
+                        isSummaryActiveRef.current = false;
+                        setIsSummaryActive(false);
+                        indexRef.current = savedChapterIndexRef.current;
+                        wpmRef.current = wpm;
+                        renderWord(indexRef.current, wordsRef.current);
+                        accumulatorRef.current = 0;
+                    });
+                    return;
+                }
+
+                // End of Chapter - find next
+                const chapters = chaptersRef.current;
+                const currentChapter = currentChapterRef.current;
+                const currentIndex = chapters.findIndex(c => c.id === currentChapter?.id);
+
+                if (currentIndex !== -1 && currentIndex < chapters.length - 1) {
+                    const nextChapter = chapters[currentIndex + 1];
+                    loadChapter(nextChapter.id, 0, true);
+                } else {
+                    setIsPlaying(false);
+                }
+                return;
             }
         }
 
-        if (shouldRender) {
-            const activeWords = isSummaryActiveRef.current ? summaryWordsRef.current : wordsRef.current;
-            // Performance: Only render full context every 3rd word (RSVP always updates)
-            const shouldRenderContext = indexRef.current % 3 === 0;
-            renderWord(indexRef.current, activeWords, shouldRenderContext);
-        }
-
+        // Continue loop - use rAF for precision timing in final approach
         requestRef.current = requestAnimationFrame(loopInternal);
-    }, [wpm, renderWord, loadChapter, summaryWpm, startTransition]);
+    }, [wpm, renderWord, loadChapter, summaryWpm, startTransition, calculateTargetInterval]);
 
     // Sync refs
     useEffect(() => {
@@ -627,6 +610,7 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
         }
         return () => {
             if (requestRef.current) cancelAnimationFrame(requestRef.current);
+            if (timeoutRef.current) clearTimeout(timeoutRef.current);
         };
     }, [isPlaying, saveProgress, loop, renderWord]);
 
@@ -957,12 +941,32 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
                     <div 
                         className="flex-1 w-full overflow-hidden relative mask-gradient-top flex justify-center"
                     >
-                        <div 
-                            ref={prevContainerRef} 
-                            className="reader-context-panel w-full max-w-2xl h-full flex flex-wrap content-end justify-start p-8 md:p-16 font-mono text-lg md:text-xl leading-relaxed select-none overflow-hidden border-x border-white/5 cursor-ns-resize" 
-                            onClick={handleRiverClick}
-                            onWheel={handleWheel}
-                        ></div>
+                        {riverTopEnabled ? (
+                            <div 
+                                ref={prevContainerRef} 
+                                className="reader-context-panel w-full max-w-2xl h-full flex flex-wrap content-end justify-start p-8 md:p-16 font-mono text-lg md:text-xl leading-relaxed select-none overflow-hidden border-x border-white/5 cursor-ns-resize" 
+                                onClick={handleRiverClick}
+                                onWheel={handleWheel}
+                            ></div>
+                        ) : (
+                            <div className="w-full max-w-2xl h-full border-x border-white/5 flex items-end justify-center pb-4">
+                                <span className="text-xs text-white/20 font-mono uppercase tracking-widest">River Hidden</span>
+                            </div>
+                        )}
+                        {/* River Toggle - Top */}
+                        <button
+                            onClick={(e) => { e.stopPropagation(); setRiverTopEnabled(!riverTopEnabled); }}
+                            className="absolute top-2 right-2 z-40 p-1.5 bg-black/40 backdrop-blur-sm rounded border border-white/10 hover:border-white/30 text-white/40 hover:text-white/80 transition-all opacity-0 group-hover:opacity-100"
+                            title={riverTopEnabled ? 'Hide previous context (saves battery)' : 'Show previous context'}
+                        >
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                {riverTopEnabled ? (
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+                                ) : (
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                )}
+                            </svg>
+                        </button>
                     </div>
 
                     {/* Middle Zone: RSVP (Click to Toggle) */}
@@ -1032,12 +1036,32 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
                     <div 
                         className="flex-1 w-full overflow-hidden relative mask-gradient-bottom flex justify-center"
                     >
-                        <div 
-                            ref={nextContainerRef} 
-                            className="reader-context-panel w-full max-w-2xl h-full flex flex-wrap content-start justify-start p-8 md:p-16 font-mono text-lg md:text-xl leading-relaxed select-none overflow-hidden border-x border-white/5 cursor-ns-resize" 
-                            onClick={handleRiverClick}
-                            onWheel={handleWheel}
-                        ></div>
+                        {riverBottomEnabled ? (
+                            <div 
+                                ref={nextContainerRef} 
+                                className="reader-context-panel w-full max-w-2xl h-full flex flex-wrap content-start justify-start p-8 md:p-16 font-mono text-lg md:text-xl leading-relaxed select-none overflow-hidden border-x border-white/5 cursor-ns-resize" 
+                                onClick={handleRiverClick}
+                                onWheel={handleWheel}
+                            ></div>
+                        ) : (
+                            <div className="w-full max-w-2xl h-full border-x border-white/5 flex items-start justify-center pt-4">
+                                <span className="text-xs text-white/20 font-mono uppercase tracking-widest">River Hidden</span>
+                            </div>
+                        )}
+                        {/* River Toggle - Bottom */}
+                        <button
+                            onClick={(e) => { e.stopPropagation(); setRiverBottomEnabled(!riverBottomEnabled); }}
+                            className="absolute bottom-2 right-2 z-40 p-1.5 bg-black/40 backdrop-blur-sm rounded border border-white/10 hover:border-white/30 text-white/40 hover:text-white/80 transition-all opacity-0 group-hover:opacity-100"
+                            title={riverBottomEnabled ? 'Hide next context (saves battery)' : 'Show next context'}
+                        >
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                {riverBottomEnabled ? (
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                ) : (
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+                                )}
+                            </svg>
+                        </button>
                     </div>
 
                     {/* Scroll hint - subtle indicator that scrolling is available */}

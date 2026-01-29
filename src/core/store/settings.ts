@@ -33,8 +33,10 @@ interface SettingsState {
     // Features
     saccadeEnabled: boolean;
     setSaccadeEnabled: (enabled: boolean) => void;
-    riverEnabled: boolean;
-    setRiverEnabled: (enabled: boolean) => void;
+    riverTopEnabled: boolean;
+    setRiverTopEnabled: (enabled: boolean) => void;
+    riverBottomEnabled: boolean;
+    setRiverBottomEnabled: (enabled: boolean) => void;
 
     // UI
     sidebarOpen: boolean;
@@ -147,8 +149,10 @@ export const useSettingsStore = create<SettingsState>()(
             saccadeEnabled: true,
             setSaccadeEnabled: (saccadeEnabled) => set({ saccadeEnabled }),
 
-            riverEnabled: true,
-            setRiverEnabled: (riverEnabled) => set({ riverEnabled }),
+            riverTopEnabled: true,
+            setRiverTopEnabled: (riverTopEnabled) => set({ riverTopEnabled }),
+            riverBottomEnabled: true,
+            setRiverBottomEnabled: (riverBottomEnabled) => set({ riverBottomEnabled }),
 
             sidebarOpen: true,
             setSidebarOpen: (sidebarOpen) => set({ sidebarOpen }),
