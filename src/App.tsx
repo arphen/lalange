@@ -19,6 +19,9 @@ function App() {
   const navigate = useNavigate();
   const location = useLocation();
 
+  // /sync page is completely standalone - no sidebar, no AI modal, no onboarding
+  const isSyncPage = location.pathname === '/sync';
+
   // Determine current view for sidebar highlighting
   let view: ViewState = 'archive';
   if (location.pathname.startsWith('/reader')) view = 'reader';
@@ -35,6 +38,11 @@ function App() {
     if (theme === 'ash') document.body.classList.add('theme-ash');
     // volcanic is default (no class)
   }, [theme]);
+
+  // Sync page bypasses onboarding and all app chrome
+  if (isSyncPage) {
+    return <SyncPage />;
+  }
 
   if (!hasCompletedOnboarding) {
         return <Onboarding />;
