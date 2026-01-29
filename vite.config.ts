@@ -18,7 +18,7 @@ export default defineConfig(({ mode }) => {
       workbox: {
         maximumFileSizeToCacheInBytes: 128 * 1024 * 1024, // 128MB - needed for ONNX WASM runtime and large TTS model files
         // Don't precache LLM model files - they're managed by web-llm in IndexedDB
-        globIgnores: ['**/local_models/**', '**/*.wasm'],
+        globIgnores: ['**/local_models/**'],
       },
       manifest: {
         name: "XYZ",

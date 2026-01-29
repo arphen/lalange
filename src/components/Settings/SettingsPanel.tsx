@@ -455,6 +455,13 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                     {/* TTS Tab */}
                     {activeTab === 'tts' && <TTSSettings />}
 
+                    {/* Version Footer */}
+                    <div className="mt-12 pt-6 border-t border-white/10 text-center">
+                        <p className="text-xs text-gray-600 font-mono">
+                            Build: <span className="text-gray-500">{__COMMIT_HASH__}</span>
+                        </p>
+                    </div>
+
                 </div>
             </div>
     );

@@ -44,22 +44,27 @@ function getChunkedConnectionHandler(options: Parameters<typeof getConnectionHan
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (handler as any).send = async (peer: SimplePeer, message: unknown): Promise<void> => {
             const msgStr = JSON.stringify(message);
+            const encoder = new TextEncoder();
+            const encoded = encoder.encode(msgStr);
             
-            if (msgStr.length <= MAX_CHUNK_SIZE) {
+            if (encoded.byteLength <= MAX_CHUNK_SIZE) {
                 // Small message, send directly
                 return originalSend(peer, message);
             }
             
-            console.log(`[Sync] Chunking large message: ${msgStr.length} bytes into ${Math.ceil(msgStr.length / MAX_CHUNK_SIZE)} chunks`);
+            const totalChunks = Math.ceil(encoded.byteLength / MAX_CHUNK_SIZE);
+            console.log(`[Sync] Chunking large message: ${encoded.byteLength} bytes into ${totalChunks} chunks`);
             
             // Large message - chunk it
             const messageId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-            const totalChunks = Math.ceil(msgStr.length / MAX_CHUNK_SIZE);
+            const decoder = new TextDecoder();
             
             // Send each chunk as an object with chunk metadata
             for (let i = 0; i < totalChunks; i++) {
                 const start = i * MAX_CHUNK_SIZE;
-                const chunkData = msgStr.slice(start, start + MAX_CHUNK_SIZE);
+                const end = Math.min(start + MAX_CHUNK_SIZE, encoded.byteLength);
+                const chunkBytes = encoded.subarray(start, end);
+                const chunkData = decoder.decode(chunkBytes);
                 const chunkMsg = {
                     __chunk: true,
                     __id: messageId,
