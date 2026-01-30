@@ -347,9 +347,17 @@ export const processChaptersInBackground = async (bookId: string) => {
                             // Only schedule an initial window for the FIRST chapter.
                             // Density is lightweight (tiny model) so we can do more up-front.
                             // All other chapters start dormant and wake up when the user navigates there.
+                            // Use time-based lookahead: enough words for 3 minutes at user's WPM
                             const isActiveChapter = isFirstContentChapter;
-                            const INITIAL_DENSITY_CHUNKS = 6;
-                            const densityInitialStatus = (isActiveChapter && i < INITIAL_DENSITY_CHUNKS) ? 'pending' : 'dormant';
+                            const wpm = settings.wpm || 300;
+                            const INITIAL_LOOKAHEAD_MINUTES = 3;
+                            const INITIAL_LOOKAHEAD_WORDS = wpm * INITIAL_LOOKAHEAD_MINUTES;
+                            const MIN_INITIAL_CHUNKS = 6; // Minimum chunks for very fast readers
+                            
+                            // Schedule as pending if: within word lookahead OR within min chunk count
+                            const isWithinWordLookahead = startWordIndex < INITIAL_LOOKAHEAD_WORDS;
+                            const isWithinChunkCount = i < MIN_INITIAL_CHUNKS;
+                            const densityInitialStatus = (isActiveChapter && (isWithinWordLookahead || isWithinChunkCount)) ? 'pending' : 'dormant';
 
                             // 1. Density Estimation
                             scheduler.addTask({
@@ -367,8 +375,11 @@ export const processChaptersInBackground = async (bookId: string) => {
                             // We no longer schedule individual chunk summaries here.
                             // Global summaries are scheduled at the end of book processing.
                         }
-                        const INITIAL_DENSITY_CHUNKS = 3;
-                        const activeDensity = isFirstContentChapter ? Math.min(rawChunks.length, INITIAL_DENSITY_CHUNKS) : 0;
+                        const activeDensity = rawChunks.filter((_, idx) => {
+                            const chunkStart = idx > 0 ? rawChunks.slice(0, idx).join(' ').split(/\s+/).length : 0;
+                            const wpm = settings.wpm || 300;
+                            return isFirstContentChapter && (chunkStart < wpm * 3 || idx < 6);
+                        }).length;
                         console.log(`[Pipeline] Scheduled ${rawChunks.length} density tasks for chapter ${chapterId} (${activeDensity} active, rest dormant)`);
 
                         // Final update for this chapter (Content + Placeholders)

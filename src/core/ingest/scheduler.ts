@@ -162,11 +162,21 @@ export class IngestionScheduler {
     private wakeUpDormantTasks() {
         if (!this.currentBookId || !this.currentChapterId) return;
 
-        // We wake tasks using chunk indices rather than word-distance so that
-        // books with many small chunks don't accidentally wake a large number at once.
-        // Increased lookahead to ensure density/summaries are ready before user reaches them
-        const DENSITY_LOOKAHEAD_CHUNKS = 6;
-        const SUMMARY_LOOKAHEAD_CHUNKS = 5;
+        // Calculate lookahead based on reading time rather than fixed chunk count.
+        // This ensures we always have enough buffer even with small chunks from malformed epubs.
+        const settings = useSettingsStore.getState();
+        const wpm = settings.wpm || 300;
+        
+        // Density: aim for 3 minutes of reading time lookahead
+        // Summary: aim for 2 minutes (summaries are lower priority)
+        const DENSITY_LOOKAHEAD_MINUTES = 3;
+        const SUMMARY_LOOKAHEAD_MINUTES = 2;
+        const DENSITY_LOOKAHEAD_WORDS = wpm * DENSITY_LOOKAHEAD_MINUTES;
+        const SUMMARY_LOOKAHEAD_WORDS = wpm * SUMMARY_LOOKAHEAD_MINUTES;
+        
+        // Also maintain minimum chunk counts for very fast readers
+        const MIN_DENSITY_CHUNKS = 6;
+        const MIN_SUMMARY_CHUNKS = 5;
         const REWIND_CHUNKS = 1;
 
         const chapterTasks = this.tasks.filter(
@@ -196,13 +206,17 @@ export class IngestionScheduler {
             if (task.bookId !== this.currentBookId) return;
 
             if (task.chapterId === this.currentChapterId) {
-                const lookahead = task.type === 'DENSITY' ? DENSITY_LOOKAHEAD_CHUNKS : SUMMARY_LOOKAHEAD_CHUNKS;
-                const minIndex = Math.max(0, currentChunkIndex - REWIND_CHUNKS);
-                const maxIndex = currentChunkIndex + lookahead;
+                const lookaheadWords = task.type === 'DENSITY' ? DENSITY_LOOKAHEAD_WORDS : SUMMARY_LOOKAHEAD_WORDS;
+                const minChunks = task.type === 'DENSITY' ? MIN_DENSITY_CHUNKS : MIN_SUMMARY_CHUNKS;
+                
+                // Wake if: within word-based lookahead OR within minimum chunk count
+                const isWithinWordLookahead = task.startWordIndex < this.currentWordIndex + lookaheadWords;
+                const isWithinChunkLookahead = task.subchapterIndex <= currentChunkIndex + minChunks;
+                const isRewind = task.subchapterIndex >= Math.max(0, currentChunkIndex - REWIND_CHUNKS);
 
-                if (task.subchapterIndex >= minIndex && task.subchapterIndex <= maxIndex) {
+                if (isRewind && (isWithinWordLookahead || isWithinChunkLookahead)) {
                     task.status = 'pending';
-                    console.log(`[Scheduler] Waking up task: ${task.id} (Chunk: ${task.subchapterIndex}, Current: ${currentChunkIndex})`);
+                    console.log(`[Scheduler] Waking up task: ${task.id} (Chunk: ${task.subchapterIndex}, Current: ${currentChunkIndex}, WordDist: ${task.startWordIndex - this.currentWordIndex})`);
                 }
             }
             // TODO: Handle next chapter lookahead
