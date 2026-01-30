@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { type ChapterDocType } from '../../core/sync/db';
+import { type ChapterDocType, type GlobalSummaryType } from '../../core/sync/db';
 import { formatReadingTime } from '../../hooks/useReadingTimeEstimate';
 import { useAIStore } from '../../core/store/ai';
 import { clsx } from 'clsx';
@@ -15,6 +15,8 @@ interface SidebarProps {
     currentWordIndex?: number;
     now: number;
     activeSummaryId?: string | null;
+    globalSummaries?: GlobalSummaryType[];
+    onPlayGlobalSummary?: (summary: GlobalSummaryType) => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -26,7 +28,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
     className,
     currentWordIndex,
     now,
-    activeSummaryId
+    activeSummaryId,
+    globalSummaries = [],
+    onPlayGlobalSummary
 }) => {
     const [expandedSummary, setExpandedSummary] = useState<string | null>(null);
     useAIStore(); // Keep subscription for re-renders but ignore returned object
@@ -92,6 +96,40 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
             {/* Chapter List (Fill-Bars) */}
             <div className="flex-1 overflow-y-auto p-2 space-y-1">
+                {/* Global Summaries Section */}
+                {globalSummaries.length > 0 && (
+                    <div className="mb-3 pb-3 border-b border-purple-500/20">
+                        <div className="text-[10px] text-purple-400 uppercase tracking-widest mb-2 px-1">
+                            📚 Book Summaries
+                        </div>
+                        {globalSummaries.map((summary, idx) => {
+                            const isActive = activeSummaryId === summary.id;
+                            const wordRange = `${summary.startWordIndex.toLocaleString()}-${summary.endWordIndex.toLocaleString()}`;
+                            return (
+                                <div key={summary.id} className="mb-1">
+                                    <button
+                                        onClick={() => onPlayGlobalSummary?.(summary)}
+                                        className={clsx(
+                                            "w-full text-left p-2 rounded border transition-all",
+                                            isActive 
+                                                ? "bg-purple-900/40 border-purple-500/50 text-purple-200" 
+                                                : "bg-black/20 border-white/5 text-gray-400 hover:border-purple-500/30 hover:text-purple-300"
+                                        )}
+                                    >
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-purple-500">▶</span>
+                                            <span className="font-bold">Summary {idx + 1}</span>
+                                        </div>
+                                        <div className="text-[9px] text-gray-500 mt-1 truncate">
+                                            Words {wordRange}
+                                        </div>
+                                    </button>
+                                </div>
+                            );
+                        })}
+                    </div>
+                )}
+                
                 {displayChapters.map(chapter => {
                     const readingTime = getChapterReadingTime(chapter);
                     const isCurrent = currentChapter?.id === chapter.id;

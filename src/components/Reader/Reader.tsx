@@ -1,5 +1,5 @@
 import React, { useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo } from 'react';
-import { type BookDocType, type ChapterDocType, type ReadingStateDocType, initDB } from '../../core/sync/db';
+import { type BookDocType, type ChapterDocType, type ReadingStateDocType, type GlobalSummaryType, initDB } from '../../core/sync/db';
 import { getDisplayPlugin, type DisplayPlugin, getVelocireaderORPIndex } from '../../core/rsvp/display';
 import { getVisualProcessingDelay, getSpeedFactor } from '../../core/rsvp/timing';
 import { Sidebar } from './Sidebar';
@@ -93,6 +93,7 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
 
     // Sidebar & Chapters
     const [chapters, setChapters] = useState<ChapterDocType[]>([]);
+    const [globalSummaries, setGlobalSummaries] = useState<GlobalSummaryType[]>([]);
     const [showChapters, setShowChapters] = useState(true);
     const [inspectingChapterId, setInspectingChapterId] = useState<string | null>(null);
     const inspectingChapter = chapters.find(c => c.id === inspectingChapterId);
@@ -125,6 +126,7 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
 
     // Summary Mode Refs
     const [isSummaryActive, setIsSummaryActive] = useState(false);
+    const [activeGlobalSummaryId, setActiveGlobalSummaryId] = useState<string | null>(null);
     const [countdown, setCountdown] = useState<number | null>(null);
     const [transitionLabel, setTransitionLabel] = useState<string | null>(null); // To show "Chunk Summary:" or "Resuming Text:"
     const countdownIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -306,6 +308,7 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
             // Restore from summary mode
             isSummaryActiveRef.current = false;
             setIsSummaryActive(false);
+            setActiveGlobalSummaryId(null);
 
             // Restore index
             indexRef.current = savedChapterIndexRef.current;
@@ -320,6 +323,32 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
             setIsPlaying(true);
         }
     }, [wpm, renderWord, countdown, setIsPlaying, setCountdown, setTransitionLabel]);
+
+    const handlePlayGlobalSummary = useCallback((summary: GlobalSummaryType) => {
+        // Stop current playback
+        setIsPlaying(false);
+        
+        // Save current position if not already in summary mode
+        if (!isSummaryActiveRef.current) {
+            savedChapterIndexRef.current = indexRef.current;
+        }
+        
+        // Set up summary playback
+        summaryWordsRef.current = summary.summary.split(' ');
+        isSummaryActiveRef.current = true;
+        setIsSummaryActive(true);
+        setActiveGlobalSummaryId(summary.id);
+        indexRef.current = 0;
+        wpmRef.current = summaryWpm;
+        
+        // Render the first word
+        renderWord(0, summaryWordsRef.current);
+        
+        // Close sidebar and start playing
+        setShowChapters(false);
+        accumulatorRef.current = 0;
+        setIsPlaying(true);
+    }, [summaryWpm, renderWord, setIsPlaying, setShowChapters]);
 
     const saveProgress = React.useCallback(async () => {
         if (loading || !readingState || !currentChapter) return;
@@ -593,6 +622,7 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
                     startTransition('next: text', () => {
                         isSummaryActiveRef.current = false;
                         setIsSummaryActive(false);
+                        setActiveGlobalSummaryId(null);
                         indexRef.current = savedChapterIndexRef.current;
                         wpmRef.current = wpm;
                         renderWord(indexRef.current, wordsRef.current);
@@ -739,6 +769,17 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
                 setChapters(docs.map(d => d.toJSON() as ChapterDocType));
             });
 
+            // Subscribe to book document for globalSummaries updates
+            let bookSub: { unsubscribe: () => void } | null = null;
+            if (db.books) {
+                bookSub = db.books.findOne(book.id).$.subscribe(bookDoc => {
+                    if (bookDoc) {
+                        const bookData = bookDoc.toJSON() as BookDocType;
+                        setGlobalSummaries(bookData.globalSummaries || []);
+                    }
+                });
+            }
+
             // Get reading state
             let state = await db.reading_states.findOne(book.id).exec();
             if (!state) {
@@ -765,10 +806,14 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
             } else {
                 setLoading(false);
             }
+            
+            // Return cleanup for book subscription
+            return () => bookSub?.unsubscribe();
         };
-        loadState();
+        const bookSubCleanup = loadState();
         return () => {
             if (sub) sub.unsubscribe();
+            bookSubCleanup.then(cleanup => cleanup?.());
         };
     }, [book.id, book.chapterIds, loadChapter]);
 
@@ -883,8 +928,8 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
     // That index equals `sub.endWordIndex`.
     // So we can find the subchapter index using that.
     
-    let activeSummaryId: string | null = null;
-    if (isSummaryActive && currentChapter) {
+    let activeSummaryId: string | null = activeGlobalSummaryId;
+    if (!activeSummaryId && isSummaryActive && currentChapter) {
          const chapterId = currentChapter.id;
          // Find sub whose end index matches saved ref
          const subIdx = currentChapter.subchapters?.findIndex(s => s.endWordIndex === savedChapterIndexRef.current);
@@ -1057,6 +1102,8 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
                     currentWordIndex={currentWordIndex}
                     now={now}
                     activeSummaryId={activeSummaryId}
+                    globalSummaries={globalSummaries}
+                    onPlayGlobalSummary={handlePlayGlobalSummary}
                 />
             </div>
 

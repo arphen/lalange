@@ -335,4 +335,128 @@ describe('Sidebar Component', () => {
             expect(screen.getByText('Content Chapter')).toBeInTheDocument();
         });
     });
+
+    describe('Global Summaries Section', () => {
+        it('should not render global summaries section when empty', () => {
+            render(<Sidebar {...defaultProps} globalSummaries={[]} />);
+
+            expect(screen.queryByText('📚 Book Summaries')).not.toBeInTheDocument();
+        });
+
+        it('should render global summaries when provided', () => {
+            const globalSummaries = [
+                {
+                    id: 'global-1',
+                    startWordIndex: 0,
+                    endWordIndex: 2500,
+                    startChapterId: 'ch1',
+                    endChapterId: 'ch1',
+                    summary: 'Summary of first section',
+                    generatedAt: Date.now()
+                },
+                {
+                    id: 'global-2',
+                    startWordIndex: 2500,
+                    endWordIndex: 5000,
+                    startChapterId: 'ch1',
+                    endChapterId: 'ch2',
+                    summary: 'Summary of second section',
+                    generatedAt: Date.now()
+                }
+            ];
+
+            render(<Sidebar {...defaultProps} globalSummaries={globalSummaries} />);
+
+            expect(screen.getByText('📚 Book Summaries')).toBeInTheDocument();
+            expect(screen.getByText('Summary 1')).toBeInTheDocument();
+            expect(screen.getByText('Summary 2')).toBeInTheDocument();
+        });
+
+        it('should show word range for each global summary', () => {
+            const globalSummaries = [
+                {
+                    id: 'global-1',
+                    startWordIndex: 0,
+                    endWordIndex: 2500,
+                    startChapterId: 'ch1',
+                    endChapterId: 'ch1',
+                    summary: 'Summary text',
+                    generatedAt: Date.now()
+                }
+            ];
+
+            render(<Sidebar {...defaultProps} globalSummaries={globalSummaries} />);
+
+            expect(screen.getByText('Words 0-2,500')).toBeInTheDocument();
+        });
+
+        it('should call onPlayGlobalSummary when summary is clicked', () => {
+            const onPlayGlobalSummary = vi.fn();
+            const globalSummaries = [
+                {
+                    id: 'global-1',
+                    startWordIndex: 0,
+                    endWordIndex: 2500,
+                    startChapterId: 'ch1',
+                    endChapterId: 'ch1',
+                    summary: 'Summary text',
+                    generatedAt: Date.now()
+                }
+            ];
+
+            render(
+                <Sidebar 
+                    {...defaultProps} 
+                    globalSummaries={globalSummaries} 
+                    onPlayGlobalSummary={onPlayGlobalSummary}
+                />
+            );
+
+            const summaryButton = screen.getByText('Summary 1').closest('button');
+            fireEvent.click(summaryButton!);
+
+            expect(onPlayGlobalSummary).toHaveBeenCalledWith(globalSummaries[0]);
+        });
+
+        it('should highlight active global summary', () => {
+            const globalSummaries = [
+                {
+                    id: 'global-1',
+                    startWordIndex: 0,
+                    endWordIndex: 2500,
+                    startChapterId: 'ch1',
+                    endChapterId: 'ch1',
+                    summary: 'Summary text',
+                    generatedAt: Date.now()
+                },
+                {
+                    id: 'global-2',
+                    startWordIndex: 2500,
+                    endWordIndex: 5000,
+                    startChapterId: 'ch1',
+                    endChapterId: 'ch2',
+                    summary: 'Second summary',
+                    generatedAt: Date.now()
+                }
+            ];
+
+            render(
+                <Sidebar 
+                    {...defaultProps} 
+                    globalSummaries={globalSummaries} 
+                    activeSummaryId="global-1"
+                />
+            );
+
+            const activeButton = screen.getByText('Summary 1').closest('button');
+            const inactiveButton = screen.getByText('Summary 2').closest('button');
+
+            // Active summary should have purple highlight classes
+            expect(activeButton).toHaveClass('bg-purple-900/40');
+            expect(activeButton).toHaveClass('border-purple-500/50');
+            
+            // Inactive summary should not have purple highlight
+            expect(inactiveButton).not.toHaveClass('bg-purple-900/40');
+        });
+    });
 });

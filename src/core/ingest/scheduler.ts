@@ -1,10 +1,10 @@
 import { useSettingsStore } from '../store/settings';
 import { useAIStore } from '../store/ai';
-import { initDB } from '../sync/db';
+import { initDB, type GlobalSummaryType } from '../sync/db';
 import { analyzeDensityRange, type WindowResult } from './analysis';
 import { generateUnifiedCompletion } from '../ai/service';
 
-export type TaskType = 'DENSITY' | 'SUMMARY';
+export type TaskType = 'DENSITY' | 'SUMMARY' | 'GLOBAL_SUMMARY';
 
 export interface IngestionTask {
     id: string;
@@ -19,12 +19,29 @@ export interface IngestionTask {
     text: string; // The text chunk to process
 }
 
+// Global summary task has different structure (spans multiple chapters)
+export interface GlobalSummaryTask {
+    id: string;
+    bookId: string;
+    summaryIndex: number;           // Which global summary (0, 1, 2, ...)
+    globalStartWordIndex: number;   // Start index across entire book
+    globalEndWordIndex: number;
+    startChapterId: string;
+    endChapterId: string;
+    type: 'GLOBAL_SUMMARY';
+    priority: number;
+    status: 'pending' | 'processing' | 'completed' | 'failed' | 'dormant';
+    // Text is collected at execution time by reading chapters
+}
+
 export class IngestionScheduler {
     private tasks: IngestionTask[] = [];
+    private globalSummaryTasks: GlobalSummaryTask[] = [];
     private isRunning = false;
     private currentBookId: string | null = null;
     private currentChapterId: string | null = null;
     private currentWordIndex: number = 0;
+    private currentGlobalWordIndex: number = 0;  // Tracks position across entire book
     private previousAiEnabled: boolean = true;
 
     constructor() {
@@ -47,19 +64,25 @@ export class IngestionScheduler {
         }
     }
 
-    public setCursor(bookId: string, chapterId: string, wordIndex: number) {
+    public setCursor(bookId: string, chapterId: string, wordIndex: number, globalWordIndex?: number) {
         this.currentBookId = bookId;
         this.currentChapterId = chapterId;
         this.currentWordIndex = wordIndex;
+        if (globalWordIndex !== undefined) {
+            this.currentGlobalWordIndex = globalWordIndex;
+        }
         this.wakeUpDormantTasks();
+        this.wakeUpGlobalSummaryTasks();
         this.rebalancePriorities();
         this.processNext();
     }
 
     public removeTasksForBook(bookId: string) {
         const count = this.tasks.filter(t => t.bookId === bookId).length;
+        const globalCount = this.globalSummaryTasks.filter(t => t.bookId === bookId).length;
         this.tasks = this.tasks.filter(t => t.bookId !== bookId);
-        console.log(`[Scheduler] Removed ${count} tasks for book ${bookId}`);
+        this.globalSummaryTasks = this.globalSummaryTasks.filter(t => t.bookId !== bookId);
+        console.log(`[Scheduler] Removed ${count} tasks and ${globalCount} global summary tasks for book ${bookId}`);
     }
 
     public addTask(task: Omit<IngestionTask, 'priority' | 'status'>, initialStatus: 'pending' | 'dormant' = 'pending') {
@@ -87,6 +110,53 @@ export class IngestionScheduler {
             this.rebalancePriorities();
             this.processNext();
         }
+    }
+
+    public addGlobalSummaryTask(task: Omit<GlobalSummaryTask, 'priority' | 'status' | 'type'>, initialStatus: 'pending' | 'dormant' = 'pending') {
+        // Check if task already exists
+        const exists = this.globalSummaryTasks.find(t => 
+            t.bookId === task.bookId && 
+            t.summaryIndex === task.summaryIndex
+        );
+        if (exists) {
+            console.log(`[Scheduler] Global summary task already exists: ${task.bookId} summary ${task.summaryIndex}`);
+            return;
+        }
+
+        const newTask: GlobalSummaryTask = {
+            ...task,
+            type: 'GLOBAL_SUMMARY',
+            priority: 0,
+            status: initialStatus
+        };
+        this.globalSummaryTasks.push(newTask);
+        console.log(`[Scheduler] Added global summary task: ${task.bookId} summary ${task.summaryIndex} (words ${task.globalStartWordIndex}-${task.globalEndWordIndex}) (${initialStatus})`);
+        
+        if (initialStatus === 'pending') {
+            this.rebalancePriorities();
+            this.processNext();
+        }
+    }
+
+    private wakeUpGlobalSummaryTasks() {
+        if (!this.currentBookId) return;
+        
+        const settings = useSettingsStore.getState();
+        const summaryInterval = settings.summaryChunkSize || 2500;
+        
+        // Wake up global summaries that are within 2 intervals of current position
+        const lookaheadWords = summaryInterval * 2;
+        
+        this.globalSummaryTasks.forEach(task => {
+            if (task.status !== 'dormant') return;
+            if (task.bookId !== this.currentBookId) return;
+            
+            // Wake if the summary's end point is within lookahead
+            if (task.globalEndWordIndex <= this.currentGlobalWordIndex + lookaheadWords) {
+                task.status = 'pending';
+                console.log(`[Scheduler] Waking up global summary task: ${task.id} (ends at ${task.globalEndWordIndex}, current: ${this.currentGlobalWordIndex})`);
+            }
+        });
     }
 
     private wakeUpDormantTasks() {
@@ -219,7 +289,36 @@ export class IngestionScheduler {
             return;
         }
 
+        // Check for pending global summary tasks first (lower priority than density but important)
+        const nextGlobalSummary = this.globalSummaryTasks.find(t => t.status === 'pending');
         const nextTask = this.tasks.find(t => t.status === 'pending');
+        
+        // Prioritize density tasks over global summaries, but run global summaries when no density pending
+        const hasPendingDensity = this.tasks.some(t => t.status === 'pending' && t.type === 'DENSITY');
+        
+        if (nextGlobalSummary && !hasPendingDensity) {
+            // Execute global summary task
+            const pendingGlobal = this.globalSummaryTasks.filter(t => t.status === 'pending').length;
+            console.log(`[Scheduler] [Global Summary Queue: ${pendingGlobal} Pending] Starting: ${nextGlobalSummary.id}`);
+            
+            this.isRunning = true;
+            nextGlobalSummary.status = 'processing';
+            
+            try {
+                await this.executeGlobalSummaryTask(nextGlobalSummary);
+                console.log(`[Scheduler] [Success] Global Summary Completed: ${nextGlobalSummary.id}`);
+                nextGlobalSummary.status = 'completed';
+                this.globalSummaryTasks = this.globalSummaryTasks.filter(t => t.id !== nextGlobalSummary.id);
+            } catch (e) {
+                console.error(`[Scheduler] [Failed] Global Summary Error: ${nextGlobalSummary.id}`, e);
+                nextGlobalSummary.status = 'failed';
+            } finally {
+                this.isRunning = false;
+                this.processNext();
+            }
+            return;
+        }
+        
         if (!nextTask) {
             console.log("[Scheduler] No pending tasks.");
             return;
@@ -388,6 +487,116 @@ ${task.text.substring(0, 3000)}`;
                 aiState.setActivity(null);
                 aiState.setCurrentTask(null);
             }
+        }
+    }
+
+    /**
+     * Execute a global summary task - summarizes text across multiple chapters
+     * for a book-level summary every X words.
+     */
+    private async executeGlobalSummaryTask(task: GlobalSummaryTask) {
+        const db = await initDB();
+        const bookDoc = await db.books.findOne(task.bookId).exec();
+        if (!bookDoc) {
+            console.log(`[Scheduler] Skipping global summary for deleted book ${task.bookId}`);
+            return;
+        }
+
+        const settings = useSettingsStore.getState();
+        const aiState = useAIStore.getState();
+        const { summarizerModel } = settings;
+
+        aiState.setCurrentTask({
+            type: 'summary',
+            chunkIndex: task.summaryIndex,
+            totalChunks: 0,
+            wordsProcessed: 0,
+            totalWords: task.globalEndWordIndex - task.globalStartWordIndex,
+        });
+        aiState.setActivity(`Book Summary ${task.summaryIndex + 1}`, summarizerModel);
+        aiState.startSummaryTiming();
+
+        try {
+            // Collect text from chapters spanning this summary range
+            let collectedText = '';
+            let globalWordsSeen = 0;
+            const maxTextLength = 4000; // Characters limit for summary prompt
+
+            for (const chapterId of bookDoc.chapterIds) {
+                const chapter = await db.chapters.findOne(chapterId).exec();
+                if (!chapter || !chapter.content || chapter.content.length === 0) continue;
+                
+                const chapterStartGlobal = globalWordsSeen;
+                const chapterEndGlobal = globalWordsSeen + chapter.content.length;
+                
+                // Check if this chapter overlaps with our target range
+                if (chapterEndGlobal > task.globalStartWordIndex && chapterStartGlobal < task.globalEndWordIndex) {
+                    // Calculate which words from this chapter to include
+                    const localStart = Math.max(0, task.globalStartWordIndex - chapterStartGlobal);
+                    const localEnd = Math.min(chapter.content.length, task.globalEndWordIndex - chapterStartGlobal);
+                    
+                    const words = chapter.content.slice(localStart, localEnd);
+                    collectedText += words.join(' ') + ' ';
+                    
+                    if (collectedText.length > maxTextLength) {
+                        collectedText = collectedText.substring(0, maxTextLength);
+                        break;
+                    }
+                }
+                
+                globalWordsSeen += chapter.content.length;
+                if (globalWordsSeen >= task.globalEndWordIndex) break;
+            }
+
+            if (collectedText.trim().length === 0) {
+                console.warn(`[Scheduler] No text collected for global summary ${task.id}`);
+                return;
+            }
+
+            const summaryInstruction = settings.summaryPrompt || "Summarize the following text in 5 sentences.";
+            const prompt = `${summaryInstruction}\n\n${collectedText.trim()}`;
+
+            const { response } = await generateUnifiedCompletion(prompt, summarizerModel);
+            const summary = response.trim();
+
+            console.log(`[Scheduler] Global Summary ${task.summaryIndex} (${summary.length} chars):`, summary.substring(0, 200));
+
+            // Save to book document
+            await bookDoc.incrementalModify(doc => {
+                const globalSummaries: GlobalSummaryType[] = [...(doc.globalSummaries || [])];
+                
+                // Find existing or add new
+                const existingIndex = globalSummaries.findIndex(s => s.id === task.id);
+                const summaryDoc: GlobalSummaryType = {
+                    id: task.id,
+                    startWordIndex: task.globalStartWordIndex,
+                    endWordIndex: task.globalEndWordIndex,
+                    startChapterId: task.startChapterId,
+                    endChapterId: task.endChapterId,
+                    summary,
+                    generatedAt: Date.now()
+                };
+                
+                if (existingIndex >= 0) {
+                    globalSummaries[existingIndex] = summaryDoc;
+                } else {
+                    globalSummaries.push(summaryDoc);
+                    // Sort by start index
+                    globalSummaries.sort((a, b) => a.startWordIndex - b.startWordIndex);
+                }
+                
+                return {
+                    ...doc,
+                    globalSummaries
+                };
+            });
+
+            console.log(`[Scheduler] Saved global summary ${task.summaryIndex} to book ${task.bookId}`);
+
+        } finally {
+            aiState.completeSummaryTiming();
+            aiState.setActivity(null);
+            aiState.setCurrentTask(null);
         }
     }
 }

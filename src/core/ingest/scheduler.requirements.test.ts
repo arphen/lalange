@@ -137,7 +137,8 @@ describe('Ingestion Scheduling Requirements', () => {
         // Check Scheduler Tasks
         const tasks = (scheduler as any).tasks;
         
-        // We expect chunks for Density and Summary.
+        // With the global summary architecture change, we only schedule DENSITY tasks per-chunk.
+        // Global summaries are scheduled separately and independently of chunk boundaries.
         
         const densityTasks = tasks.filter((t: any) => t.type === 'DENSITY');
         const summaryTasks = tasks.filter((t: any) => t.type === 'SUMMARY');
@@ -154,16 +155,9 @@ describe('Ingestion Scheduling Requirements', () => {
         const activeDensityIndices = activeDensity.map((t: any) => t.subchapterIndex).sort((a: number, b: number) => a - b);
         expect(activeDensityIndices).toEqual([0, 1, 2, 3, 4, 5]);
 
-        // Check Summary Tasks - 5 initial summary tasks (INITIAL_SUMMARY_CHUNKS)
-        const activeSummary = summaryTasks.filter((t: any) => t.status !== 'dormant');
-        
-        if (activeSummary.length !== 5) {
-            console.error(`Expected 5 active summary tasks, got ${activeSummary.length}:`, activeSummary.map((t:any) => t.subchapterIndex));
-        }
-
-        expect(activeSummary.length, 'Should have exactly 5 initial summary tasks').toBe(5);
-        const activeSummaryIndices = activeSummary.map((t: any) => t.subchapterIndex).sort((a: number, b: number) => a - b);
-        expect(activeSummaryIndices).toEqual([0, 1, 2, 3, 4]);
+        // Per-chunk SUMMARY tasks are no longer scheduled - global summaries are used instead.
+        // Verify no per-chunk SUMMARY tasks are scheduled.
+        expect(summaryTasks.length, 'Should have no per-chunk summary tasks with global summary architecture').toBe(0);
     });
 
     it('should wakeup the next chunk when cursor enters the first chunk', async () => {

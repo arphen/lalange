@@ -3,6 +3,16 @@ import { getRxStorageDexie } from 'rxdb/plugins/storage-dexie';
 import { bookSchema, chapterSchema, readingStateSchema, imageSchema, rawFileSchema } from './schema';
 
 // Define types for the database
+export type GlobalSummaryType = {
+    id: string;                    // e.g., "book123_summary_0"
+    startWordIndex: number;        // Global word index (across all chapters)
+    endWordIndex: number;
+    startChapterId: string;
+    endChapterId: string;
+    summary: string;
+    generatedAt: number;           // Timestamp
+};
+
 export type BookDocType = {
     id: string;
     title: string;
@@ -10,6 +20,7 @@ export type BookDocType = {
     cover?: string;
     totalWords: number;
     chapterIds: string[];
+    globalSummaries?: GlobalSummaryType[];  // Book-level summaries every X words
 };
 
 export type RawFileDocType = {
