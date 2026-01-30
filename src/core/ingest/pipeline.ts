@@ -431,6 +431,10 @@ export const processChaptersInBackground = async (bookId: string) => {
  * Detection:
  * - Density incomplete: densities[i] === 0 for any word in the subchapter range
  * - Summary incomplete: subchapter.summary === '' (empty string)
+ * 
+ * Optimization:
+ * - Chunks BEHIND the cursor are skipped entirely (user already read them)
+ * - Only current + future chunks get scheduled
  */
 export const resumeIncompleteAnalysis = async (bookId: string, currentChapterId?: string, currentWordIndex: number = 0) => {
     const db = await initDB();
@@ -446,8 +450,12 @@ export const resumeIncompleteAnalysis = async (bookId: string, currentChapterId?
     }
 
     let totalScheduled = 0;
+    let skippedPast = 0;
     let activeScheduled = 0;
     const LOOKAHEAD_CHUNKS = 3;
+
+    // Track if we've passed the current chapter in the book
+    let passedCurrentChapter = !currentChapterId; // If no current chapter, process all
 
     for (const chapterId of book.chapterIds) {
         const chapter = await db.chapters.findOne(chapterId).exec();
@@ -456,9 +464,30 @@ export const resumeIncompleteAnalysis = async (bookId: string, currentChapterId?
 
         const densities = chapter.densities || [];
         const isCurrentChapter = chapterId === currentChapterId;
+        
+        // Skip chapters we've completely passed
+        if (!passedCurrentChapter && !isCurrentChapter) {
+            skippedPast += chapter.subchapters.length * 2; // Skip both density and summary tasks
+            continue;
+        }
+        if (isCurrentChapter) {
+            passedCurrentChapter = true;
+        }
+
+        // Find which subchapter the cursor is in
+        const cursorSubchapterIndex = isCurrentChapter 
+            ? chapter.subchapters.findIndex(s => currentWordIndex >= s.startWordIndex && currentWordIndex < s.endWordIndex)
+            : -1;
 
         for (let i = 0; i < chapter.subchapters.length; i++) {
             const sub = chapter.subchapters[i];
+            
+            // Skip chunks BEHIND the cursor in the current chapter
+            // User already read these - no point computing density
+            if (isCurrentChapter && cursorSubchapterIndex >= 0 && i < cursorSubchapterIndex) {
+                skippedPast += 2; // Skip both density and summary
+                continue;
+            }
             
             // Check if density is incomplete for this subchapter
             // Density is 0 when pending, > 0 when processed
@@ -470,10 +499,9 @@ export const resumeIncompleteAnalysis = async (bookId: string, currentChapterId?
 
             if (!hasPendingDensity && !hasPendingSummary) continue; // Already complete
 
-            // Determine status: active for current chapter + lookahead, dormant otherwise
-            const isNearCursor = isCurrentChapter && i <= (currentWordIndex > 0 ? 
-                chapter.subchapters.findIndex(s => currentWordIndex >= s.startWordIndex && currentWordIndex < s.endWordIndex) + LOOKAHEAD_CHUNKS : 
-                LOOKAHEAD_CHUNKS);
+            // Determine status: active for current chunk + lookahead, dormant otherwise
+            const distanceFromCursor = isCurrentChapter ? (i - Math.max(0, cursorSubchapterIndex)) : Infinity;
+            const isNearCursor = distanceFromCursor <= LOOKAHEAD_CHUNKS;
             const initialStatus = isNearCursor ? 'pending' : 'dormant';
             if (isNearCursor) activeScheduled++;
 
@@ -512,8 +540,8 @@ export const resumeIncompleteAnalysis = async (bookId: string, currentChapterId?
         }
     }
 
-    if (totalScheduled > 0) {
-        console.log(`[Pipeline] Resumed ${totalScheduled} incomplete tasks for book ${bookId} (${activeScheduled} active, ${totalScheduled - activeScheduled} dormant)`);
+    if (totalScheduled > 0 || skippedPast > 0) {
+        console.log(`[Pipeline] Resumed ${totalScheduled} incomplete tasks for book ${bookId} (${activeScheduled} active, ${totalScheduled - activeScheduled} dormant, ${skippedPast} skipped past cursor)`);
     } else {
         console.log(`[Pipeline] No incomplete tasks found for book ${bookId}`);
     }
