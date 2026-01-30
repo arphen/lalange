@@ -3,6 +3,7 @@
  * 
  * Testing the psychological intuition: dashes are signifiers of absence,
  * marking cognitive pauses that deserve their own moment in the visual stream.
+ * Hyphenated and slashed words are split for readability in RSVP.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -10,6 +11,8 @@ import {
     tokenizeWord,
     tokenizeForRSVP,
     isStandaloneDash,
+    isHyphenatedPart,
+    isSlashPart,
     isPauseToken,
     getTokenDisplayProps,
     STANDALONE_DASHES,
@@ -66,6 +69,48 @@ describe('tokenize', () => {
         });
     });
 
+    describe('isHyphenatedPart', () => {
+        it('should recognize hyphenated parts', () => {
+            expect(isHyphenatedPart('self-')).toBe(true);
+            expect(isHyphenatedPart('well-')).toBe(true);
+            expect(isHyphenatedPart('nineteenth-')).toBe(true);
+        });
+
+        it('should NOT recognize just a hyphen', () => {
+            expect(isHyphenatedPart('-')).toBe(false);
+        });
+
+        it('should NOT recognize regular words', () => {
+            expect(isHyphenatedPart('hello')).toBe(false);
+            expect(isHyphenatedPart('aware')).toBe(false);
+        });
+
+        it('should NOT recognize words with internal hyphens', () => {
+            expect(isHyphenatedPart('self-aware')).toBe(false);
+        });
+    });
+
+    describe('isSlashPart', () => {
+        it('should recognize slash parts', () => {
+            expect(isSlashPart('and/')).toBe(true);
+            expect(isSlashPart('yes/')).toBe(true);
+            expect(isSlashPart('him/')).toBe(true);
+        });
+
+        it('should NOT recognize just a slash', () => {
+            expect(isSlashPart('/')).toBe(false);
+        });
+
+        it('should NOT recognize regular words', () => {
+            expect(isSlashPart('hello')).toBe(false);
+            expect(isSlashPart('or')).toBe(false);
+        });
+
+        it('should NOT recognize words with internal slashes', () => {
+            expect(isSlashPart('and/or')).toBe(false);
+        });
+    });
+
     describe('tokenizeWord', () => {
         describe('words without dashes', () => {
             it('should return word unchanged for normal words', () => {
@@ -81,10 +126,16 @@ describe('tokenize', () => {
             });
 
             it('should handle hyphenated words (regular hyphens)', () => {
-                // Regular hyphens should NOT be split - they're part of compound words
-                expect(tokenizeWord('self-aware')).toEqual(['self-aware']);
-                expect(tokenizeWord('well-known')).toEqual(['well-known']);
-                expect(tokenizeWord('state-of-the-art')).toEqual(['state-of-the-art']);
+                // Regular hyphens ARE now split for RSVP readability
+                expect(tokenizeWord('self-aware')).toEqual(['self-', 'aware']);
+                expect(tokenizeWord('well-known')).toEqual(['well-', 'known']);
+                expect(tokenizeWord('state-of-the-art')).toEqual(['state-', 'of-', 'the-', 'art']);
+            });
+
+            it('should handle slash constructions', () => {
+                expect(tokenizeWord('and/or')).toEqual(['and/', 'or']);
+                expect(tokenizeWord('yes/no')).toEqual(['yes/', 'no']);
+                expect(tokenizeWord('him/her/them')).toEqual(['him/', 'her/', 'them']);
             });
 
             it('should handle empty input', () => {
@@ -244,10 +295,12 @@ describe('tokenize', () => {
                 expect(result.tokens[dashIndex + 1]).toBe('but');
             });
 
-            it('should preserve hyphenated words while extracting dashes', () => {
+            it('should split hyphenated words while extracting dashes', () => {
                 const text = 'The self-aware robot—if it could be called that—pondered.';
                 const result = tokenizeForRSVP(text);
-                expect(result.tokens).toContain('self-aware');
+                // "self-aware" is now split into "self-" and "aware"
+                expect(result.tokens).toContain('self-');
+                expect(result.tokens).toContain('aware');
                 expect(result.tokens.filter(t => t === '—').length).toBe(2);
             });
 
@@ -324,6 +377,73 @@ describe('tokenize', () => {
             it('should NOT have special CSS class for regular words', () => {
                 const props = getTokenDisplayProps('hello');
                 expect(props.cssClass).toBeUndefined();
+            });
+        });
+
+        describe('hyphenated parts', () => {
+            it('should have higher display time for hyphenated parts', () => {
+                const props = getTokenDisplayProps('self-');
+                expect(props.displayTimeMultiplier).toBe(1.3);
+            });
+
+            it('should NOT mark hyphenated parts as pause', () => {
+                const props = getTokenDisplayProps('self-');
+                expect(props.isPause).toBe(false);
+            });
+
+            it('should have special CSS class for hyphenated parts', () => {
+                const props = getTokenDisplayProps('self-');
+                expect(props.cssClass).toBe('rsvp-hyphenated-part');
+            });
+
+            it('should use saccade rendering for hyphenated parts', () => {
+                const props = getTokenDisplayProps('self-');
+                expect(props.useSaccadeRendering).toBe(true);
+            });
+        });
+
+        describe('slash parts', () => {
+            it('should have higher display time for slash parts', () => {
+                const props = getTokenDisplayProps('and/');
+                expect(props.displayTimeMultiplier).toBe(1.3);
+            });
+
+            it('should NOT mark slash parts as pause', () => {
+                const props = getTokenDisplayProps('and/');
+                expect(props.isPause).toBe(false);
+            });
+
+            it('should have special CSS class for slash parts', () => {
+                const props = getTokenDisplayProps('and/');
+                expect(props.cssClass).toBe('rsvp-slash-part');
+            });
+        });
+
+        describe('long words', () => {
+            it('should have higher display time for long words (>10 chars)', () => {
+                const props = getTokenDisplayProps('phenomenology'); // 13 chars
+                expect(props.displayTimeMultiplier).toBeGreaterThan(1.0);
+            });
+
+            it('should have normal display time for short words', () => {
+                const props = getTokenDisplayProps('hello'); // 5 chars
+                expect(props.displayTimeMultiplier).toBe(1.0);
+            });
+
+            it('should have normal display time for 10-char words', () => {
+                const props = getTokenDisplayProps('basketball'); // exactly 10 chars
+                expect(props.displayTimeMultiplier).toBe(1.0);
+            });
+
+            it('should scale extra time by length beyond threshold', () => {
+                const short = getTokenDisplayProps('comfortable'); // 11 chars, 1 extra
+                const long = getTokenDisplayProps('extraordinarily'); // 15 chars, 5 extra
+                expect(long.displayTimeMultiplier).toBeGreaterThan(short.displayTimeMultiplier);
+            });
+
+            it('should NOT mark long words as pause', () => {
+                const props = getTokenDisplayProps('phenomenology');
+                expect(props.isPause).toBe(false);
             });
         });
     });
