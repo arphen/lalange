@@ -8,7 +8,7 @@ import { useSettingsStore } from '../../core/store/settings';
 import { useTTSStore } from '../../core/store/tts';
 
 import { scheduler } from '../../core/ingest/scheduler';
-import { processChaptersInBackground } from '../../core/ingest/pipeline';
+import { processChaptersInBackground, resumeIncompleteAnalysis } from '../../core/ingest/pipeline';
 
 interface ReaderProps {
     book: BookDocType;
@@ -783,10 +783,23 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
     }, [chapters]);
 
     // Trigger background processing when book is opened
-    // This ensures density/summary tasks are processed even for previously ingested books
+    // This handles two cases:
+    // 1. New books: processChaptersInBackground schedules initial tasks
+    // 2. Reopened books: resumeIncompleteAnalysis re-schedules tasks lost on reload
     useEffect(() => {
         processChaptersInBackground(book.id).catch(console.error);
     }, [book.id]);
+    
+    // Resume incomplete analysis when chapter changes (not on every word)
+    // This re-schedules density/summary tasks that were lost when the page was reloaded
+    useEffect(() => {
+        if (currentChapter) {
+            resumeIncompleteAnalysis(book.id, currentChapter.id, currentWordIndex).catch(console.error);
+        }
+    // Intentionally only depend on currentChapter?.id, not currentWordIndex
+    // We don't want to re-schedule on every word - the scheduler handles cursor updates separately
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [book.id, currentChapter?.id]);
 
     // Effect to render word when chapter or index changes, ensuring ref is available
     // Use useLayoutEffect to render synchronously after DOM mutations, before browser paint

@@ -6,7 +6,7 @@ import { useTTSStore } from '../../core/store/tts';
 import { getEngine, MODEL_INFO, type ModelTier, isModelCached, deleteModel } from '../../core/ai/webllm';
 import { getAvailableStrategies, type DurationStrategyId } from '../../core/rsvp/duration';
 import { getAllDisplayPlugins, type DisplayPluginId } from '../../core/rsvp/display';
-import { VOICES, TTS_MODEL_OPTIONS, initTTS, type TTSQuantization } from '../../core/tts';
+import { VOICES, TTS_MODEL_OPTIONS, initTTS, clearTTSCache, type TTSQuantization } from '../../core/tts';
 import { clsx } from 'clsx';
 import { BrandName } from '../BrandName';
 import { SeoHead } from '../SeoHead';
@@ -601,6 +601,7 @@ const TTSSettings: React.FC = () => {
     } = useTTSStore();
     
     const [isDownloading, setIsDownloading] = useState(false);
+    const [isClearingCache, setIsClearingCache] = useState(false);
     
     const handleDownloadModel = async () => {
         setIsDownloading(true);
@@ -610,6 +611,17 @@ const TTSSettings: React.FC = () => {
             console.error('Failed to download TTS model:', e);
         } finally {
             setIsDownloading(false);
+        }
+    };
+    
+    const handleClearCache = async () => {
+        setIsClearingCache(true);
+        try {
+            await clearTTSCache();
+        } catch (e) {
+            console.error('Failed to clear TTS cache:', e);
+        } finally {
+            setIsClearingCache(false);
         }
     };
     
@@ -658,20 +670,37 @@ const TTSSettings: React.FC = () => {
                             {isReady ? '✓ Model loaded and ready' : isLoading ? 'Loading...' : 'Model not loaded'}
                         </p>
                     </div>
-                    {!isReady && (
-                        <button
-                            onClick={handleDownloadModel}
-                            disabled={isLoading || isDownloading}
-                            className={clsx(
-                                "px-4 py-2 rounded text-sm font-bold transition-all",
-                                isLoading || isDownloading
-                                    ? "bg-gray-700 text-gray-400 cursor-not-allowed"
-                                    : "bg-purple-600 hover:bg-purple-500 text-white"
-                            )}
-                        >
-                            {isLoading ? 'LOADING...' : 'DOWNLOAD MODEL'}
-                        </button>
-                    )}
+                    <div className="flex gap-2">
+                        {isReady && (
+                            <button
+                                onClick={handleClearCache}
+                                disabled={isClearingCache}
+                                className={clsx(
+                                    "px-3 py-2 rounded text-xs font-bold transition-all",
+                                    isClearingCache
+                                        ? "bg-gray-700 text-gray-400 cursor-not-allowed"
+                                        : "bg-red-600/30 hover:bg-red-600/50 text-red-300 border border-red-500/30"
+                                )}
+                                title="Clear cached model to force re-download. Fixes gibberish audio."
+                            >
+                                {isClearingCache ? 'CLEARING...' : 'CLEAR CACHE'}
+                            </button>
+                        )}
+                        {!isReady && (
+                            <button
+                                onClick={handleDownloadModel}
+                                disabled={isLoading || isDownloading}
+                                className={clsx(
+                                    "px-4 py-2 rounded text-sm font-bold transition-all",
+                                    isLoading || isDownloading
+                                        ? "bg-gray-700 text-gray-400 cursor-not-allowed"
+                                        : "bg-purple-600 hover:bg-purple-500 text-white"
+                                )}
+                            >
+                                {isLoading ? 'LOADING...' : 'DOWNLOAD MODEL'}
+                            </button>
+                        )}
+                    </div>
                 </div>
                 
                 {(isLoading || isDownloading) && (

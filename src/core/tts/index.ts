@@ -6,6 +6,7 @@ export {
     // Core TTS functions
     initTTS,
     unloadTTS,
+    clearTTSCache,
     isTTSReady,
     generateSpeech,
     streamSpeech,

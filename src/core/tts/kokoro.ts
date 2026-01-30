@@ -203,6 +203,36 @@ export async function unloadTTS(): Promise<void> {
 }
 
 /**
+ * Clear the TTS model cache from browser storage.
+ * This forces a fresh download on next initialization.
+ * Useful for fixing corrupted model downloads that cause gibberish output.
+ */
+export async function clearTTSCache(): Promise<void> {
+    // First unload the current instance
+    await unloadTTS();
+    
+    // transformers.js (used by kokoro-js) caches models in the Cache API
+    // The cache name is "transformers-cache"
+    const cacheNames = await caches.keys();
+    
+    let cleared = false;
+    for (const name of cacheNames) {
+        // Clear transformers cache and any kokoro-related caches
+        if (name.includes('transformers') || name.includes('kokoro') || name.includes('onnx')) {
+            await caches.delete(name);
+            console.log(`[TTS] Cleared cache: ${name}`);
+            cleared = true;
+        }
+    }
+    
+    if (cleared) {
+        console.log('[TTS] Model cache cleared. Model will re-download on next use.');
+    } else {
+        console.log('[TTS] No TTS cache found to clear.');
+    }
+}
+
+/**
  * Check if TTS is ready
  */
 export function isTTSReady(): boolean {
