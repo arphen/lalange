@@ -15,6 +15,7 @@ vi.mock('../store/settings', () => ({
         getState: vi.fn(() => ({
             librarianModelTier: 'haiku',
             aiEnabled: true,
+            wpm: 300, // 300 WPM = 900 words for 3 min lookahead
         })),
     },
 }));

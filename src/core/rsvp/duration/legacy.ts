@@ -27,6 +27,28 @@ import type {
 const DASH_TOKEN_DELAY = 400; // ms - significant pause for cognitive gap
 
 /**
+ * Delay for hyphenated word parts (e.g., "self-" in "self-aware").
+ * These need a pause to process the compound construction.
+ */
+const HYPHEN_PART_DELAY = 150; // ms - pause before continuation
+
+/**
+ * Delay for slash parts (e.g., "and/" in "and/or").
+ * Similar to hyphens, marks an alternative construction.
+ */
+const SLASH_PART_DELAY = 150; // ms - pause for alternative
+
+/**
+ * Threshold for extra long word penalty (characters).
+ */
+const LONG_WORD_THRESHOLD = 10;
+
+/**
+ * Extra milliseconds per character beyond the threshold.
+ */
+const LONG_WORD_MS_PER_CHAR = 15;
+
+/**
  * Calculate visual processing delay based on word characteristics.
  * Includes punctuation penalties and length-based visual gain.
  * 
@@ -36,6 +58,18 @@ export const calculateVisualDelay = (word: string, isDashToken: boolean = false)
     // Standalone dash tokens get special treatment
     if (isDashToken) {
         return DASH_TOKEN_DELAY;
+    }
+    
+    // Check for hyphenated parts (e.g., "self-")
+    if (word.endsWith('-') && word.length > 1) {
+        // Add hyphen delay plus normal visual processing
+        return HYPHEN_PART_DELAY + 25 * Math.sqrt(word.length);
+    }
+    
+    // Check for slash parts (e.g., "and/")
+    if (word.endsWith('/') && word.length > 1) {
+        // Add slash delay plus normal visual processing
+        return SLASH_PART_DELAY + 25 * Math.sqrt(word.length);
     }
 
     let delay = 0;
@@ -56,6 +90,14 @@ export const calculateVisualDelay = (word: string, isDashToken: boolean = false)
     // Formula: 25ms * sqrt(length)
     const lengthPenalty = 25 * Math.sqrt(word.length);
     delay += lengthPenalty;
+    
+    // Extra penalty for very long words (like "phenomenology")
+    // Strip punctuation for length calculation
+    const strippedWord = word.replace(/[^\w]/g, '');
+    const extraChars = Math.max(0, strippedWord.length - LONG_WORD_THRESHOLD);
+    if (extraChars > 0) {
+        delay += extraChars * LONG_WORD_MS_PER_CHAR;
+    }
 
     return delay;
 };

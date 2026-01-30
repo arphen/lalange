@@ -6,6 +6,7 @@ type RegisterSWOptions = {
     onOfflineReady?: () => void;
     onRegisteredSW?: (swUrl: string, registration: ServiceWorkerRegistration | undefined) => void;
     onRegisterError?: (error: Error) => void;
+    immediate?: boolean;
 };
 
 /**
@@ -20,11 +21,21 @@ type RegisterSWOptions = {
 export const UpdatePrompt: React.FC = () => {
     const [showPrompt, setShowPrompt] = useState(false);
     const [updateFn, setUpdateFn] = useState<((reload?: boolean) => Promise<void>) | null>(null);
+    const [isUpdating, setIsUpdating] = useState(false);
     const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const registrationRef = useRef<ServiceWorkerRegistration | null>(null);
     
     useEffect(() => {
         // Only run in production (PWA is disabled in dev - see vite.config.ts)
         if (import.meta.env.DEV || import.meta.env.MODE === 'test') return;
+        
+        // Listen for controller change - this fires when a new SW takes control
+        // Reload the page to ensure we're running the latest code
+        const handleControllerChange = () => {
+            console.log('[SW] Controller changed, reloading page...');
+            window.location.reload();
+        };
+        navigator.serviceWorker?.addEventListener('controllerchange', handleControllerChange);
         
         // Use dynamic import with try/catch to handle the virtual module not existing
         // This pattern avoids eval-like constructs while still handling test environments
@@ -36,8 +47,10 @@ export const UpdatePrompt: React.FC = () => {
                 const { registerSW } = pwaModule as { registerSW: (opts: RegisterSWOptions) => (reload?: boolean) => Promise<void> };
                 
                 const updateSW = registerSW({
+                    immediate: true, // Check for updates immediately on load
                     onNeedRefresh() {
                         // New content available, show the prompt
+                        console.log('[SW] New content available, showing update prompt');
                         setShowPrompt(true);
                         setUpdateFn(() => updateSW);
                     },
@@ -45,13 +58,19 @@ export const UpdatePrompt: React.FC = () => {
                         console.log('[SW] App ready for offline use');
                     },
                     onRegisteredSW(swUrl: string, registration: ServiceWorkerRegistration | undefined) {
-                        // Check for updates every 5 minutes
-                        if (registration) {
-                            intervalRef.current = setInterval(() => {
-                                registration.update();
-                            }, 5 * 60 * 1000);
-                        }
                         console.log('[SW] Registered:', swUrl);
+                        if (registration) {
+                            registrationRef.current = registration;
+                            
+                            // Check for updates every 60 seconds (more aggressive)
+                            intervalRef.current = setInterval(() => {
+                                console.log('[SW] Checking for updates...');
+                                registration.update().catch(console.error);
+                            }, 60 * 1000);
+                            
+                            // Also check immediately
+                            registration.update().catch(console.error);
+                        }
                     },
                     onRegisterError(error: Error) {
                         console.error('[SW] Registration error:', error);
@@ -66,17 +85,42 @@ export const UpdatePrompt: React.FC = () => {
         
         void loadPWA();
         
-        // Cleanup interval on unmount
+        // Cleanup on unmount
         return () => {
             if (intervalRef.current) {
                 clearInterval(intervalRef.current);
             }
+            navigator.serviceWorker?.removeEventListener('controllerchange', handleControllerChange);
         };
     }, []);
 
-    const handleUpdate = useCallback(() => {
-        if (updateFn) {
-            updateFn(true); // true = reload page after update
+    const handleUpdate = useCallback(async () => {
+        setIsUpdating(true);
+        
+        try {
+            // First, try to get the waiting service worker to skip waiting
+            const registration = registrationRef.current;
+            if (registration?.waiting) {
+                console.log('[SW] Telling waiting worker to skip waiting...');
+                registration.waiting.postMessage({ type: 'SKIP_WAITING' });
+            }
+            
+            // Then call the updateSW function
+            if (updateFn) {
+                console.log('[SW] Calling updateSW(true)...');
+                await updateFn(true); // true = reload page after update
+            } else {
+                // Fallback: just reload the page
+                console.log('[SW] No updateFn, reloading page directly...');
+                window.location.reload();
+            }
+        } catch (error) {
+            console.error('[SW] Update failed:', error);
+            // Fallback: reload anyway
+            window.location.reload();
+        } finally {
+            // Reset state in case reload doesn't happen (e.g., blocked by browser)
+            setIsUpdating(false);
         }
     }, [updateFn]);
 
@@ -109,13 +153,15 @@ export const UpdatePrompt: React.FC = () => {
                         <div className="flex gap-2 mt-3">
                             <button
                                 onClick={handleUpdate}
-                                className="px-3 py-1.5 bg-dune-gold text-black text-xs font-bold rounded hover:bg-white transition-colors"
+                                disabled={isUpdating}
+                                className="px-3 py-1.5 bg-dune-gold text-black text-xs font-bold rounded hover:bg-white transition-colors disabled:opacity-50 disabled:cursor-wait"
                             >
-                                Update Now
+                                {isUpdating ? 'Updating...' : 'Update Now'}
                             </button>
                             <button
                                 onClick={handleDismiss}
-                                className="px-3 py-1.5 text-gray-400 text-xs hover:text-white transition-colors"
+                                disabled={isUpdating}
+                                className="px-3 py-1.5 text-gray-400 text-xs hover:text-white transition-colors disabled:opacity-50"
                             >
                                 Later
                             </button>

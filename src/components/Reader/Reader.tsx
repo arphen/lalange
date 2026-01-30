@@ -1,5 +1,5 @@
 import React, { useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo } from 'react';
-import { type BookDocType, type ChapterDocType, type ReadingStateDocType, initDB } from '../../core/sync/db';
+import { type BookDocType, type ChapterDocType, type ReadingStateDocType, type GlobalSummaryType, initDB } from '../../core/sync/db';
 import { getDisplayPlugin, type DisplayPlugin, getVelocireaderORPIndex } from '../../core/rsvp/display';
 import { getVisualProcessingDelay, getSpeedFactor } from '../../core/rsvp/timing';
 import { Sidebar } from './Sidebar';
@@ -93,6 +93,7 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
 
     // Sidebar & Chapters
     const [chapters, setChapters] = useState<ChapterDocType[]>([]);
+    const [globalSummaries, setGlobalSummaries] = useState<GlobalSummaryType[]>([]);
     const [showChapters, setShowChapters] = useState(true);
     const [inspectingChapterId, setInspectingChapterId] = useState<string | null>(null);
     const inspectingChapter = chapters.find(c => c.id === inspectingChapterId);
@@ -125,6 +126,7 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
 
     // Summary Mode Refs
     const [isSummaryActive, setIsSummaryActive] = useState(false);
+    const [activeGlobalSummaryId, setActiveGlobalSummaryId] = useState<string | null>(null);
     const [countdown, setCountdown] = useState<number | null>(null);
     const [transitionLabel, setTransitionLabel] = useState<string | null>(null); // To show "Chunk Summary:" or "Resuming Text:"
     const countdownIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -132,6 +134,8 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
     const isSummaryActiveRef = useRef(false);
     const savedChapterIndexRef = useRef(0);
     const summaryWordsRef = useRef<string[]>([]);
+    // Track the last boundary we triggered to prevent re-triggering on restore
+    const lastTriggeredBoundaryRef = useRef<number>(-1);
     
     // Define renderWord early, before it's used in startTransition or other callbacks
     // Performance: renderContext=false skips the expensive prev/next context panel updates
@@ -304,6 +308,7 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
             // Restore from summary mode
             isSummaryActiveRef.current = false;
             setIsSummaryActive(false);
+            setActiveGlobalSummaryId(null);
 
             // Restore index
             indexRef.current = savedChapterIndexRef.current;
@@ -318,6 +323,32 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
             setIsPlaying(true);
         }
     }, [wpm, renderWord, countdown, setIsPlaying, setCountdown, setTransitionLabel]);
+
+    const handlePlayGlobalSummary = useCallback((summary: GlobalSummaryType) => {
+        // Stop current playback
+        setIsPlaying(false);
+        
+        // Save current position if not already in summary mode
+        if (!isSummaryActiveRef.current) {
+            savedChapterIndexRef.current = indexRef.current;
+        }
+        
+        // Set up summary playback
+        summaryWordsRef.current = summary.summary.split(' ');
+        isSummaryActiveRef.current = true;
+        setIsSummaryActive(true);
+        setActiveGlobalSummaryId(summary.id);
+        indexRef.current = 0;
+        wpmRef.current = summaryWpm;
+        
+        // Render the first word
+        renderWord(0, summaryWordsRef.current);
+        
+        // Close sidebar and start playing
+        setShowChapters(false);
+        accumulatorRef.current = 0;
+        setIsPlaying(true);
+    }, [summaryWpm, renderWord, setIsPlaying, setShowChapters]);
 
     const saveProgress = React.useCallback(async () => {
         if (loading || !readingState || !currentChapter) return;
@@ -369,6 +400,8 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
 
                 indexRef.current = initialIndex;
                 setCurrentWordIndex(initialIndex);
+                // Reset boundary tracking for new chapter
+                lastTriggeredBoundaryRef.current = -1;
                 // Don't call renderWord here - refs may not be mounted yet
                 // The useLayoutEffect will call renderWord once React has rendered the DOM
                 setLoading(false);
@@ -554,10 +587,14 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
                 wordTimestampsRef.current.push(processTimeRef.current);
 
                 // Check for Subchapter Boundary (only if NOT in summary mode)
+                // Also skip if we already triggered this exact boundary (prevents loops)
                 if (!isSummaryActiveRef.current) {
-                    const sub = currentChapterRef.current?.subchapters?.find(s => s.endWordIndex === indexRef.current);
+                    const sub = currentChapterRef.current?.subchapters?.find(
+                        s => s.endWordIndex === indexRef.current && s.endWordIndex !== lastTriggeredBoundaryRef.current
+                    );
                     if (sub && sub.summary) {
                         isPlayingRef.current = false;
+                        lastTriggeredBoundaryRef.current = sub.endWordIndex;
                         
                         startTransition('next: summary', () => {
                             isSummaryActiveRef.current = true;
@@ -585,6 +622,7 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
                     startTransition('next: text', () => {
                         isSummaryActiveRef.current = false;
                         setIsSummaryActive(false);
+                        setActiveGlobalSummaryId(null);
                         indexRef.current = savedChapterIndexRef.current;
                         wpmRef.current = wpm;
                         renderWord(indexRef.current, wordsRef.current);
@@ -731,6 +769,17 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
                 setChapters(docs.map(d => d.toJSON() as ChapterDocType));
             });
 
+            // Subscribe to book document for globalSummaries updates
+            let bookSub: { unsubscribe: () => void } | null = null;
+            if (db.books) {
+                bookSub = db.books.findOne(book.id).$.subscribe(bookDoc => {
+                    if (bookDoc) {
+                        const bookData = bookDoc.toJSON() as BookDocType;
+                        setGlobalSummaries(bookData.globalSummaries || []);
+                    }
+                });
+            }
+
             // Get reading state
             let state = await db.reading_states.findOne(book.id).exec();
             if (!state) {
@@ -757,10 +806,14 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
             } else {
                 setLoading(false);
             }
+            
+            // Return cleanup for book subscription
+            return () => bookSub?.unsubscribe();
         };
-        loadState();
+        const bookSubCleanup = loadState();
         return () => {
             if (sub) sub.unsubscribe();
+            bookSubCleanup.then(cleanup => cleanup?.());
         };
     }, [book.id, book.chapterIds, loadChapter]);
 
@@ -875,8 +928,8 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
     // That index equals `sub.endWordIndex`.
     // So we can find the subchapter index using that.
     
-    let activeSummaryId: string | null = null;
-    if (isSummaryActive && currentChapter) {
+    let activeSummaryId: string | null = activeGlobalSummaryId;
+    if (!activeSummaryId && isSummaryActive && currentChapter) {
          const chapterId = currentChapter.id;
          // Find sub whose end index matches saved ref
          const subIdx = currentChapter.subchapters?.findIndex(s => s.endWordIndex === savedChapterIndexRef.current);
@@ -1049,6 +1102,8 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
                     currentWordIndex={currentWordIndex}
                     now={now}
                     activeSummaryId={activeSummaryId}
+                    globalSummaries={globalSummaries}
+                    onPlayGlobalSummary={handlePlayGlobalSummary}
                 />
             </div>
 
@@ -1065,16 +1120,12 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
                     <div 
                         className="flex-1 w-full overflow-hidden relative mask-gradient-top flex justify-center"
                     >
-                        {riverTopEnabled ? (
-                            <div 
-                                ref={prevContainerRef} 
-                                className="reader-context-panel w-full max-w-2xl h-full flex flex-wrap content-end justify-start p-8 md:p-16 font-mono text-lg md:text-xl leading-relaxed select-none overflow-hidden border-x border-white/5 cursor-ns-resize" 
-                                onClick={handleRiverClick}
-                                onWheel={handleWheel}
-                            ></div>
-                        ) : (
-                            <div className="w-full max-w-2xl h-full" />
-                        )}
+                        <div 
+                            ref={prevContainerRef} 
+                            className={`reader-context-panel w-full max-w-2xl h-full flex flex-wrap content-end justify-start p-8 md:p-16 font-mono text-lg md:text-xl leading-relaxed select-none overflow-hidden border-x border-white/5 cursor-ns-resize ${riverTopEnabled ? '' : 'invisible'}`}
+                            onClick={handleRiverClick}
+                            onWheel={handleWheel}
+                        ></div>
                         {/* River Toggle - Top */}
                         <button
                             onClick={(e) => { e.stopPropagation(); setRiverTopEnabled(!riverTopEnabled); }}
@@ -1106,7 +1157,7 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
                         {/* This allows the playback loop to update the display at 60fps without React re-renders */}
                             <div 
                                 ref={rsvpRef} 
-                                className={`text-6xl md:text-8xl font-mono tracking-tight whitespace-nowrap drop-shadow-[0_0_15px_rgba(255,255,255,0.5)] ${displayPlugin.getContainerClass()} ${isSummaryActive ? 'text-amber-400 italic' : 'text-white'}`}
+                                className={`text-6xl md:text-8xl font-mono tracking-tight whitespace-nowrap drop-shadow-[0_0_15px_rgba(255,255,255,0.5)] ${displayPlugin.getContainerClass()} ${isSummaryActive ? 'text-cyan-300 italic opacity-80' : 'text-white'}`}
                                 style={displayPlugin.getContainerStyle?.(wordToRender) || undefined}
                             />
                         </div>
@@ -1158,16 +1209,12 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
                     <div 
                         className="flex-1 w-full overflow-hidden relative mask-gradient-bottom flex justify-center"
                     >
-                        {riverBottomEnabled ? (
-                            <div 
-                                ref={nextContainerRef} 
-                                className="reader-context-panel w-full max-w-2xl h-full flex flex-wrap content-start justify-start p-8 md:p-16 font-mono text-lg md:text-xl leading-relaxed select-none overflow-hidden border-x border-white/5 cursor-ns-resize" 
-                                onClick={handleRiverClick}
-                                onWheel={handleWheel}
-                            ></div>
-                        ) : (
-                            <div className="w-full max-w-2xl h-full" />
-                        )}
+                        <div 
+                            ref={nextContainerRef} 
+                            className={`reader-context-panel w-full max-w-2xl h-full flex flex-wrap content-start justify-start p-8 md:p-16 font-mono text-lg md:text-xl leading-relaxed select-none overflow-hidden border-x border-white/5 cursor-ns-resize ${riverBottomEnabled ? '' : 'invisible'}`}
+                            onClick={handleRiverClick}
+                            onWheel={handleWheel}
+                        ></div>
                         {/* River Toggle - Bottom */}
                         <button
                             onClick={(e) => { e.stopPropagation(); setRiverBottomEnabled(!riverBottomEnabled); }}

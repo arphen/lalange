@@ -25,6 +25,21 @@ export const bookSchema = {
             items: {
                 type: 'string'
             }
+        },
+        globalSummaries: {
+            type: 'array',
+            items: {
+                type: 'object',
+                properties: {
+                    id: { type: 'string' },
+                    startWordIndex: { type: 'number' },
+                    endWordIndex: { type: 'number' },
+                    startChapterId: { type: 'string' },
+                    endChapterId: { type: 'string' },
+                    summary: { type: 'string' },
+                    generatedAt: { type: 'number' }
+                }
+            }
         }
     },
     required: ['id', 'title']

@@ -345,13 +345,19 @@ export const processChaptersInBackground = async (bookId: string) => {
 
                             // --- SCHEDULE TASKS ---
                             // Only schedule an initial window for the FIRST chapter.
-                            // Density is lightweight (tiny model) so we can do more up-front than summaries.
+                            // Density is lightweight (tiny model) so we can do more up-front.
                             // All other chapters start dormant and wake up when the user navigates there.
+                            // Use time-based lookahead: enough words for 3 minutes at user's WPM
                             const isActiveChapter = isFirstContentChapter;
-                            const INITIAL_DENSITY_CHUNKS = 3;
-                            const INITIAL_SUMMARY_CHUNKS = 3;
-                            const densityInitialStatus = (isActiveChapter && i < INITIAL_DENSITY_CHUNKS) ? 'pending' : 'dormant';
-                            const summaryInitialStatus = (isActiveChapter && i < INITIAL_SUMMARY_CHUNKS) ? 'pending' : 'dormant';
+                            const wpm = settings.wpm || 300;
+                            const INITIAL_LOOKAHEAD_MINUTES = 3;
+                            const INITIAL_LOOKAHEAD_WORDS = wpm * INITIAL_LOOKAHEAD_MINUTES;
+                            const MIN_INITIAL_CHUNKS = 6; // Minimum chunks for very fast readers
+                            
+                            // Schedule as pending if: within word lookahead OR within min chunk count
+                            const isWithinWordLookahead = startWordIndex < INITIAL_LOOKAHEAD_WORDS;
+                            const isWithinChunkCount = i < MIN_INITIAL_CHUNKS;
+                            const densityInitialStatus = (isActiveChapter && (isWithinWordLookahead || isWithinChunkCount)) ? 'pending' : 'dormant';
 
                             // 1. Density Estimation
                             scheduler.addTask({
@@ -365,24 +371,21 @@ export const processChaptersInBackground = async (bookId: string) => {
                                 text: chunk
                             }, densityInitialStatus);
 
-                            // 2. Summarization
-                            scheduler.addTask({
-                                id: `${chapterId}_summary_${i}`,
-                                bookId,
-                                chapterId,
-                                subchapterIndex: i,
-                                startWordIndex,
-                                endWordIndex,
-                                type: 'SUMMARY',
-                                text: chunk
-                            }, summaryInitialStatus);
+                            // NOTE: Per-chunk SUMMARY tasks are deprecated in favor of global summaries
+                            // We no longer schedule individual chunk summaries here.
+                            // Global summaries are scheduled at the end of book processing.
                         }
-                        const INITIAL_DENSITY_CHUNKS = 3;
-                        const INITIAL_SUMMARY_CHUNKS = 3;
-                        const activeDensity = isFirstContentChapter ? Math.min(rawChunks.length, INITIAL_DENSITY_CHUNKS) : 0;
-                        const activeSummary = isFirstContentChapter ? Math.min(rawChunks.length, INITIAL_SUMMARY_CHUNKS) : 0;
-                        const activeCount = activeDensity + activeSummary;
-                        console.log(`[Pipeline] Scheduled ${rawChunks.length * 2} tasks for chapter ${chapterId} (${activeCount} active, rest dormant)`);
+                        // Calculate active density count efficiently (O(n) instead of O(n²))
+                        const wpm = settings.wpm || 300;
+                        let cumulativeWords = 0;
+                        let activeDensity = 0;
+                        for (let idx = 0; idx < rawChunks.length; idx++) {
+                            const isActive = isFirstContentChapter && (cumulativeWords < wpm * 3 || idx < 6);
+                            if (isActive) activeDensity++;
+                            const wordsInChunk = rawChunks[idx].trim().length > 0 ? rawChunks[idx].trim().split(/\s+/).length : 0;
+                            cumulativeWords += wordsInChunk;
+                        }
+                        console.log(`[Pipeline] Scheduled ${rawChunks.length} density tasks for chapter ${chapterId} (${activeDensity} active, rest dormant)`);
 
                         // Final update for this chapter (Content + Placeholders)
                         const finalDoc = await db.chapters.findOne(currentDoc.id).exec();
@@ -416,10 +419,98 @@ export const processChaptersInBackground = async (bookId: string) => {
             }
             chapterIndex++;
         }
+        
+        // Schedule global summaries for the entire book
+        await scheduleGlobalSummaries(bookId);
+        
     } finally {
         activeJobs.delete(bookId);
         processingState.delete(bookId);
         console.log(`[Pipeline] Ingestion preparation complete for book: ${bookId}. Tasks have been handed off to the Scheduler.`);
+    }
+};
+
+/**
+ * Schedule global summaries for a book - one summary every summaryChunkSize words
+ * across the entire book (not per-chapter).
+ */
+export const scheduleGlobalSummaries = async (bookId: string, startFromGlobalIndex: number = 0) => {
+    const db = await initDB();
+    const book = await db.books.findOne(bookId).exec();
+    if (!book) return;
+    
+    const settings = useSettingsStore.getState();
+    const summaryInterval = settings.summaryChunkSize || 2500;
+    const totalWords = book.totalWords || 0;
+    
+    if (totalWords === 0) {
+        console.log(`[Pipeline] No words in book ${bookId}, skipping global summaries`);
+        return;
+    }
+    
+    // Calculate how many summaries we need
+    const numSummaries = Math.ceil(totalWords / summaryInterval);
+    console.log(`[Pipeline] Scheduling ${numSummaries} global summaries for book ${bookId} (${totalWords} words, interval: ${summaryInterval})`);
+    
+    // Build a map of global word index -> chapter ID
+    let globalWordsSeen = 0;
+    const chapterRanges: { chapterId: string; startGlobal: number; endGlobal: number }[] = [];
+    
+    for (const chapterId of book.chapterIds) {
+        const chapter = await db.chapters.findOne(chapterId).exec();
+        if (!chapter || !chapter.content || chapter.content.length === 0) continue;
+        
+        chapterRanges.push({
+            chapterId,
+            startGlobal: globalWordsSeen,
+            endGlobal: globalWordsSeen + chapter.content.length
+        });
+        globalWordsSeen += chapter.content.length;
+    }
+    
+    // Check which summaries already exist
+    const existingSummaries = book.globalSummaries || [];
+    const existingIndices = new Set(existingSummaries.map(s => Math.floor(s.startWordIndex / summaryInterval)));
+    
+    // Schedule summaries
+    const INITIAL_SUMMARIES = 2; // Start with first 2 pending, rest dormant
+    
+    for (let i = 0; i < numSummaries; i++) {
+        const globalStart = i * summaryInterval;
+        const globalEnd = Math.min((i + 1) * summaryInterval, totalWords);
+        
+        // Skip if already exists
+        if (existingIndices.has(i)) {
+            console.log(`[Pipeline] Global summary ${i} already exists, skipping`);
+            continue;
+        }
+        
+        // Skip if before startFromGlobalIndex
+        if (globalEnd <= startFromGlobalIndex) {
+            continue;
+        }
+        
+        // Find which chapters this summary spans
+        // Use consistent inequality: start <= index < end (half-open interval)
+        const startChapter = chapterRanges.find(c => c.startGlobal <= globalStart && globalStart < c.endGlobal);
+        const endChapter = chapterRanges.find(c => c.startGlobal <= globalEnd - 1 && globalEnd - 1 < c.endGlobal);
+        
+        if (!startChapter || !endChapter) {
+            console.warn(`[Pipeline] Could not find chapters for global summary ${i}`);
+            continue;
+        }
+        
+        const initialStatus = i < INITIAL_SUMMARIES ? 'pending' : 'dormant';
+        
+        scheduler.addGlobalSummaryTask({
+            id: `${bookId}_gsummary_${i}`,
+            bookId,
+            summaryIndex: i,
+            globalStartWordIndex: globalStart,
+            globalEndWordIndex: globalEnd,
+            startChapterId: startChapter.chapterId,
+            endChapterId: endChapter.chapterId,
+        }, initialStatus);
     }
 };
 
@@ -430,7 +521,7 @@ export const processChaptersInBackground = async (bookId: string) => {
  * 
  * Detection:
  * - Density incomplete: densities[i] === 0 for any word in the subchapter range
- * - Summary incomplete: subchapter.summary === '' (empty string)
+ * - Global summary incomplete: not in book.globalSummaries for that interval
  * 
  * Optimization:
  * - Chunks BEHIND the cursor are skipped entirely (user already read them)
@@ -444,9 +535,22 @@ export const resumeIncompleteAnalysis = async (bookId: string, currentChapterId?
         return;
     }
 
+    // Calculate global word index from current chapter position
+    let globalWordIndex = 0;
+    for (const chapterId of book.chapterIds) {
+        if (chapterId === currentChapterId) {
+            globalWordIndex += currentWordIndex;
+            break;
+        }
+        const chapter = await db.chapters.findOne(chapterId).exec();
+        if (chapter && chapter.content) {
+            globalWordIndex += chapter.content.length;
+        }
+    }
+
     // Update scheduler cursor if provided
     if (currentChapterId) {
-        scheduler.setCursor(bookId, currentChapterId, currentWordIndex);
+        scheduler.setCursor(bookId, currentChapterId, currentWordIndex, globalWordIndex);
     }
 
     let totalScheduled = 0;
@@ -524,24 +628,17 @@ export const resumeIncompleteAnalysis = async (bookId: string, currentChapterId?
                 totalScheduled++;
             }
 
-            if (hasPendingSummary) {
-                scheduler.addTask({
-                    id: `${chapterId}_summary_${i}`,
-                    bookId,
-                    chapterId,
-                    subchapterIndex: i,
-                    startWordIndex: sub.startWordIndex,
-                    endWordIndex: sub.endWordIndex,
-                    type: 'SUMMARY',
-                    text: chunkText
-                }, initialStatus);
-                totalScheduled++;
-            }
+            // NOTE: Per-chunk summaries are deprecated - we use global summaries now
+            // Legacy code kept for backwards compatibility with old books
+            // that might still have per-chunk summary tasks
         }
     }
 
+    // Re-schedule global summaries from current position
+    await scheduleGlobalSummaries(bookId, globalWordIndex);
+
     if (totalScheduled > 0 || skippedPast > 0) {
-        console.log(`[Pipeline] Resumed ${totalScheduled} incomplete tasks for book ${bookId} (${activeScheduled} active, ${totalScheduled - activeScheduled} dormant, ${skippedPast} skipped past cursor)`);
+        console.log(`[Pipeline] Resumed ${totalScheduled} incomplete density tasks for book ${bookId} (${activeScheduled} active, ${totalScheduled - activeScheduled} dormant, ${skippedPast} skipped past cursor)`);
     } else {
         console.log(`[Pipeline] No incomplete tasks found for book ${bookId}`);
     }
