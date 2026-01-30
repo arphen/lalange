@@ -84,6 +84,7 @@ describe('Ingestion Scheduling Requirements', () => {
             librarianModelTier: 'basic',
             summarizerModel: 'basic',
             summarizerFragments: [],
+            aiEnabled: true,
         });
 
         // Mock DB

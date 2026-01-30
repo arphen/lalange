@@ -14,6 +14,7 @@ vi.mock('../store/settings', () => ({
     useSettingsStore: {
         getState: vi.fn(() => ({
             librarianModelTier: 'haiku',
+            aiEnabled: true,
         })),
     },
 }));

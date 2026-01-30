@@ -37,6 +37,10 @@ interface SettingsState {
     setRiverTopEnabled: (enabled: boolean) => void;
     riverBottomEnabled: boolean;
     setRiverBottomEnabled: (enabled: boolean) => void;
+    focusModeEnabled: boolean;
+    setFocusModeEnabled: (enabled: boolean) => void;
+    aiEnabled: boolean;
+    setAiEnabled: (enabled: boolean) => void;
 
     // UI
     sidebarOpen: boolean;
@@ -153,6 +157,10 @@ export const useSettingsStore = create<SettingsState>()(
             setRiverTopEnabled: (riverTopEnabled) => set({ riverTopEnabled }),
             riverBottomEnabled: true,
             setRiverBottomEnabled: (riverBottomEnabled) => set({ riverBottomEnabled }),
+            focusModeEnabled: false,
+            setFocusModeEnabled: (focusModeEnabled) => set({ focusModeEnabled }),
+            aiEnabled: true,
+            setAiEnabled: (aiEnabled) => set({ aiEnabled }),
 
             sidebarOpen: true,
             setSidebarOpen: (sidebarOpen) => set({ sidebarOpen }),
