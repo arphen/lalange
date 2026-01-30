@@ -423,6 +423,102 @@ export const processChaptersInBackground = async (bookId: string) => {
     }
 };
 
+/**
+ * Resume incomplete density/summary analysis for a book.
+ * This is called when reopening a book to re-schedule tasks that were lost
+ * when the scheduler's in-memory state was cleared (page reload, etc).
+ * 
+ * Detection:
+ * - Density incomplete: densities[i] === 0 for any word in the subchapter range
+ * - Summary incomplete: subchapter.summary === '' (empty string)
+ */
+export const resumeIncompleteAnalysis = async (bookId: string, currentChapterId?: string, currentWordIndex: number = 0) => {
+    const db = await initDB();
+    const book = await db.books.findOne(bookId).exec();
+    if (!book) {
+        console.log(`[Pipeline] Book ${bookId} not found for resume`);
+        return;
+    }
+
+    // Update scheduler cursor if provided
+    if (currentChapterId) {
+        scheduler.setCursor(bookId, currentChapterId, currentWordIndex);
+    }
+
+    let totalScheduled = 0;
+    let activeScheduled = 0;
+    const LOOKAHEAD_CHUNKS = 3;
+
+    for (const chapterId of book.chapterIds) {
+        const chapter = await db.chapters.findOne(chapterId).exec();
+        if (!chapter || !chapter.subchapters || chapter.subchapters.length === 0) continue;
+        if (chapter.content.length === 0) continue; // Skip empty/skipped chapters
+
+        const densities = chapter.densities || [];
+        const isCurrentChapter = chapterId === currentChapterId;
+
+        for (let i = 0; i < chapter.subchapters.length; i++) {
+            const sub = chapter.subchapters[i];
+            
+            // Check if density is incomplete for this subchapter
+            // Density is 0 when pending, > 0 when processed
+            const subDensities = densities.slice(sub.startWordIndex, sub.endWordIndex);
+            const hasPendingDensity = subDensities.length === 0 || subDensities.some(d => d === 0);
+            
+            // Check if summary is incomplete
+            const hasPendingSummary = !sub.summary || sub.summary.trim() === '';
+
+            if (!hasPendingDensity && !hasPendingSummary) continue; // Already complete
+
+            // Determine status: active for current chapter + lookahead, dormant otherwise
+            const isNearCursor = isCurrentChapter && i <= (currentWordIndex > 0 ? 
+                chapter.subchapters.findIndex(s => currentWordIndex >= s.startWordIndex && currentWordIndex < s.endWordIndex) + LOOKAHEAD_CHUNKS : 
+                LOOKAHEAD_CHUNKS);
+            const initialStatus = isNearCursor ? 'pending' : 'dormant';
+            if (isNearCursor) activeScheduled++;
+
+            // We need the original text chunk to schedule tasks.
+            // Since we don't store it, we reconstruct from content words.
+            const chunkWords = chapter.content.slice(sub.startWordIndex, sub.endWordIndex);
+            const chunkText = chunkWords.join(' ');
+
+            if (hasPendingDensity) {
+                scheduler.addTask({
+                    id: `${chapterId}_density_${i}`,
+                    bookId,
+                    chapterId,
+                    subchapterIndex: i,
+                    startWordIndex: sub.startWordIndex,
+                    endWordIndex: sub.endWordIndex,
+                    type: 'DENSITY',
+                    text: chunkText
+                }, initialStatus);
+                totalScheduled++;
+            }
+
+            if (hasPendingSummary) {
+                scheduler.addTask({
+                    id: `${chapterId}_summary_${i}`,
+                    bookId,
+                    chapterId,
+                    subchapterIndex: i,
+                    startWordIndex: sub.startWordIndex,
+                    endWordIndex: sub.endWordIndex,
+                    type: 'SUMMARY',
+                    text: chunkText
+                }, initialStatus);
+                totalScheduled++;
+            }
+        }
+    }
+
+    if (totalScheduled > 0) {
+        console.log(`[Pipeline] Resumed ${totalScheduled} incomplete tasks for book ${bookId} (${activeScheduled} active, ${totalScheduled - activeScheduled} dormant)`);
+    } else {
+        console.log(`[Pipeline] No incomplete tasks found for book ${bookId}`);
+    }
+};
+
 export const estimateBookDensity = async (bookId: string) => {
     if (activeJobs.has(bookId)) {
         console.log(`[Pipeline] Job already running for book ${bookId}`);
