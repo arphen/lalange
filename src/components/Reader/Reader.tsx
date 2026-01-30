@@ -1073,16 +1073,12 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
                     <div 
                         className="flex-1 w-full overflow-hidden relative mask-gradient-top flex justify-center"
                     >
-                        {riverTopEnabled ? (
-                            <div 
-                                ref={prevContainerRef} 
-                                className="reader-context-panel w-full max-w-2xl h-full flex flex-wrap content-end justify-start p-8 md:p-16 font-mono text-lg md:text-xl leading-relaxed select-none overflow-hidden border-x border-white/5 cursor-ns-resize" 
-                                onClick={handleRiverClick}
-                                onWheel={handleWheel}
-                            ></div>
-                        ) : (
-                            <div className="w-full max-w-2xl h-full" />
-                        )}
+                        <div 
+                            ref={prevContainerRef} 
+                            className={`reader-context-panel w-full max-w-2xl h-full flex flex-wrap content-end justify-start p-8 md:p-16 font-mono text-lg md:text-xl leading-relaxed select-none overflow-hidden border-x border-white/5 cursor-ns-resize ${riverTopEnabled ? '' : 'invisible'}`}
+                            onClick={handleRiverClick}
+                            onWheel={handleWheel}
+                        ></div>
                         {/* River Toggle - Top */}
                         <button
                             onClick={(e) => { e.stopPropagation(); setRiverTopEnabled(!riverTopEnabled); }}
@@ -1166,16 +1162,12 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
                     <div 
                         className="flex-1 w-full overflow-hidden relative mask-gradient-bottom flex justify-center"
                     >
-                        {riverBottomEnabled ? (
-                            <div 
-                                ref={nextContainerRef} 
-                                className="reader-context-panel w-full max-w-2xl h-full flex flex-wrap content-start justify-start p-8 md:p-16 font-mono text-lg md:text-xl leading-relaxed select-none overflow-hidden border-x border-white/5 cursor-ns-resize" 
-                                onClick={handleRiverClick}
-                                onWheel={handleWheel}
-                            ></div>
-                        ) : (
-                            <div className="w-full max-w-2xl h-full" />
-                        )}
+                        <div 
+                            ref={nextContainerRef} 
+                            className={`reader-context-panel w-full max-w-2xl h-full flex flex-wrap content-start justify-start p-8 md:p-16 font-mono text-lg md:text-xl leading-relaxed select-none overflow-hidden border-x border-white/5 cursor-ns-resize ${riverBottomEnabled ? '' : 'invisible'}`}
+                            onClick={handleRiverClick}
+                            onWheel={handleWheel}
+                        ></div>
                         {/* River Toggle - Bottom */}
                         <button
                             onClick={(e) => { e.stopPropagation(); setRiverBottomEnabled(!riverBottomEnabled); }}
