@@ -132,6 +132,8 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
     const isSummaryActiveRef = useRef(false);
     const savedChapterIndexRef = useRef(0);
     const summaryWordsRef = useRef<string[]>([]);
+    // Track the last boundary we triggered to prevent re-triggering on restore
+    const lastTriggeredBoundaryRef = useRef<number>(-1);
     
     // Define renderWord early, before it's used in startTransition or other callbacks
     // Performance: renderContext=false skips the expensive prev/next context panel updates
@@ -369,6 +371,8 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
 
                 indexRef.current = initialIndex;
                 setCurrentWordIndex(initialIndex);
+                // Reset boundary tracking for new chapter
+                lastTriggeredBoundaryRef.current = -1;
                 // Don't call renderWord here - refs may not be mounted yet
                 // The useLayoutEffect will call renderWord once React has rendered the DOM
                 setLoading(false);
@@ -554,10 +558,14 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
                 wordTimestampsRef.current.push(processTimeRef.current);
 
                 // Check for Subchapter Boundary (only if NOT in summary mode)
+                // Also skip if we already triggered this exact boundary (prevents loops)
                 if (!isSummaryActiveRef.current) {
-                    const sub = currentChapterRef.current?.subchapters?.find(s => s.endWordIndex === indexRef.current);
+                    const sub = currentChapterRef.current?.subchapters?.find(
+                        s => s.endWordIndex === indexRef.current && s.endWordIndex !== lastTriggeredBoundaryRef.current
+                    );
                     if (sub && sub.summary) {
                         isPlayingRef.current = false;
+                        lastTriggeredBoundaryRef.current = sub.endWordIndex;
                         
                         startTransition('next: summary', () => {
                             isSummaryActiveRef.current = true;
@@ -1106,7 +1114,7 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
                         {/* This allows the playback loop to update the display at 60fps without React re-renders */}
                             <div 
                                 ref={rsvpRef} 
-                                className={`text-6xl md:text-8xl font-mono tracking-tight whitespace-nowrap drop-shadow-[0_0_15px_rgba(255,255,255,0.5)] ${displayPlugin.getContainerClass()} ${isSummaryActive ? 'text-amber-400 italic' : 'text-white'}`}
+                                className={`text-6xl md:text-8xl font-mono tracking-tight whitespace-nowrap drop-shadow-[0_0_15px_rgba(255,255,255,0.5)] ${displayPlugin.getContainerClass()} ${isSummaryActive ? 'text-cyan-300 italic opacity-80' : 'text-white'}`}
                                 style={displayPlugin.getContainerStyle?.(wordToRender) || undefined}
                             />
                         </div>

@@ -94,8 +94,9 @@ export class IngestionScheduler {
 
         // We wake tasks using chunk indices rather than word-distance so that
         // books with many small chunks don't accidentally wake a large number at once.
-        const DENSITY_LOOKAHEAD_CHUNKS = 3;
-        const SUMMARY_LOOKAHEAD_CHUNKS = 3;
+        // Increased lookahead to ensure density/summaries are ready before user reaches them
+        const DENSITY_LOOKAHEAD_CHUNKS = 6;
+        const SUMMARY_LOOKAHEAD_CHUNKS = 5;
         const REWIND_CHUNKS = 1;
 
         const chapterTasks = this.tasks.filter(

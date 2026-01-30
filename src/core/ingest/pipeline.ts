@@ -348,8 +348,8 @@ export const processChaptersInBackground = async (bookId: string) => {
                             // Density is lightweight (tiny model) so we can do more up-front than summaries.
                             // All other chapters start dormant and wake up when the user navigates there.
                             const isActiveChapter = isFirstContentChapter;
-                            const INITIAL_DENSITY_CHUNKS = 3;
-                            const INITIAL_SUMMARY_CHUNKS = 3;
+                            const INITIAL_DENSITY_CHUNKS = 6;
+                            const INITIAL_SUMMARY_CHUNKS = 5;
                             const densityInitialStatus = (isActiveChapter && i < INITIAL_DENSITY_CHUNKS) ? 'pending' : 'dormant';
                             const summaryInitialStatus = (isActiveChapter && i < INITIAL_SUMMARY_CHUNKS) ? 'pending' : 'dormant';
 
