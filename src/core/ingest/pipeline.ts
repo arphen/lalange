@@ -375,11 +375,16 @@ export const processChaptersInBackground = async (bookId: string) => {
                             // We no longer schedule individual chunk summaries here.
                             // Global summaries are scheduled at the end of book processing.
                         }
-                        const activeDensity = rawChunks.filter((_, idx) => {
-                            const chunkStart = idx > 0 ? rawChunks.slice(0, idx).join(' ').split(/\s+/).length : 0;
-                            const wpm = settings.wpm || 300;
-                            return isFirstContentChapter && (chunkStart < wpm * 3 || idx < 6);
-                        }).length;
+                        // Calculate active density count efficiently (O(n) instead of O(n²))
+                        const wpm = settings.wpm || 300;
+                        let cumulativeWords = 0;
+                        let activeDensity = 0;
+                        for (let idx = 0; idx < rawChunks.length; idx++) {
+                            const isActive = isFirstContentChapter && (cumulativeWords < wpm * 3 || idx < 6);
+                            if (isActive) activeDensity++;
+                            const wordsInChunk = rawChunks[idx].trim().length > 0 ? rawChunks[idx].trim().split(/\s+/).length : 0;
+                            cumulativeWords += wordsInChunk;
+                        }
                         console.log(`[Pipeline] Scheduled ${rawChunks.length} density tasks for chapter ${chapterId} (${activeDensity} active, rest dormant)`);
 
                         // Final update for this chapter (Content + Placeholders)
@@ -486,8 +491,9 @@ export const scheduleGlobalSummaries = async (bookId: string, startFromGlobalInd
         }
         
         // Find which chapters this summary spans
-        const startChapter = chapterRanges.find(c => c.startGlobal <= globalStart && c.endGlobal > globalStart);
-        const endChapter = chapterRanges.find(c => c.startGlobal < globalEnd && c.endGlobal >= globalEnd);
+        // Use consistent inequality: start <= index < end (half-open interval)
+        const startChapter = chapterRanges.find(c => c.startGlobal <= globalStart && globalStart < c.endGlobal);
+        const endChapter = chapterRanges.find(c => c.startGlobal <= globalEnd - 1 && globalEnd - 1 < c.endGlobal);
         
         if (!startChapter || !endChapter) {
             console.warn(`[Pipeline] Could not find chapters for global summary ${i}`);

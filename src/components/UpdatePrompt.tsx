@@ -118,6 +118,9 @@ export const UpdatePrompt: React.FC = () => {
             console.error('[SW] Update failed:', error);
             // Fallback: reload anyway
             window.location.reload();
+        } finally {
+            // Reset state in case reload doesn't happen (e.g., blocked by browser)
+            setIsUpdating(false);
         }
     }, [updateFn]);
 

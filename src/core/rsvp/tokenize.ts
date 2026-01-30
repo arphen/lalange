@@ -100,7 +100,14 @@ export interface TokenizeResult {
  */
 const splitOnHyphens = (word: string): string[] => {
     // Only split if there's a hyphen between word characters
-    if (!/-/.test(word) || !HYPHEN_SPLIT_PATTERN.test(word)) {
+    // Use includes() instead of .test() to avoid global regex lastIndex issues
+    if (!word.includes('-')) {
+        return [word];
+    }
+    
+    // Reset and test the pattern
+    HYPHEN_SPLIT_PATTERN.lastIndex = 0;
+    if (!HYPHEN_SPLIT_PATTERN.test(word)) {
         return [word];
     }
     
@@ -134,7 +141,14 @@ const splitOnHyphens = (word: string): string[] => {
  */
 const splitOnSlashes = (word: string): string[] => {
     // Only split if there's a slash between word characters
-    if (!/\//.test(word) || !SLASH_SPLIT_PATTERN.test(word)) {
+    // Use includes() instead of .test() to avoid global regex lastIndex issues
+    if (!word.includes('/')) {
+        return [word];
+    }
+    
+    // Reset and test the pattern
+    SLASH_SPLIT_PATTERN.lastIndex = 0;
+    if (!SLASH_SPLIT_PATTERN.test(word)) {
         return [word];
     }
     
