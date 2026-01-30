@@ -52,7 +52,8 @@ describe('IngestionScheduler', () => {
             summarizerModel: 'basic',
             summarizerBasePrompt: 'Summarize',
             summarizerFragments: [],
-            enableJunkRemoval: false
+            enableJunkRemoval: false,
+            aiEnabled: true
         });
 
         (useAIStore.getState as any).mockReturnValue({

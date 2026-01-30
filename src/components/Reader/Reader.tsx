@@ -41,6 +41,14 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
     const setRiverTopEnabled = useSettingsStore((s) => s.setRiverTopEnabled);
     const setRiverBottomEnabled = useSettingsStore((s) => s.setRiverBottomEnabled);
     
+    // Focus mode - hides rivers and sidebars for distraction-free reading
+    const focusModeEnabled = useSettingsStore((s) => s.focusModeEnabled);
+    const setFocusModeEnabled = useSettingsStore((s) => s.setFocusModeEnabled);
+    
+    // AI toggle - disable AI features to save battery
+    const aiEnabled = useSettingsStore((s) => s.aiEnabled);
+    const setAiEnabled = useSettingsStore((s) => s.setAiEnabled);
+    
     // Get the active display plugin
     const displayPlugin = useMemo(() => getDisplayPlugin(displayPluginId), [displayPluginId]);
     const displayPluginRef = useRef<DisplayPlugin>(displayPlugin);
@@ -887,6 +895,56 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
                 </div>
 
                 <div className="pointer-events-auto flex items-start gap-3">
+                    {/* Focus Mode Button */}
+                    <button
+                        onClick={() => {
+                            const newFocusMode = !focusModeEnabled;
+                            setFocusModeEnabled(newFocusMode);
+                            if (newFocusMode) {
+                                setRiverTopEnabled(false);
+                                setRiverBottomEnabled(false);
+                                setShowChapters(false);
+                                setShowTTSPlayer(false);
+                            }
+                        }}
+                        className={`p-3 backdrop-blur-md rounded-full border transition-colors shadow-lg ${
+                            focusModeEnabled 
+                                ? 'bg-dune-gold/80 border-dune-gold text-black' 
+                                : 'bg-black/40 border-white/10 text-white/70 hover:bg-white/10 hover:text-white'
+                        }`}
+                        title={focusModeEnabled ? 'Exit Focus Mode' : 'Focus Mode (hide distractions)'}
+                    >
+                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            {focusModeEnabled ? (
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+                            ) : (
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+                            )}
+                        </svg>
+                    </button>
+
+                    {/* AI Toggle Button */}
+                    <button
+                        onClick={() => setAiEnabled(!aiEnabled)}
+                        className={`p-3 backdrop-blur-md rounded-full border transition-colors shadow-lg ${
+                            aiEnabled 
+                                ? 'bg-green-600/60 border-green-400/50 text-green-200' 
+                                : 'bg-black/40 border-white/10 text-white/30 hover:bg-white/10 hover:text-white/50'
+                        }`}
+                        title={aiEnabled ? 'AI On (tap to disable for battery saving)' : 'AI Off (tap to enable density analysis)'}
+                    >
+                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                        </svg>
+                        {!aiEnabled && (
+                            <span className="absolute inset-0 flex items-center justify-center">
+                                <svg className="w-8 h-8 text-red-500/60" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                                </svg>
+                            </span>
+                        )}
+                    </button>
+
                     {/* TTS / Listen Button */}
                     <button
                         onClick={() => setShowTTSPlayer(!showTTSPlayer)}
@@ -967,9 +1025,7 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
                                 onWheel={handleWheel}
                             ></div>
                         ) : (
-                            <div className="w-full max-w-2xl h-full border-x border-white/5 flex items-end justify-center pb-4">
-                                <span className="text-xs text-white/20 font-mono uppercase tracking-widest">River Hidden</span>
-                            </div>
+                            <div className="w-full max-w-2xl h-full" />
                         )}
                         {/* River Toggle - Top */}
                         <button
@@ -1062,9 +1118,7 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
                                 onWheel={handleWheel}
                             ></div>
                         ) : (
-                            <div className="w-full max-w-2xl h-full border-x border-white/5 flex items-start justify-center pt-4">
-                                <span className="text-xs text-white/20 font-mono uppercase tracking-widest">River Hidden</span>
-                            </div>
+                            <div className="w-full max-w-2xl h-full" />
                         )}
                         {/* River Toggle - Bottom */}
                         <button

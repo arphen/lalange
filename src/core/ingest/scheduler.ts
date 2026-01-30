@@ -27,7 +27,23 @@ export class IngestionScheduler {
     private currentWordIndex: number = 0;
 
     constructor() {
-        // potentially load saved state? For now, in-memory.
+        // Subscribe to aiEnabled changes to resume processing when re-enabled
+        // Guard for test environment where subscribe may not be available
+        if (typeof useSettingsStore.subscribe === 'function') {
+            useSettingsStore.subscribe((state) => {
+                if (state.aiEnabled && !this.isRunning) {
+                    console.log("[Scheduler] AI re-enabled, resuming task processing.");
+                    this.processNext();
+                }
+            });
+        }
+    }
+
+    /**
+     * Resume processing (call when AI is re-enabled)
+     */
+    public resume() {
+        this.processNext();
     }
 
     public setCursor(bookId: string, chapterId: string, wordIndex: number) {
@@ -191,6 +207,13 @@ export class IngestionScheduler {
     private async processNext() {
         if (this.isRunning) {
             console.log("[Scheduler] processNext called but already running.");
+            return;
+        }
+
+        // Check if AI is disabled - pause processing
+        const settings = useSettingsStore.getState();
+        if (!settings.aiEnabled) {
+            console.log("[Scheduler] AI disabled, pausing task processing.");
             return;
         }
 
