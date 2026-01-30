@@ -45,6 +45,8 @@ interface SettingsState {
     // UI
     sidebarOpen: boolean;
     setSidebarOpen: (open: boolean) => void;
+    navSidebarCollapsed: boolean;
+    setNavSidebarCollapsed: (collapsed: boolean) => void;
 
     // Advanced / Janitor
     licenseAnnihilator: boolean;
@@ -164,6 +166,8 @@ export const useSettingsStore = create<SettingsState>()(
 
             sidebarOpen: true,
             setSidebarOpen: (sidebarOpen) => set({ sidebarOpen }),
+            navSidebarCollapsed: false,
+            setNavSidebarCollapsed: (navSidebarCollapsed) => set({ navSidebarCollapsed }),
 
             licenseAnnihilator: true,
             toggleLicenseAnnihilator: () => set((state) => ({ licenseAnnihilator: !state.licenseAnnihilator })),

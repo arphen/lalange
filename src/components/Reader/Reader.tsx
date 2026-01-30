@@ -44,6 +44,15 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
     // Focus mode - hides rivers and sidebars for distraction-free reading
     const focusModeEnabled = useSettingsStore((s) => s.focusModeEnabled);
     const setFocusModeEnabled = useSettingsStore((s) => s.setFocusModeEnabled);
+    const setNavSidebarCollapsed = useSettingsStore((s) => s.setNavSidebarCollapsed);
+    
+    // Ref to store previous state before entering focus mode
+    const preFocusStateRef = useRef<{
+        riverTop: boolean;
+        riverBottom: boolean;
+        showChapters: boolean;
+        showTTSPlayer: boolean;
+    } | null>(null);
     
     // AI toggle - disable AI features to save battery
     const aiEnabled = useSettingsStore((s) => s.aiEnabled);
@@ -236,6 +245,19 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
             // Scroll to top (default)
         }
     }, [riverTopEnabled, riverBottomEnabled]);
+
+    // Clear river content when disabled
+    useEffect(() => {
+        if (!riverTopEnabled && prevContainerRef.current) {
+            prevContainerRef.current.innerHTML = '';
+        }
+    }, [riverTopEnabled]);
+
+    useEffect(() => {
+        if (!riverBottomEnabled && nextContainerRef.current) {
+            nextContainerRef.current.innerHTML = '';
+        }
+    }, [riverBottomEnabled]);
 
     const startTransition = useCallback((label: string, onComplete: () => void) => {
         // Stop playback immediately
@@ -901,15 +923,34 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
                             const newFocusMode = !focusModeEnabled;
                             setFocusModeEnabled(newFocusMode);
                             if (newFocusMode) {
-                                // Enter focus mode: hide distractions
+                                // Save current state before entering focus mode
+                                preFocusStateRef.current = {
+                                    riverTop: riverTopEnabled,
+                                    riverBottom: riverBottomEnabled,
+                                    showChapters: showChapters,
+                                    showTTSPlayer: showTTSPlayer,
+                                };
+                                // Enter focus mode: hide all distractions
                                 setRiverTopEnabled(false);
                                 setRiverBottomEnabled(false);
                                 setShowChapters(false);
                                 setShowTTSPlayer(false);
+                                setNavSidebarCollapsed(true);
                             } else {
-                                // Exit focus mode: restore rivers (sidebars stay closed for manual control)
-                                setRiverTopEnabled(true);
-                                setRiverBottomEnabled(true);
+                                // Exit focus mode: restore previous state
+                                const prev = preFocusStateRef.current;
+                                if (prev) {
+                                    setRiverTopEnabled(prev.riverTop);
+                                    setRiverBottomEnabled(prev.riverBottom);
+                                    setShowChapters(prev.showChapters);
+                                    setShowTTSPlayer(prev.showTTSPlayer);
+                                } else {
+                                    // Fallback if no saved state
+                                    setRiverTopEnabled(true);
+                                    setRiverBottomEnabled(true);
+                                }
+                                setNavSidebarCollapsed(false);
+                                preFocusStateRef.current = null;
                             }
                         }}
                         className={`p-3 backdrop-blur-md rounded-full border transition-colors shadow-lg ${
@@ -921,11 +962,11 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
                     >
                         <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             {focusModeEnabled ? (
-                                // Compress/minimize icon (arrows pointing inward)
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 9V4.5M9 9H4.5M9 9L3.75 3.75M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 9h4.5M15 9V4.5M15 9l5.25-5.25M15 15h4.5M15 15v4.5m0-4.5l5.25 5.25" />
-                            ) : (
-                                // Expand/maximize icon (arrows pointing outward)
+                                // Expand icon (restore full UI)
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15" />
+                            ) : (
+                                // Compress icon (enter focus mode)
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 9V4.5M9 9H4.5M9 9L3.75 3.75M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 9h4.5M15 9V4.5M15 9l5.25-5.25M15 15h4.5M15 15v4.5m0-4.5l5.25 5.25" />
                             )}
                         </svg>
                     </button>
