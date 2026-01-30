@@ -16,7 +16,7 @@ import { clsx } from 'clsx'
 import { GlobalNavSidebar, type ViewState } from './components/GlobalNavSidebar'
 
 function App() {
-  const { theme, hasCompletedOnboarding } = useSettingsStore()
+  const { theme, hasCompletedOnboarding, navSidebarCollapsed } = useSettingsStore()
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -54,23 +54,25 @@ function App() {
       "w-screen h-screen flex overflow-hidden transition-colors duration-700",
       "bg-basalt text-white"
     )}>
-      <GlobalNavSidebar
-        view={view}
-        currentBook={null} // We rely on routing now
-        onNavigate={(v) => {
-          if (v === 'reader') {
-             // If we are already in a reader route, do nothing or maybe handle "resume" logic later
-             // For now, if we click "Reader" and we aren't there, we could go to archive or back?
-             // Since we removed 'currentBook' state, we can't easily jump to "last book" without storage.
-             // Simplest: Navigate to archive if not in reader.
-             navigate('/'); 
-          } else if (v === 'archive') {
-             navigate('/');
-          } else {
-             navigate('/' + v);
-          }
-        }}
-      />
+      {!navSidebarCollapsed && (
+        <GlobalNavSidebar
+          view={view}
+          currentBook={null} // We rely on routing now
+          onNavigate={(v) => {
+            if (v === 'reader') {
+               // If we are already in a reader route, do nothing or maybe handle "resume" logic later
+               // For now, if we click "Reader" and we aren't there, we could go to archive or back?
+               // Since we removed 'currentBook' state, we can't easily jump to "last book" without storage.
+               // Simplest: Navigate to archive if not in reader.
+               navigate('/'); 
+            } else if (v === 'archive') {
+               navigate('/');
+            } else {
+               navigate('/' + v);
+            }
+          }}
+        />
+      )}
 
       <div className="flex-1 min-w-0 min-h-0 overflow-auto flex justify-center relative">
         {/* Mica Dust Layer */}

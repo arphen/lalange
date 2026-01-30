@@ -4,7 +4,14 @@ import { VitePWA } from 'vite-plugin-pwa'
 import basicSsl from '@vitejs/plugin-basic-ssl'
 import { execSync } from 'child_process'
 
-const commitHash = execSync('git rev-parse --short HEAD').toString().trim();
+// Get commit hash, with fallback for CI environments without git history
+let commitHash = 'unknown';
+try {
+  commitHash = execSync('git rev-parse --short HEAD').toString().trim();
+} catch {
+  // Cloudflare Pages sets CF_PAGES_COMMIT_SHA
+  commitHash = process.env.CF_PAGES_COMMIT_SHA?.slice(0, 7) || 'unknown';
+}
 
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
