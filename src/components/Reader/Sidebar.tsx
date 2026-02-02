@@ -98,9 +98,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <div className="flex-1 overflow-y-auto p-2 space-y-1">
                 {/* Global Summaries Section */}
                 {globalSummaries.length > 0 && (
-                    <div className="mb-3 pb-3 border-b border-purple-500/20">
-                        <div className="text-[10px] text-purple-400 uppercase tracking-widest mb-2 px-1">
-                            📚 Book Summaries
+                    <div className="mb-3 pb-3 border-b border-purple-500/30 bg-purple-950/30 rounded-lg p-2 -mx-1">
+                        <div className="text-[10px] text-purple-400 uppercase tracking-widest mb-2 px-1 flex items-center gap-1">
+                            <span className="text-purple-500">📚</span> Book Summaries
                         </div>
                         {globalSummaries.map((summary, idx) => {
                             const isActive = activeSummaryId === summary.id;
@@ -112,15 +112,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                         className={clsx(
                                             "w-full text-left p-2 rounded border transition-all",
                                             isActive 
-                                                ? "bg-purple-900/40 border-purple-500/50 text-purple-200" 
-                                                : "bg-black/20 border-white/5 text-gray-400 hover:border-purple-500/30 hover:text-purple-300"
+                                                ? "bg-purple-800/50 border-purple-400/60 text-purple-100 shadow-[0_0_12px_rgba(168,85,247,0.3)]" 
+                                                : "bg-purple-900/20 border-purple-500/20 text-purple-300 hover:bg-purple-800/30 hover:border-purple-500/40 hover:text-purple-200"
                                         )}
                                     >
                                         <div className="flex items-center gap-2">
-                                            <span className="text-purple-500">▶</span>
+                                            <span className={clsx("text-sm", isActive ? "text-purple-300 animate-pulse" : "text-purple-500")}>▶</span>
                                             <span className="font-bold">Summary {idx + 1}</span>
                                         </div>
-                                        <div className="text-[9px] text-gray-500 mt-1 truncate">
+                                        <div className="text-[9px] text-purple-400/70 mt-1 truncate">
                                             Words {wordRange}
                                         </div>
                                     </button>

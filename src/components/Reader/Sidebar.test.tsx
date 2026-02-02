@@ -367,7 +367,7 @@ describe('Sidebar Component', () => {
 
             render(<Sidebar {...defaultProps} globalSummaries={globalSummaries} />);
 
-            expect(screen.getByText('📚 Book Summaries')).toBeInTheDocument();
+            expect(screen.getByText(/Book Summaries/)).toBeInTheDocument();
             expect(screen.getByText('Summary 1')).toBeInTheDocument();
             expect(screen.getByText('Summary 2')).toBeInTheDocument();
         });
@@ -452,11 +452,11 @@ describe('Sidebar Component', () => {
             const inactiveButton = screen.getByText('Summary 2').closest('button');
 
             // Active summary should have purple highlight classes
-            expect(activeButton).toHaveClass('bg-purple-900/40');
-            expect(activeButton).toHaveClass('border-purple-500/50');
+            expect(activeButton).toHaveClass('bg-purple-800/50');
+            expect(activeButton).toHaveClass('border-purple-400/60');
             
             // Inactive summary should not have purple highlight
-            expect(inactiveButton).not.toHaveClass('bg-purple-900/40');
+            expect(inactiveButton).not.toHaveClass('bg-purple-800/50');
         });
     });
 });

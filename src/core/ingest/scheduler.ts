@@ -223,6 +223,80 @@ export class IngestionScheduler {
         });
     }
 
+    /**
+     * Wake dormant tasks proactively when the engine is idle.
+     * This ensures we stay ahead of the reader even when they pause.
+     * Returns the number of tasks woken.
+     */
+    private wakeIdleTasks(): number {
+        if (!this.currentBookId) return 0;
+
+        let wokenCount = 0;
+        const MAX_IDLE_WAKE = 3; // Don't wake too many at once
+        
+        // Strategy 1: Wake remaining tasks in current chapter (density first, then summary)
+        if (this.currentChapterId) {
+            const currentChapterDensityTasks = this.tasks.filter(
+                t => t.bookId === this.currentBookId && 
+                     t.chapterId === this.currentChapterId && 
+                     t.type === 'DENSITY' && 
+                     t.status === 'dormant'
+            ).sort((a, b) => a.subchapterIndex - b.subchapterIndex);
+            
+            for (const task of currentChapterDensityTasks) {
+                if (wokenCount >= MAX_IDLE_WAKE) break;
+                task.status = 'pending';
+                wokenCount++;
+            }
+        }
+        
+        // Strategy 2: If current chapter is done, wake tasks for next chapters in this book
+        if (wokenCount < MAX_IDLE_WAKE) {
+            const bookDensityTasks = this.tasks.filter(
+                t => t.bookId === this.currentBookId && 
+                     t.type === 'DENSITY' && 
+                     t.status === 'dormant'
+            ).sort((a, b) => {
+                // Sort by chapter ID first (they're ordered), then by subchapterIndex
+                if (a.chapterId !== b.chapterId) {
+                    return a.chapterId.localeCompare(b.chapterId);
+                }
+                return a.subchapterIndex - b.subchapterIndex;
+            });
+            
+            for (const task of bookDensityTasks) {
+                if (wokenCount >= MAX_IDLE_WAKE) break;
+                task.status = 'pending';
+                wokenCount++;
+            }
+        }
+        
+        // Strategy 3: Wake global summary tasks if density is done, but only if reasonably close
+        if (wokenCount === 0) {
+            const settings = useSettingsStore.getState();
+            const summaryInterval = settings.summaryChunkSize || 2500;
+            // For idle work-ahead, use a larger lookahead (5 intervals)
+            const idleLookaheadWords = summaryInterval * 5;
+            
+            const dormantGlobalSummaries = this.globalSummaryTasks.filter(
+                t => t.bookId === this.currentBookId && 
+                     t.status === 'dormant' &&
+                     t.globalEndWordIndex <= this.currentGlobalWordIndex + idleLookaheadWords
+            ).sort((a, b) => a.summaryIndex - b.summaryIndex);
+            
+            for (const task of dormantGlobalSummaries.slice(0, 1)) {
+                task.status = 'pending';
+                wokenCount++;
+            }
+        }
+
+        if (wokenCount > 0) {
+            this.rebalancePriorities();
+        }
+        
+        return wokenCount;
+    }
+
     private rebalancePriorities() {
         // Note: rebalance even without currentBookId - just don't apply cursor-based scoring
         this.tasks.forEach(task => {
@@ -334,6 +408,15 @@ export class IngestionScheduler {
         }
         
         if (!nextTask) {
+            // No pending tasks - try to proactively wake dormant tasks
+            // This ensures we work ahead even when user is idle
+            const wokenCount = this.wakeIdleTasks();
+            if (wokenCount > 0) {
+                console.log(`[Scheduler] Idle work-ahead: woke ${wokenCount} dormant tasks`);
+                // Don't recurse immediately - let the loop handle it via processNext call
+                setTimeout(() => this.processNext(), 0);
+                return;
+            }
             console.log("[Scheduler] No pending tasks.");
             return;
         }
