@@ -89,6 +89,8 @@ interface SettingsState {
     setPacingOverlapTokens: (tokens: number) => void;
     pacingSensitivity: number;
     setPacingSensitivity: (sensitivity: number) => void;
+    pacingGranularity: 'paragraph' | 'sentence' | 'word';
+    setPacingGranularity: (granularity: 'paragraph' | 'sentence' | 'word') => void;
 
     // Onboarding
     hasCompletedOnboarding: boolean;
@@ -214,6 +216,8 @@ export const useSettingsStore = create<SettingsState>()(
             setPacingOverlapTokens: (pacingOverlapTokens) => set({ pacingOverlapTokens }),
             pacingSensitivity: 50,
             setPacingSensitivity: (pacingSensitivity) => set({ pacingSensitivity }),
+            pacingGranularity: 'sentence',
+            setPacingGranularity: (pacingGranularity) => set({ pacingGranularity }),
 
             // Librarian Defaults (used for density estimation)
             librarianModelTier: 'tiny',

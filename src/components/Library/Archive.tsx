@@ -3,8 +3,6 @@ import { initDB, type BookDocType } from '../../core/sync/db';
 import { initialIngest, processChaptersInBackground, stopProcessing, estimateBookDensity } from '../../core/ingest/pipeline';
 import { useAIStore } from '../../core/store/ai';
 import { BookCard } from './BookCard';
-import { SyncModal } from '../Sync/SyncModal';
-import { SeoHead } from '../SeoHead';
 
 interface ArchiveProps {
     onOpenBook: (book: BookDocType) => void;
@@ -14,11 +12,7 @@ export const Archive: React.FC<ArchiveProps> = ({ onOpenBook }) => {
     const [books, setBooks] = useState<BookDocType[]>([]);
     const [loading, setLoading] = useState(false);
     const [status, setStatus] = useState('');
-    const [syncBook, setSyncBook] = useState<BookDocType | null>(null);
-    
-    // Only subscribe to the specific AI state properties we need
-    const aiIsLoading = useAIStore((s) => s.isLoading);
-    const aiProgress = useAIStore((s) => s.progress);
+    const aiState = useAIStore();
 
     useEffect(() => {
         let sub: { unsubscribe: () => void };
@@ -76,10 +70,10 @@ export const Archive: React.FC<ArchiveProps> = ({ onOpenBook }) => {
         setLoading(true);
         setStatus('Fetching demo book...');
         try {
-            const res = await fetch('/pg1952-images.epub');
+            const res = await fetch('/test_book.epub');
             if (!res.ok) throw new Error('Failed to fetch demo book');
             const blob = await res.blob();
-            const file = new File([blob], 'pg1952-images.epub', { type: 'application/epub+zip' });
+            const file = new File([blob], 'test_book.epub', { type: 'application/epub+zip' });
             await ingestBook(file);
         } catch (e: unknown) {
             console.error(e);
@@ -99,11 +93,6 @@ export const Archive: React.FC<ArchiveProps> = ({ onOpenBook }) => {
         if (confirm('Stop ingestion for this book?')) {
             stopProcessing(bookId);
         }
-    };
-
-    const handleSync = (e: React.MouseEvent, book: BookDocType) => {
-        e.stopPropagation();
-        setSyncBook(book);
     };
 
     const handleEstimateDensity = async (e: React.MouseEvent, bookId: string) => {
@@ -159,40 +148,21 @@ export const Archive: React.FC<ArchiveProps> = ({ onOpenBook }) => {
             onDragOver={handleDragOver}
             onDrop={handleDrop}
         >
-            <SeoHead
-                title="XYZ"
-                description="XYZ is a local-first, AI-driven speed reading tool that uses entropy modulation to pace text based on meaning."
-                canonicalUrl="https://arphen.xyz/"
-                schema={{
-                    "@context": "https://schema.org",
-                    "@type": "WebApplication",
-                    "name": "XYZ",
-                    "url": "https://arphen.xyz/",
-                    "description": "Local-first AI-driven speed reading tool.",
-                    "applicationCategory": "UtilitiesApplication",
-                    "operatingSystem": "Web",
-                    "offers": {
-                        "@type": "Offer",
-                        "price": "0",
-                        "priceCurrency": "USD"
-                    }
-                }}
-            />
             <div className="flex-1 overflow-y-auto p-4 md:p-8">
                 <div className="max-w-7xl mx-auto">
                     <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-12 gap-4 border-b border-white/10 pb-8">
                         <div>
-                            <h1 className="text-4xl font-mono font-bold text-dune-gold tracking-widest mb-2">ARCHIVE</h1>
+                            <h2 className="text-4xl font-mono font-bold text-dune-gold tracking-widest mb-2">ARCHIVE</h2>
                             <p className="text-gray-500 font-mono text-sm uppercase tracking-wider">
                                 {books.length} TEXTS // {books.reduce((acc, b) => acc + b.totalWords, 0).toLocaleString()} WORDS
                             </p>
                         </div>
 
                         <div className="flex items-center gap-6 w-full md:w-auto">
-                            {(status || aiIsLoading) && (
+                            {(status || aiState.isLoading) && (
                                 <div className="flex items-center gap-2 text-magma-vent font-mono text-xs animate-pulse">
                                     <span className="w-2 h-2 bg-magma-vent rounded-full"></span>
-                                    {aiIsLoading ? (aiProgress || 'Initializing AI...') : status}
+                                    {aiState.isLoading ? (aiState.progress || 'Initializing AI...') : status}
                                 </div>
                             )}
                             <button
@@ -242,19 +212,12 @@ export const Archive: React.FC<ArchiveProps> = ({ onOpenBook }) => {
                                     onDelete={(e) => handleDelete(e, book.id)}
                                     onStop={(e) => handleStopProcessing(e, book.id)}
                                     onEstimateDensity={(e) => handleEstimateDensity(e, book.id)}
-                                    onSync={(e) => handleSync(e, book)}
                                 />
                             ))}
                         </div>
                     )}
                 </div>
             </div>
-
-            <SyncModal
-                isOpen={!!syncBook}
-                onClose={() => setSyncBook(null)}
-                book={syncBook}
-            />
         </div>
     );
 };
