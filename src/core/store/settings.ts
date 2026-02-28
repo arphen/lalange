@@ -206,7 +206,7 @@ export const useSettingsStore = create<SettingsState>()(
 
             pacingModelTier: 'tiny',
             setPacingModelTier: (pacingModelTier) => set({ pacingModelTier }),
-            
+
             pacingContextTokens: 128,
             setPacingContextTokens: (pacingContextTokens) => set({ pacingContextTokens }),
             pacingOverlapTokens: 16,
