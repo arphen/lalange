@@ -178,7 +178,7 @@ export const Archive: React.FC<ArchiveProps> = ({ onOpenBook }) => {
                     }
                 }}
             />
-            <div className="flex-1 overflow-y-auto p-4 md:p-8">
+            <div className="flex-1 overflow-y-auto pt-16 px-4 pb-4 md:p-8">
                 <div className="max-w-7xl mx-auto">
                     <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-12 gap-4 border-b border-white/10 pb-8">
                         <div>

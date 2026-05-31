@@ -20,6 +20,9 @@ export default defineConfig({
             '**/node_modules/**',
             '**/dist/**',
             'packages/**',
+            'e2e/**',
+            'test-results/**',
+            'screenshots/**',
         ],
         coverage: {
             provider: 'v8',

@@ -6,6 +6,10 @@
   <link rel="icon" type="image/svg+xml" href="/vite.svg" />
   <link rel="apple-touch-icon" href="/icon-192.png" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="XYZ" />
+  <meta name="mobile-web-app-capable" content="yes" />
   <meta name="description" content="XYZ is a free, open-source speed reading app that runs entirely in your browser. No logins, no tracking, no servers. Uses local AI to pace text based on meaning density." />
   <meta name="keywords" content="speed reading app, RSVP reader, AI reading tool, local AI, WebLLM, epub reader, free speed reading, open source reader, privacy reading app, offline reading" />
   <meta name="author" content="Arphen" />
@@ -250,15 +254,25 @@
     </noscript>
   </div>
   <script>
-    // Dev-only: Clear service workers and caches on first load
+    // Dev-only: remove stale PWA workers without forcing surprise tab reloads.
     if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
-      const key = '__sw_v2_' + location.port;
-      if (!sessionStorage.getItem(key) && 'serviceWorker' in navigator) {
+      const key = '__sw_cleanup_v3_' + location.port;
+      if (!sessionStorage.getItem(key)) {
         sessionStorage.setItem(key, '1');
-        Promise.all([
-          navigator.serviceWorker.getRegistrations().then(r => Promise.all(r.map(x => x.unregister()))),
-          caches?.keys().then(k => Promise.all(k.map(x => caches.delete(x))))
-        ]).then(() => location.reload()).catch(() => location.reload());
+
+        const unregisterWorkers = 'serviceWorker' in navigator
+          ? navigator.serviceWorker.getRegistrations().then(registrations => Promise.all(registrations.map(registration => registration.unregister())))
+          : Promise.resolve();
+
+        const clearPwaCaches = 'caches' in window
+          ? window.caches.keys().then(keys => Promise.all(
+              keys
+                .filter(name => /workbox|precache|vite-pwa|dev-sw/i.test(name))
+                .map(name => window.caches.delete(name))
+            ))
+          : Promise.resolve();
+
+        Promise.all([unregisterWorkers, clearPwaCaches]).catch(() => {});
       }
     }
   </script>

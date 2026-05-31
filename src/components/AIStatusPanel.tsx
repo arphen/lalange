@@ -89,35 +89,39 @@ export const AIStatusPanel: React.FC<AIStatusPanelProps> = ({
     const isLoading = lifecycleState === 'downloading' || lifecycleState === 'loading';
     
     // For summary tasks, use interpolated progress that updates in real-time
-    const [summaryProgress, setSummaryProgress] = React.useState<number | null>(null);
+    const [summaryTick, setSummaryTick] = React.useState(0);
+    const isSummaryTask = currentTask?.type === 'summary' && Boolean(summaryTiming.currentStartTime);
     
     React.useEffect(() => {
-        if (currentTask?.type !== 'summary' || !summaryTiming.currentStartTime) {
-            setSummaryProgress(null);
-            return;
-        }
+        if (!isSummaryTask) return;
         
         // Update progress every 250ms (was 100ms - smoother on battery)
         const interval = setInterval(() => {
-            setSummaryProgress(getSummaryProgress());
+            setSummaryTick((prev) => prev + 1);
         }, 250);
         
         return () => clearInterval(interval);
-    }, [currentTask?.type, summaryTiming.currentStartTime, getSummaryProgress]);
+    }, [isSummaryTask]);
+
+    const summaryProgress = React.useMemo(() => {
+        void summaryTick;
+        if (!isSummaryTask) return null;
+        return getSummaryProgress();
+    }, [summaryTick, isSummaryTask, getSummaryProgress]);
     
     // Determine if we're in indeterminate mode (no historical data for summary)
     const isSummaryIndeterminate = currentTask?.type === 'summary' && summaryProgress === null;
     
     // Calculate loading ETA
     const [loadingEta, setLoadingEta] = React.useState<string | null>(null);
+    const loadStartTime = modelStats.loadStartTime ?? null;
+    const canEstimateLoadingEta = isLoading && loadStartTime !== null && progressValue > 0 && progressValue < 1;
+
     React.useEffect(() => {
-        if (!isLoading || !modelStats.loadStartTime || progressValue <= 0 || progressValue >= 1) {
-            setLoadingEta(null);
-            return;
-        }
+        if (!canEstimateLoadingEta || loadStartTime === null) return;
 
         const interval = setInterval(() => {
-             const elapsed = Date.now() - modelStats.loadStartTime!;
+             const elapsed = Date.now() - loadStartTime;
              const estimated = elapsed / progressValue;
              const remaining = estimated - elapsed;
              if (remaining <= 0 || !isFinite(remaining)) {
@@ -131,7 +135,9 @@ export const AIStatusPanel: React.FC<AIStatusPanelProps> = ({
         }, 2000); // Update ETA every 2s (was 1s)
 
         return () => clearInterval(interval);
-    }, [isLoading, modelStats.loadStartTime, progressValue]);
+    }, [canEstimateLoadingEta, loadStartTime, progressValue]);
+
+    const displayedLoadingEta = canEstimateLoadingEta ? loadingEta : null;
 
     return (
         <div className={clsx('font-mono', className)}>
@@ -186,7 +192,7 @@ export const AIStatusPanel: React.FC<AIStatusPanelProps> = ({
                                 </span>
                                 <span className="text-[9px] text-gray-500 tabular-nums">
                                     {Math.round(progressValue * 100)}%
-                                    {loadingEta && ` · ${loadingEta}`}
+                                    {displayedLoadingEta && ` · ${displayedLoadingEta}`}
                                 </span>
                             </div>
                         </div>

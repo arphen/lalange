@@ -34,13 +34,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 }) => {
     const [expandedSummary, setExpandedSummary] = useState<string | null>(null);
     useAIStore(); // Keep subscription for re-renders but ignore returned object
-
-    // Sync expanded summary with active summary from parent (Reader)
-    React.useEffect(() => {
-        if (activeSummaryId) {
-            setExpandedSummary(activeSummaryId);
-        }
-    }, [activeSummaryId]);
+    const expandedSummaryId = activeSummaryId ?? expandedSummary;
 
     // Filter out image chapters
     const displayChapters = chapters.filter(c => c.metadata?.classificationType !== 'image');
@@ -198,7 +192,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                 <div className="pl-4 border-l border-white/10 ml-2 mb-2 space-y-2">
                                     {chapter.subchapters.map((sub, idx) => {
                                         const summaryId = `${chapter.id}_${idx}`;
-                                        const isExpanded = expandedSummary === summaryId;
+                                        const isExpanded = expandedSummaryId === summaryId;
                                         const isPlayingSummary = activeSummaryId === summaryId;
                                         // Check if we have ANY content for this subchapter (start index exists in content array)
                                         const currentContentLength = chapter.content?.length || 0;

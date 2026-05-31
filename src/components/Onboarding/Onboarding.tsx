@@ -102,10 +102,10 @@ export const Onboarding: React.FC = () => {
                     {step === 1 && (
                         <div className="max-w-3xl mx-auto mt-8 sm:mt-20 p-6 sm:p-8 pb-24 space-y-8 sm:space-y-12 animate-in fade-in zoom-in-95 duration-500">
                             <div className="space-y-4 sm:space-y-6">
-                                <h2 className="text-2xl sm:text-4xl font-bold text-white">Neuro-Semantic Initialization</h2>
+                                <h2 className="text-2xl sm:text-4xl font-bold text-white">Local Setup</h2>
                                 <p className="text-base sm:text-lg text-gray-400 leading-relaxed font-light">
-                                    You are about to install the <BrandName /> <span className="text-white font-bold">Pacing Engine</span>. 
-                                    This requires downloading a local AI model (TinyLlama, ~700MB) directly to your browser storage.
+                                    You are about to install the <BrandName /> <span className="text-white font-bold">local processing profile</span>. 
+                                    This downloads a small on-device package (TinyLlama, ~700MB) to browser storage.
                                 </p>
                             </div>
 
@@ -115,9 +115,9 @@ export const Onboarding: React.FC = () => {
                                         1
                                     </div>
                                     <div>
-                                        <h3 className="font-bold text-white">Local Intelligence</h3>
+                                        <h3 className="font-bold text-white">On-device processing</h3>
                                         <p className="text-sm text-gray-400 mt-1">
-                                            The model runs entirely on your device (Offline). No text is ever sent to the cloud.
+                                            Processing stays on this device. Your text is not sent to remote servers.
                                         </p>
                                     </div>
                                 </div>
@@ -126,9 +126,9 @@ export const Onboarding: React.FC = () => {
                                         2
                                     </div>
                                     <div>
-                                        <h3 className="font-bold text-white">TinyLlama Default</h3>
+                                        <h3 className="font-bold text-white">Starter profile</h3>
                                         <p className="text-sm text-gray-400 mt-1">
-                                            We start with the smallest, fastest model. You can switch to more powerful engines (like Qwen 2.5) in the Settings menu later.
+                                            We start with the lightest option for speed. You can switch profiles in Settings later.
                                         </p>
                                     </div>
                                 </div>
@@ -138,7 +138,7 @@ export const Onboarding: React.FC = () => {
                                 onClick={handleStartDownload}
                                 className="w-full py-4 sm:py-6 bg-dune-gold hover:bg-white text-black font-bold text-base sm:text-xl tracking-widest uppercase transition-all rounded"
                             >
-                                Acknowledge & Install Model
+                                Start Local Setup
                             </button>
                             
                             <p className="text-center text-xs text-gray-600 font-mono">
@@ -174,7 +174,7 @@ export const Onboarding: React.FC = () => {
                                      <p className="text-base text-gray-300 leading-relaxed">
                                         <strong className="text-dune-gold">RSVP</strong> (Rapid Serial Visual Presentation) solves this by placing every word in the exact same spot: your foveal center.
                                      </p>
-                                     <p className="text-sm text-gray-500"><BrandName /> uses the AI you are downloading right now. It predicts the "density" of the text and <strong className="text-white">slows down</strong> for complex ideas, just like your brain wants to.
+                                     <p className="text-sm text-gray-500"><BrandName /> uses the local profile you are downloading now. It estimates text density and <strong className="text-white">slows down</strong> for harder passages.
                                      </p>
                                      <div className="w-16 h-1 bg-dune-gold mx-auto mt-8" />
                                 </div>
@@ -214,7 +214,7 @@ export const Onboarding: React.FC = () => {
                                 <div className="max-w-3xl mx-auto space-y-4">
                                     <div className="flex justify-between items-end text-xs font-mono">
                                         <span className={clsx("text-dune-gold uppercase", downloadError && "text-red-500")}>
-                                            {downloadError ? "INSTALLATION FAILED" : (canFinish ? "INSTALLATION COMPLETE" : "INSTALLING NEURAL ENGINE...")}
+                                            {downloadError ? "SETUP FAILED" : (canFinish ? "SETUP COMPLETE" : "INSTALLING LOCAL PROFILE...")}
                                         </span>
                                         <span className={clsx("text-gray-400", downloadError && "text-red-400")}>
                                             {downloadError ? "ERROR" : (aiState.isLoading ? Math.round(aiState.progressValue * 100) + "%" : (canFinish ? "100%" : "WAITING"))}
@@ -267,7 +267,7 @@ export const Onboarding: React.FC = () => {
                                                 )}
                                             >
                                                 {canFinish ? (
-                                                    <span>NEXT: THE QUILTING POINT</span>
+                                                    <span>Next: Summary Pass</span>
                                                 ) : "Please Wait for Install..."}
                                             </button>
                                         )}
@@ -285,7 +285,7 @@ export const Onboarding: React.FC = () => {
                     {step === 3 && (
                         <div className="max-w-4xl mx-auto mt-20 p-8 space-y-12 animate-in fade-in slide-in-from-right-8 duration-500">
                             <div className="space-y-6 text-center">
-                                <h2 className="text-4xl font-bold text-white">The Quilting Point</h2>
+                                <h2 className="text-4xl font-bold text-white">Summary Checkpoint</h2>
                                 <p className="text-lg text-gray-400 leading-relaxed font-light italic">
                                     "Point de Capiton"
                                 </p>
@@ -297,7 +297,7 @@ export const Onboarding: React.FC = () => {
                                         <strong className="text-white">The Problem:</strong> Speed reading is like drinking from a firehose. You ingest data faster than your "phonological loop" (inner voice) can process. It's easy to read 50 pages and realize you've lost the thread.
                                     </p>
                                     <p>
-                                        <strong className="text-white">The Solution:</strong> The <strong className="text-dune-gold">Summarizer Agent</strong> acts as an auto-save for your brain. It generates periodic "Quilting Points" that anchor the narrative, ensuring you don't drift away.
+                                        <strong className="text-white">The Solution:</strong> The <strong className="text-dune-gold">summarizer</strong> acts as an auto-save for your attention. It creates periodic checkpoints that anchor the narrative.
                                     </p>
                                     <p className="border-l-2 border-dune-gold pl-4 text-xs font-mono text-gray-500">
                                         "Ideally, the system remembers for you, allowing you to focus entirely on the velocity of the text."

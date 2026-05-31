@@ -14,14 +14,17 @@ try {
 }
 
 // https://vite.dev/config/
-export default defineConfig(({ mode }) => {
-  const isDev = mode === 'development';
+export default defineConfig(() => {
+  const useHttps = process.env.VITE_HTTPS === '1';
 
   const plugins: PluginOption[] = [
-    basicSsl(),
+    useHttps && basicSsl(),
     react(),
-    !isDev && VitePWA({
+    VitePWA({
       registerType: 'prompt', // Show update prompt instead of auto-updating
+      devOptions: {
+        enabled: false,
+      },
       workbox: {
         maximumFileSizeToCacheInBytes: 128 * 1024 * 1024, // 128MB - needed for ONNX WASM runtime and large TTS model files
         // Don't precache LLM model files - they're managed by web-llm in IndexedDB
@@ -53,6 +56,7 @@ export default defineConfig(({ mode }) => {
     plugins,
     server: {
       host: true,
+      ...(useHttps ? { https: {} } : {}),
       headers: {
         "Cross-Origin-Embedder-Policy": "require-corp",
         "Cross-Origin-Opener-Policy": "same-origin",

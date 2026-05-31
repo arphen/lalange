@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:https": "VITE_HTTPS=1 vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
@@ -12,7 +13,8 @@
     "test:integration": "vitest run integration",
     "coverage": "vitest run --coverage",
     "deploy": "npm run build && wrangler pages deploy dist",
-    "prepare": "husky"
+    "prepare": "husky",
+    "screenshot": "playwright test"
   },
   "dependencies": {
     "@mlc-ai/web-llm": "file:./packages/web-llm",
@@ -40,6 +42,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
+    "@playwright/test": "^1.60.0",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.1",
     "@testing-library/user-event": "^14.6.1",

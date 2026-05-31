@@ -6,6 +6,7 @@ import { Sidebar } from './Sidebar';
 import { TTSPlayer } from './TTSPlayer';
 import { useSettingsStore } from '../../core/store/settings';
 import { useTTSStore } from '../../core/store/tts';
+import { useFullscreen } from '../../hooks/useFullscreen';
 
 import { scheduler } from '../../core/ingest/scheduler';
 import { processChaptersInBackground, resumeIncompleteAnalysis } from '../../core/ingest/pipeline';
@@ -26,8 +27,10 @@ const getDensityColor = (score: number) => {
     return 'text-red-500 font-bold'; // Profound
 };
 
-export const Reader: React.FC<ReaderProps> = ({ book }) => {
+export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
     const [isPlaying, setIsPlaying] = useState(false);
+    const [fullscreenTarget, setFullscreenTarget] = useState<HTMLDivElement | null>(null);
+    const [fullscreenHint, setFullscreenHint] = useState<string | null>(null);
     
     // Use individual selectors for all settings to minimize re-renders
     const wpm = useSettingsStore((s) => s.wpm);
@@ -102,6 +105,8 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
     // TTS State
     const [showTTSPlayer, setShowTTSPlayer] = useState(false);
     const ttsPlaybackState = useTTSStore((s) => s.playbackState);
+
+    const { isFullscreen, isFullscreenSupported, toggleFullscreen } = useFullscreen(fullscreenTarget);
 
     const prevContainerRef = useRef<HTMLDivElement>(null);
     const nextContainerRef = useRef<HTMLDivElement>(null);
@@ -262,6 +267,26 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
             nextContainerRef.current.innerHTML = '';
         }
     }, [riverBottomEnabled]);
+
+    useEffect(() => {
+        if (!fullscreenHint) return;
+        const timeout = setTimeout(() => setFullscreenHint(null), 3200);
+        return () => clearTimeout(timeout);
+    }, [fullscreenHint]);
+
+    const handleToggleFullscreen = useCallback(async () => {
+        const didToggle = await toggleFullscreen();
+        if (didToggle) {
+            setFullscreenHint(null);
+            return;
+        }
+
+        if (isFullscreenSupported) {
+            setFullscreenHint('Fullscreen was blocked. Tap again after interacting with the page.');
+        } else {
+            setFullscreenHint('For true edge-to-edge on this browser, install the app to your home screen.');
+        }
+    }, [isFullscreenSupported, toggleFullscreen]);
 
     const startTransition = useCallback((label: string, onComplete: () => void) => {
         // Stop playback immediately
@@ -959,17 +984,48 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
         : (currentChapter?.content?.[currentWordIndex] || wordsRef.current[currentWordIndex] || '');
 
     return (
-        <div className="relative w-full h-full min-h-0 bg-basalt text-white overflow-hidden flex">
+        <div ref={setFullscreenTarget} className="relative w-full h-full min-h-0 bg-basalt text-white overflow-hidden flex">
             {/* Floating Header / Controls */}
             <div className="absolute top-0 left-0 right-0 z-[60] p-4 flex justify-between items-start pointer-events-none">
-                <div className="w-12" />
+                {onBack ? (
+                    <button
+                        onClick={onBack}
+                        className="pointer-events-auto p-3 bg-black/40 backdrop-blur-md rounded-full border border-white/10 text-white/70 hover:bg-white/10 hover:text-white transition-all hover:scale-105 active:scale-95 shadow-lg"
+                        title="Back to Archive"
+                    >
+                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                        </svg>
+                    </button>
+                ) : (
+                    <div className="w-12" />
+                )}
 
-                {/* Chapter Title (Centered) */}
-                <div className="mt-2 px-6 py-2 bg-black/20 backdrop-blur-sm rounded-full border border-white/5 shadow-lg">
+                {/* Chapter Title (Centered) - hidden on mobile/small-screens to prevent layout collision */}
+                <div className="hidden md:block mt-2 px-6 py-2 bg-black/20 backdrop-blur-sm rounded-full border border-white/5 shadow-lg">
                     <h3 className="font-mono text-xs text-gray-400 tracking-widest uppercase">{currentChapter?.title}</h3>
                 </div>
 
-                <div className="pointer-events-auto flex items-start gap-3">
+                <div className="pointer-events-auto relative flex items-start gap-3">
+                    {/* Fullscreen Button */}
+                    <button
+                        onClick={handleToggleFullscreen}
+                        className={`p-3 backdrop-blur-md rounded-full border transition-colors shadow-lg ${
+                            isFullscreen
+                                ? 'bg-dune-gold/80 border-dune-gold text-black'
+                                : 'bg-black/40 border-white/10 text-white/70 hover:bg-white/10 hover:text-white'
+                        } ${!isFullscreenSupported ? 'opacity-75' : ''}`}
+                        title={isFullscreen ? 'Exit Fullscreen' : 'Enter Fullscreen'}
+                    >
+                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            {isFullscreen ? (
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 4.5V9H4.5M15 4.5V9h4.5M9 19.5V15H4.5M15 19.5V15h4.5" />
+                            ) : (
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4.5 9V4.5H9M15 4.5h4.5V9M4.5 15v4.5H9M15 19.5h4.5V15" />
+                            )}
+                        </svg>
+                    </button>
+
                     {/* Focus Mode Button */}
                     <button
                         onClick={() => {
@@ -1081,13 +1137,27 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
                             )}
                         </svg>
                     </button>
+
+                    {fullscreenHint && (
+                        <div className="absolute top-full right-0 mt-2 w-64 p-2 bg-black/70 backdrop-blur-md border border-white/10 rounded-md text-[10px] uppercase tracking-wide font-mono text-dune-gold/90 leading-relaxed">
+                            {fullscreenHint}
+                        </div>
+                    )}
                 </div>
             </div>
 
-            {/* Chapters Drawer (Right) */}
+            {/* Backdrop click-shield for sidebar on mobile/small-screens */}
+            {showChapters && (
+                <div 
+                    className="fixed inset-0 bg-black/60 backdrop-blur-xs z-40 md:hidden"
+                    onClick={() => setShowChapters(false)}
+                />
+            )}
+
+            {/* Chapters Drawer (Right) - responsive width so it doesn't crowd small mobile viewports */}
             <div
                 data-testid="sidebar-container"
-                className={`fixed inset-y-0 right-0 z-50 w-80 bg-basalt border-l border-white/10 transform transition-transform duration-300 ${showChapters ? 'translate-x-0' : 'translate-x-full'}`}
+                className={`fixed inset-y-0 right-0 z-50 w-[85vw] sm:w-80 bg-basalt border-l border-white/10 transform transition-transform duration-300 ${showChapters ? 'translate-x-0' : 'translate-x-full'}`}
                 style={{ willChange: 'transform' }}
             >
                 <Sidebar
@@ -1107,12 +1177,9 @@ export const Reader: React.FC<ReaderProps> = ({ book }) => {
                 />
             </div>
 
-            {/* Backdrop for sidebar - Removed to prevent blocking view */}
-
-            {/* Main Reader Area (Full Screen) */}
+            {/* Main Reader Area (Full Screen) - uses responsive margins to prevent shifting/squishing text on mobile */}
             <div
-                className={`flex-1 h-full relative flex flex-col min-w-0 transition-all duration-300 ${showChapters ? 'mr-80' : 'mr-0'}`}
-                style={{ marginRight: showChapters ? '20rem' : '0' }}
+                className={`flex-1 h-full relative flex flex-col min-w-0 transition-all duration-300 ${showChapters ? 'md:mr-80 mr-0' : 'mr-0'}`}
             >
                 <div className="w-full h-full flex flex-col relative group">
 

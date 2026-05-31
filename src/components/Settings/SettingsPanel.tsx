@@ -26,6 +26,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
     const [cachedModels, setCachedModels] = useState<Record<string, boolean>>({});
     const settings = useSettingsStore();
     const aiState = useAIStore();
+    const isDayTheme = settings.theme === 'day' || settings.theme === 'dunes';
 
     const checkCache = React.useCallback(async () => {
         const status: Record<string, boolean> = {};
@@ -71,7 +72,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                 description="Configure XYZ reader settings, LLM models, and display preferences."
                 canonicalUrl="https://arphen.xyz/settings"
             />
-            <div className="max-w-4xl mx-auto p-8 md:p-12">
+            <div className="max-w-4xl mx-auto pt-16 px-4 pb-8 md:p-12">
                 <div className="mb-8 border-b border-white/10 pb-4 flex justify-between items-center">
                      <div>
                         <h2 className="text-xl font-bold text-dune-gold tracking-widest uppercase">
@@ -85,6 +86,30 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                     >
                         [ CLOSE ]
                     </button>
+                </div>
+
+                <div className="mb-8 rounded-lg border border-white/10 bg-black/20 p-4 md:p-6">
+                    <label className="block text-xs text-dune-gold mb-3 uppercase tracking-widest font-bold">Appearance</label>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <ThemeButton
+                            label="Volcanic"
+                            subtitle="Night"
+                            active={settings.theme === 'volcanic'}
+                            onClick={() => settings.setTheme('volcanic')}
+                        />
+                        <ThemeButton
+                            label="Day"
+                            subtitle="Sandlight"
+                            active={isDayTheme}
+                            onClick={() => settings.setTheme('day')}
+                        />
+                        <ThemeButton
+                            label="Ash"
+                            subtitle="Monochrome"
+                            active={settings.theme === 'ash'}
+                            onClick={() => settings.setTheme('ash')}
+                        />
+                    </div>
                 </div>
 
                     {/* Librarian Tab (Includes General + Model Manager) */}
@@ -466,6 +491,28 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
             </div>
     );
 };
+
+interface ThemeButtonProps {
+    label: string;
+    subtitle: string;
+    active: boolean;
+    onClick: () => void;
+}
+
+const ThemeButton: React.FC<ThemeButtonProps> = ({ label, subtitle, active, onClick }) => (
+    <button
+        onClick={onClick}
+        className={clsx(
+            'p-3 rounded border text-left transition-all',
+            active
+                ? 'bg-dune-gold text-black border-dune-gold'
+                : 'bg-black/20 border-white/10 text-gray-400 hover:border-white/30 hover:text-white'
+        )}
+    >
+        <div className="text-xs font-bold uppercase tracking-widest">{label}</div>
+        <div className="text-[10px] mt-1 opacity-70 uppercase tracking-wide">{subtitle}</div>
+    </button>
+);
 
 const Toggle = ({ label, description, checked, onChange }: { label: string, description: React.ReactNode, checked: boolean, onChange: (v: boolean) => void }) => (
     <div className="flex items-start justify-between group p-4 rounded-lg hover:bg-white/5 transition-colors border border-transparent hover:border-white/5 bg-black/20">

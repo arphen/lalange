@@ -1,4 +1,9 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
+import {
+    SW_RELOAD_FALLBACK_MS,
+    SW_UPDATE_CHECK_INTERVAL_MS,
+    shouldReloadOnControllerChange,
+} from './updatePrompt.logic';
 
 // Type for the registerSW function from vite-plugin-pwa
 type RegisterSWOptions = {
@@ -23,16 +28,24 @@ export const UpdatePrompt: React.FC = () => {
     const [updateFn, setUpdateFn] = useState<((reload?: boolean) => Promise<void>) | null>(null);
     const [isUpdating, setIsUpdating] = useState(false);
     const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const fallbackReloadTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const registrationRef = useRef<ServiceWorkerRegistration | null>(null);
+    const userInitiatedUpdateRef = useRef(false);
+    const hasReloadedRef = useRef(false);
     
     useEffect(() => {
         // Only run in production (PWA is disabled in dev - see vite.config.ts)
         if (import.meta.env.DEV || import.meta.env.MODE === 'test') return;
         
-        // Listen for controller change - this fires when a new SW takes control
-        // Reload the page to ensure we're running the latest code
+        // Ignore controller changes unless the user explicitly triggered an update.
         const handleControllerChange = () => {
-            console.log('[SW] Controller changed, reloading page...');
+            if (!shouldReloadOnControllerChange(userInitiatedUpdateRef.current, hasReloadedRef.current)) {
+                console.log('[SW] Controller changed without user-initiated update; skipping reload.');
+                return;
+            }
+
+            hasReloadedRef.current = true;
+            console.log('[SW] Controller changed after user update, reloading page...');
             window.location.reload();
         };
         navigator.serviceWorker?.addEventListener('controllerchange', handleControllerChange);
@@ -62,11 +75,11 @@ export const UpdatePrompt: React.FC = () => {
                         if (registration) {
                             registrationRef.current = registration;
                             
-                            // Check for updates every 60 seconds (more aggressive)
+                            // Poll less aggressively to reduce background churn.
                             intervalRef.current = setInterval(() => {
                                 console.log('[SW] Checking for updates...');
                                 registration.update().catch(console.error);
-                            }, 60 * 1000);
+                            }, SW_UPDATE_CHECK_INTERVAL_MS);
                             
                             // Also check immediately
                             registration.update().catch(console.error);
@@ -90,12 +103,22 @@ export const UpdatePrompt: React.FC = () => {
             if (intervalRef.current) {
                 clearInterval(intervalRef.current);
             }
+            if (fallbackReloadTimeoutRef.current) {
+                clearTimeout(fallbackReloadTimeoutRef.current);
+            }
             navigator.serviceWorker?.removeEventListener('controllerchange', handleControllerChange);
         };
     }, []);
 
     const handleUpdate = useCallback(async () => {
         setIsUpdating(true);
+        userInitiatedUpdateRef.current = true;
+        hasReloadedRef.current = false;
+
+        if (fallbackReloadTimeoutRef.current) {
+            clearTimeout(fallbackReloadTimeoutRef.current);
+            fallbackReloadTimeoutRef.current = null;
+        }
         
         try {
             // First, try to get the waiting service worker to skip waiting
@@ -107,20 +130,34 @@ export const UpdatePrompt: React.FC = () => {
             
             // Then call the updateSW function
             if (updateFn) {
-                console.log('[SW] Calling updateSW(true)...');
-                await updateFn(true); // true = reload page after update
+                console.log('[SW] Calling updateSW(false)...');
+                await updateFn(false);
+
+                fallbackReloadTimeoutRef.current = setTimeout(() => {
+                    if (hasReloadedRef.current) {
+                        return;
+                    }
+
+                    hasReloadedRef.current = true;
+                    console.log('[SW] Controllerchange did not fire, forcing fallback reload.');
+                    window.location.reload();
+                }, SW_RELOAD_FALLBACK_MS);
             } else {
                 // Fallback: just reload the page
                 console.log('[SW] No updateFn, reloading page directly...');
+                hasReloadedRef.current = true;
                 window.location.reload();
             }
         } catch (error) {
             console.error('[SW] Update failed:', error);
             // Fallback: reload anyway
+            hasReloadedRef.current = true;
             window.location.reload();
         } finally {
-            // Reset state in case reload doesn't happen (e.g., blocked by browser)
-            setIsUpdating(false);
+            // Reset state in case reload doesn't happen.
+            if (!hasReloadedRef.current) {
+                setIsUpdating(false);
+            }
         }
     }, [updateFn]);
 

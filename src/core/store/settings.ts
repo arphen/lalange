@@ -4,7 +4,7 @@ import { type ModelTier } from '../ai/webllm';
 import { type DurationStrategyId, DEFAULT_STRATEGY_ID } from '../rsvp/duration';
 import { type DisplayPluginId, DEFAULT_DISPLAY_PLUGIN } from '../rsvp/display';
 
-export type ThemeMode = 'volcanic' | 'dunes' | 'ash';
+export type ThemeMode = 'volcanic' | 'day' | 'dunes' | 'ash';
 
 export interface PromptFragment {
     id: string;

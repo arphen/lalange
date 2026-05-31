@@ -6,9 +6,8 @@ import { clsx } from 'clsx';
 import { BrandName } from './BrandName';
 
 /**
- * Modal for initial model selection only.
- * Once a model is selected, loading progress is shown in the AIStatusPanel sidebar,
- * not in a blocking modal.
+ * Optional local processing setup.
+ * Once setup starts, progress is shown in the status panel instead of this modal.
  */
 export const ModelDownloadModal: React.FC = () => {
     const location = useLocation();
@@ -18,11 +17,12 @@ export const ModelDownloadModal: React.FC = () => {
     const [error, setError] = useState<string | null>(null);
     const [isInitializing, setIsInitializing] = useState(false);
 
-    // Skip AI engine check on sync page - it's receive-only and doesn't need AI
-    const isSyncPage = location.pathname === '/sync';
+    const shouldPromptOnRoute =
+        location.pathname.startsWith('/reader') ||
+        location.pathname.startsWith('/settings');
 
     useEffect(() => {
-        if (isSyncPage) return; // Don't prompt for AI download on sync page
+        if (!shouldPromptOnRoute) return;
         
         const checkCache = async () => {
             const cached = await isModelCached(editorModel);
@@ -31,7 +31,7 @@ export const ModelDownloadModal: React.FC = () => {
             }
         };
         checkCache();
-    }, [editorModel, isSyncPage]);
+    }, [editorModel, shouldPromptOnRoute]);
 
     const handleDownload = async () => {
         // Update all models to the selected tier for consistency
@@ -50,16 +50,21 @@ export const ModelDownloadModal: React.FC = () => {
             // Re-open modal on error to allow retry
             setIsOpen(true);
             if (error instanceof Error && error.message === "BROWSER_STORAGE_QUOTA_EXCEEDED") {
-                setError("BROWSER STORAGE QUOTA EXCEEDED. Please clear site data or check browser settings.");
+                setError("Storage quota exceeded. Clear site data or adjust browser storage settings.");
             } else {
-                setError("Download failed. Please check your connection and try again.");
+                setError("Setup failed. Check your connection and try again.");
             }
         } finally {
             setIsInitializing(false);
         }
     };
 
-    // Only show for initial model selection, not during loading
+    const handleSkip = () => {
+        setError(null);
+        setIsOpen(false);
+    };
+
+    // Show only when setup is needed for the current route.
     if (!isOpen) return null;
 
     return (
@@ -67,17 +72,17 @@ export const ModelDownloadModal: React.FC = () => {
             <div className="bg-basalt border border-white/10 rounded-lg max-w-2xl w-full shadow-2xl overflow-hidden">
                 <div className="p-6 border-b border-white/10 bg-black/20">
                     <h2 className="text-xl font-mono font-bold text-dune-gold tracking-widest uppercase">
-                        SELECT NEURAL ENGINE
+                        LOCAL PROCESSING SETUP
                     </h2>
                     <p className="text-xs text-gray-400 mt-2 font-mono">
-                        <BrandName /> runs entirely on your device. Select a model to download.
+                        <BrandName /> runs on your device. Choose a profile to enable local processing.
                     </p>
                 </div>
 
                 <div className="p-6 space-y-4">
                     {error && (
                         <div className="p-4 bg-red-900/20 border border-red-500/50 rounded text-red-400 text-xs font-mono mb-4">
-                            <span className="font-bold">ERROR:</span> {error}
+                            <span className="font-bold">Setup Error:</span> {error}
                         </div>
                     )}
                     <div className="grid gap-4">
@@ -109,7 +114,19 @@ export const ModelDownloadModal: React.FC = () => {
                     </div>
                 </div>
 
-                <div className="p-6 border-t border-white/10 bg-black/20 flex justify-end">
+                <div className="p-6 border-t border-white/10 bg-black/20 flex justify-end gap-3">
+                    <button
+                        onClick={handleSkip}
+                        disabled={isInitializing}
+                        className={clsx(
+                            "px-6 py-2 font-mono font-bold uppercase tracking-widest text-xs transition-colors border border-white/20",
+                            isInitializing
+                                ? "text-gray-500 border-white/10 cursor-not-allowed"
+                                : "text-gray-300 hover:text-white hover:border-white/40"
+                        )}
+                    >
+                        Not now
+                    </button>
                     <button
                         onClick={handleDownload}
                         disabled={isInitializing}
@@ -120,7 +137,7 @@ export const ModelDownloadModal: React.FC = () => {
                                 : "bg-dune-gold text-black hover:bg-white"
                         )}
                     >
-                        {isInitializing ? 'Initializing...' : 'Initialize System'}
+                        {isInitializing ? 'Starting...' : 'Start setup'}
                     </button>
                 </div>
             </div>

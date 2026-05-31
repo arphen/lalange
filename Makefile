@@ -1,12 +1,18 @@
 # Makefile for XYZ Setup
 
-.PHONY: setup install-ollama start-ollama pull-model dev test-ollama ollama-test
+.PHONY: setup install-deps install-ollama start-ollama pull-model dev build run test-ollama ollama-test
 
 # Detect OS!
 OS := $(shell uname -s)
 
 setup: install-ollama pull-model
-	@echo "Setup complete! Run 'make dev' to start the app."
+	@echo "Setup complete! Run 'make dev' for local HTTP development or 'make run' for a production preview."
+
+install-deps:
+	@if [ ! -x node_modules/.bin/vite ]; then \
+		echo "Installing npm dependencies..."; \
+		if [ -f package-lock.json ]; then NODE_OPTIONS="--max-old-space-size=4096 $$NODE_OPTIONS" npm ci; else NODE_OPTIONS="--max-old-space-size=4096 $$NODE_OPTIONS" npm install; fi; \
+	fi
 
 install-ollama:
 	@echo "Checking for Ollama..."
@@ -54,6 +60,14 @@ test-ollama: start-ollama
 # Backwards-compatible alias
 ollama-test: test-ollama
 
-dev:
-	@echo "Starting Vite development server..."
-	@npm run dev
+dev: install-deps
+	@echo "Starting local Vite development server (HTTP)..."
+	@VITE_HTTPS=0 npm run dev
+
+build: install-deps
+	@echo "Building production bundle..."
+	@npm run build
+
+run: build
+	@echo "Starting production preview server..."
+	@npm run preview -- --host
