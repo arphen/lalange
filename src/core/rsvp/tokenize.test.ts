@@ -8,12 +8,15 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+    REFERENCE_MARKER_TOKEN,
     tokenizeWord,
     tokenizeForRSVP,
     splitLongWordForRSVP,
     isStandaloneDash,
     isHyphenatedPart,
     isSlashPart,
+    isReferenceToken,
+    normalizeReferenceTokens,
     isPauseToken,
     getTokenDisplayProps,
     STANDALONE_DASHES,
@@ -376,6 +379,41 @@ describe('tokenize', () => {
         });
     });
 
+    describe('isReferenceToken', () => {
+        it('should detect bracket-style references', () => {
+            expect(isReferenceToken('[22]')).toBe(true);
+            expect(isReferenceToken('[16].')).toBe(true);
+        });
+
+        it('should detect parenthetical locators', () => {
+            expect(isReferenceToken('(324.7)')).toBe(true);
+            expect(isReferenceToken('(743,fnl)')).toBe(true);
+            expect(isReferenceToken('(675-676)')).toBe(true);
+        });
+
+        it('should detect normalized marker', () => {
+            expect(isReferenceToken(REFERENCE_MARKER_TOKEN)).toBe(true);
+        });
+
+        it('should not treat likely years as references', () => {
+            expect(isReferenceToken('(1966)')).toBe(false);
+        });
+    });
+
+    describe('normalizeReferenceTokens', () => {
+        it('suppresses reference tokens when mode is suppress', () => {
+            const result = normalizeReferenceTokens(['alpha', '[22]', 'beta', '(324.7)'], 'suppress');
+            expect(result.tokens).toEqual(['alpha', 'beta']);
+            expect(result.metadata.referencesSuppressed).toBe(2);
+        });
+
+        it('compacts references into one marker when mode is compact', () => {
+            const result = normalizeReferenceTokens(['alpha', '[22]', '[23]', '(324.7)', 'beta'], 'compact');
+            expect(result.tokens).toEqual(['alpha', REFERENCE_MARKER_TOKEN, 'beta']);
+            expect(result.metadata.referencesCompacted).toBeGreaterThan(0);
+        });
+    });
+
     describe('getTokenDisplayProps', () => {
         describe('pause tokens', () => {
             it('should mark em-dash as pause', () => {
@@ -418,6 +456,19 @@ describe('tokenize', () => {
             it('should NOT have special CSS class for regular words', () => {
                 const props = getTokenDisplayProps('hello');
                 expect(props.cssClass).toBeUndefined();
+            });
+        });
+
+        describe('reference tokens', () => {
+            it('should give reference markers compact styling', () => {
+                const props = getTokenDisplayProps('[ref]');
+                expect(props.cssClass).toBe('rsvp-reference-token');
+                expect(props.useSaccadeRendering).toBe(false);
+            });
+
+            it('should keep references faster than normal words', () => {
+                const props = getTokenDisplayProps('[ref]');
+                expect(props.displayTimeMultiplier).toBeLessThan(1.0);
             });
         });
 

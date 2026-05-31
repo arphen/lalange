@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+    cleanReferencesFromHtml,
     cleanText,
     classifyChapter,
     removePageNumbersFromHtml,
@@ -174,6 +175,44 @@ The year was 1984.
             const result = cleanText(text, { removePageNumbers: true });
             expect(result.cleanedText).toContain('42 people');
             expect(result.cleanedText).toContain('1984');
+        });
+    });
+
+    describe('reference handling', () => {
+        it('should suppress inline reference markers when configured', () => {
+            const text = `
+The analyst declared this impossible [22].
+This phrase appears in the source (324.7) and later (743,fnl).
+            `;
+
+            const result = cleanText(text, { referenceHandling: 'suppress' });
+            expect(result.cleanedText).not.toContain('[22]');
+            expect(result.cleanedText).not.toContain('(324.7)');
+            expect(result.cleanedText).not.toContain('(743,fnl)');
+            expect(result.metadata.referencesSuppressed).toBeGreaterThan(0);
+        });
+
+        it('should compact references into a normalized marker', () => {
+            const text = `
+First [12] second [13] third (324.7).
+            `;
+
+            const result = cleanText(text, { referenceHandling: 'compact' });
+            expect(result.cleanedText).toContain('[ref]');
+            expect(result.cleanedText).not.toContain('[12]');
+            expect(result.cleanedText).not.toContain('[13]');
+            expect(result.cleanedText).not.toContain('(324.7)');
+            expect(result.metadata.referencesCompacted).toBeGreaterThan(0);
+        });
+
+        it('should preserve likely year parentheticals', () => {
+            const text = `
+Lacan published this in (1966) and revised it in (1970).
+            `;
+
+            const result = cleanText(text, { referenceHandling: 'suppress' });
+            expect(result.cleanedText).toContain('(1966)');
+            expect(result.cleanedText).toContain('(1970)');
         });
     });
 
@@ -403,6 +442,34 @@ describe('removeGutenbergBoilerplateFromHtml', () => {
         const result = removeGutenbergBoilerplateFromHtml(html);
         expect(result).not.toContain('START OF THE PROJECT');
         expect(result).toContain('Content');
+    });
+});
+
+describe('cleanReferencesFromHtml', () => {
+    it('should remove note sections by id/class patterns', () => {
+        const html = `
+<section id="notes-3"><p>(324.7) Endnote entry.</p></section>
+<p>Main text survives.</p>
+        `;
+
+        const result = cleanReferencesFromHtml(html, { referenceHandling: 'suppress' });
+        expect(result).not.toContain('Endnote entry');
+        expect(result).toContain('Main text survives');
+    });
+
+    it('should suppress numeric sup callouts', () => {
+        const html = `<p>Text with marker<sup>4</sup> continues.</p>`;
+        const result = cleanReferencesFromHtml(html, { referenceHandling: 'suppress' });
+        expect(result).not.toContain('<sup>4</sup>');
+        expect(result).toContain('Text with marker');
+    });
+
+    it('should compact callouts into ref marker when requested', () => {
+        const html = `<p>Text<a href="#fn12">12</a> and <a href="#fn13">13</a>.</p>`;
+        const result = cleanReferencesFromHtml(html, { referenceHandling: 'compact' });
+        expect(result).toContain('[ref]');
+        expect(result).not.toContain('>12<');
+        expect(result).not.toContain('>13<');
     });
 });
 
