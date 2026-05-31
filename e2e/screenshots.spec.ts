@@ -2,6 +2,8 @@ import { test, expect, type Page } from '@playwright/test';
 import * as path from 'path';
 import * as fs from 'fs';
 
+const MODEL_MODAL_HEADING = /select neural engine|local processing setup/i;
+
 function getOutputDir(isMobile: boolean) {
   const outputDir = path.join(process.cwd(), 'screenshots', isMobile ? 'mobile' : 'desktop');
   if (!fs.existsSync(outputDir)) {
@@ -11,50 +13,134 @@ function getOutputDir(isMobile: boolean) {
 }
 
 async function dismissEngineModalIfPresent(page: Page): Promise<void> {
-  const modalHeading = page.getByRole('heading', { name: /select neural engine|local processing setup/i });
-  const modalVisible = await modalHeading.isVisible({ timeout: 3000 }).catch(() => false);
+  const modalHeading = page.getByRole('heading', { name: MODEL_MODAL_HEADING }).first();
+  const modalVisible = await modalHeading.isVisible({ timeout: 2500 }).catch(() => false);
 
   if (!modalVisible) {
     return;
   }
 
   const skipButton = page.getByRole('button', { name: /not now|skip/i }).first();
-  const canSkip = await skipButton.isVisible({ timeout: 1000 }).catch(() => false);
+  const canSkip = await skipButton.isVisible({ timeout: 1200 }).catch(() => false);
   if (canSkip) {
-    await skipButton.click();
+    await skipButton.click({ force: true });
     await expect(modalHeading).toBeHidden({ timeout: 10000 });
     return;
   }
 
+  // Legacy modal path without a skip action.
   const firstEngineOption = page
-    .getByRole('button', { name: /tinyllama|qwen/i })
+    .getByRole('button', { name: /tinyllama|qwen|standard|higher quality/i })
     .first();
   await expect(firstEngineOption).toBeVisible({ timeout: 10000 });
   await firstEngineOption.click();
 
-  const initializeButton = page.getByRole('button', { name: /initialize system|start setup/i });
+  const initializeButton = page.getByRole('button', { name: /initialize system|start setup/i }).first();
   await expect(initializeButton).toBeVisible({ timeout: 10000 });
   await initializeButton.click();
 
   await expect(modalHeading).toBeHidden({ timeout: 15000 });
 }
 
-async function captureRouteScreenshot(
+async function captureScreenshot(
   page: Page,
   isMobile: boolean,
-  route: string,
   filename: string,
 ): Promise<void> {
   const outputDir = getOutputDir(isMobile);
-  await page.goto(route);
-  await page.waitForLoadState('domcontentloaded');
   await dismissEngineModalIfPresent(page);
-  await page.waitForTimeout(2000);
+  await page.waitForTimeout(900);
   await page.screenshot({ path: path.join(outputDir, filename), fullPage: true });
 }
 
-// Set longer timeout for all tests.
-test.setTimeout(90000);
+async function hasDenseContextOnBothSides(page: Page): Promise<boolean> {
+  return page.evaluate(() => {
+    const top = document.querySelector('[data-testid="reader-context-top"]');
+    const bottom = document.querySelector('[data-testid="reader-context-bottom"]');
+    if (!top || !bottom) {
+      return false;
+    }
+
+    const topWords = top.querySelectorAll('[data-index]').length;
+    const bottomWords = bottom.querySelectorAll('[data-index]').length;
+    return topWords >= 20 && bottomWords >= 20;
+  });
+}
+
+async function closeChaptersDrawerIfOpen(page: Page): Promise<void> {
+  const chapterButtons = page.getByTestId('sidebar-chapter-button');
+  const drawerIsOpen = await chapterButtons.first().isVisible({ timeout: 1000 }).catch(() => false);
+  if (!drawerIsOpen) {
+    return;
+  }
+
+  await page.getByTestId('toggle-chapters').click();
+  await page.waitForTimeout(500);
+}
+
+async function advanceToDenseReaderContext(page: Page): Promise<void> {
+  const rsvpContainer = page.getByTestId('rsvp-container');
+  await expect(rsvpContainer).toBeVisible({ timeout: 20000 });
+
+  await closeChaptersDrawerIfOpen(page);
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    if (await hasDenseContextOnBothSides(page)) {
+      return;
+    }
+
+    // Advance in two ways for resilience across desktop/mobile.
+    await rsvpContainer.click();
+    await page.waitForTimeout(2600);
+    await rsvpContainer.click();
+
+    await rsvpContainer.hover();
+    await page.mouse.wheel(0, 2200);
+    await page.waitForTimeout(450);
+  }
+
+  await expect
+    .poll(() => hasDenseContextOnBothSides(page), {
+      timeout: 15000,
+      message: 'Expected both context rivers to show styled text around the live RSVP word.',
+    })
+    .toBeTruthy();
+}
+
+async function openArchiveAndLoadDemoIfNeeded(page: Page): Promise<void> {
+  await page.goto('/');
+  await page.waitForLoadState('domcontentloaded');
+  await dismissEngineModalIfPresent(page);
+
+  const firstBookCard = page.getByTestId('book-card').first();
+  const hasBookAlready = await firstBookCard.isVisible({ timeout: 1500 }).catch(() => false);
+  if (hasBookAlready) {
+    return;
+  }
+
+  const loadDemoButton = page.getByTestId('archive-load-demo');
+  await expect(loadDemoButton).toBeVisible({ timeout: 15000 });
+  await loadDemoButton.click();
+
+  await expect(firstBookCard).toBeVisible({ timeout: 90000 });
+  await page.waitForTimeout(1200);
+}
+
+async function openReaderFromArchive(page: Page): Promise<void> {
+  const firstBookCard = page.getByTestId('book-card').first();
+  await expect(firstBookCard).toBeVisible({ timeout: 30000 });
+  await firstBookCard.click();
+
+  await page
+    .locator('text=INITIALIZING COCKPIT...')
+    .waitFor({ state: 'detached', timeout: 90000 })
+    .catch(() => undefined);
+  await dismissEngineModalIfPresent(page);
+  await expect(page.getByTestId('rsvp-container')).toBeVisible({ timeout: 30000 });
+}
+
+// Longer timeout because demo ingestion and chapter analysis can take a while.
+test.setTimeout(180000);
 
 // Initialize localStorage with settings to bypass onboarding.
 test.beforeEach(async ({ page }) => {
@@ -62,81 +148,36 @@ test.beforeEach(async ({ page }) => {
     window.localStorage.setItem('xyz-settings', JSON.stringify({
       state: {
         hasCompletedOnboarding: true,
-        theme: 'volcanic',
+        theme: 'day',
       },
       version: 0,
     }));
   });
 });
 
-test('01 Archive Empty', async ({ page, isMobile }) => {
-  await captureRouteScreenshot(page, isMobile, '/', '01-archive-empty.png');
-});
+test('01 Reader Journey Key Flows', async ({ page, isMobile }) => {
+  await openArchiveAndLoadDemoIfNeeded(page);
+  await captureScreenshot(page, isMobile, '01-archive-with-real-book.png');
 
-test('02 Settings Pacing', async ({ page, isMobile }) => {
-  await captureRouteScreenshot(page, isMobile, '/settings/pacing', '02-settings-pacing.png');
-});
+  await openReaderFromArchive(page);
+  await captureScreenshot(page, isMobile, '02-reader-entry.png');
 
-test('03 Settings Summarizer', async ({ page, isMobile }) => {
-  await captureRouteScreenshot(page, isMobile, '/settings/summarizer', '03-settings-summarizer.png');
-});
+  await advanceToDenseReaderContext(page);
+  await captureScreenshot(page, isMobile, '03-reader-live-rivers-current-play.png');
 
-test('04 Settings Librarian', async ({ page, isMobile }) => {
-  await captureRouteScreenshot(page, isMobile, '/settings/librarian', '04-settings-librarian.png');
-});
+  await page.getByTestId('toggle-chapters').click();
+  const chapterButtons = page.getByTestId('sidebar-chapter-button');
+  await expect(chapterButtons.first()).toBeVisible({ timeout: 10000 });
+  await captureScreenshot(page, isMobile, '04-reader-chapters-drawer.png');
 
-test('05 Settings TTS', async ({ page, isMobile }) => {
-  await captureRouteScreenshot(page, isMobile, '/settings/tts', '05-settings-tts.png');
-});
+  const chapterCount = await chapterButtons.count();
+  if (chapterCount > 1) {
+    await chapterButtons.nth(1).click();
+  } else {
+    await chapterButtons.first().click();
+  }
 
-test('06 Library', async ({ page, isMobile }) => {
-  await captureRouteScreenshot(page, isMobile, '/library', '06-library.png');
-});
-
-test('07 Manual', async ({ page, isMobile }) => {
-  await captureRouteScreenshot(page, isMobile, '/manual', '07-manual.png');
-});
-
-test('08 Manifesto', async ({ page, isMobile }) => {
-  await captureRouteScreenshot(page, isMobile, '/manifesto', '08-manifesto.png');
-});
-
-test('09 Research', async ({ page, isMobile }) => {
-  await captureRouteScreenshot(page, isMobile, '/research', '09-research.png');
-});
-
-test('10 Sync', async ({ page, isMobile }) => {
-  await captureRouteScreenshot(page, isMobile, '/sync', '10-sync.png');
-});
-
-test('11 Reader Flow', async ({ page, isMobile }) => {
-  const outputDir = getOutputDir(isMobile);
-  await page.goto('/');
-  await page.waitForLoadState('domcontentloaded');
-
-  await dismissEngineModalIfPresent(page);
-
-  const loadDemoButton = page.getByRole('button', { name: /load demo/i });
-  await expect(loadDemoButton).toBeVisible({ timeout: 15000 });
-  await loadDemoButton.click();
-
-  // Wait for the ingestion processing to complete (empty card is replaced by book card grid).
-  await page.waitForSelector('text=by', { timeout: 60000 });
-  await page.waitForTimeout(2000);
-  await page.screenshot({ path: path.join(outputDir, '11-archive-populated.png'), fullPage: true });
-
-  // Click on the book card ('by') to open it.
-  await page.click('text=by');
-
-  // Wait for launcher loader to finish and transition to reader dashboard.
-  await page.waitForSelector('text=INITIALIZING COCKPIT...', { state: 'detached', timeout: 60000 });
-  await page.waitForTimeout(4000);
-  await page.screenshot({ path: path.join(outputDir, '12-reader-neutral.png'), fullPage: true });
-
-  // Open Chapters Sidebar.
-  const chaptersButton = page.locator('button[title="Chapters"]').first();
-  await expect(chaptersButton).toBeVisible({ timeout: 10000 });
-  await chaptersButton.click();
-  await page.waitForTimeout(1000);
-  await page.screenshot({ path: path.join(outputDir, '13-reader-chapters-drawer.png'), fullPage: true });
+  await expect(page.getByTestId('rsvp-container')).toBeVisible({ timeout: 30000 });
+  await advanceToDenseReaderContext(page);
+  await captureScreenshot(page, isMobile, '05-reader-next-chapter-river-styling.png');
 });

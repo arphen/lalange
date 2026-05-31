@@ -31,6 +31,9 @@ export const STANDALONE_DASHES = [
     '―',  // Horizontal bar (U+2015) - used in some texts
 ];
 
+/** Normalized token used for compact reference display. */
+export const REFERENCE_MARKER_TOKEN = '[ref]';
+
 /**
  * Combined dash pattern for splitting.
  * Matches one or more consecutive em-dashes, en-dashes, horizontal bars,
@@ -50,6 +53,18 @@ const HYPHEN_SPLIT_PATTERN = /(\w+-)(?=\w)/g;
  * Captures the slash so we can keep it attached to the preceding word.
  */
 const SLASH_SPLIT_PATTERN = /(\w+\/)(?=\w)/g;
+const TRAILING_PUNCTUATION_PATTERN = /([,.;:!?"'”’)\]}]+)$/u;
+
+const REFERENCE_TOKEN_PATTERNS = [
+    /^\[ref\][,.;:!?]?$/i,
+    /^\[\d{1,4}[a-z]?\][,.;:!?]?$/i,
+    /^\((?:p|pp)\.?\s*\d{1,4}(?:\s*[—-]\s*\d{1,4})?\)[,.;:!?]?$/i,
+    /^\(\d{1,4}[.,]\d{1,4}(?:\[\d+\])?\)[,.;:!?]?$/i,
+    /^\(\d{1,4},\s*[a-z]{2,4}(?:\[\d+\])?\)[,.;:!?]?$/i,
+    /^\(\d{1,4}[—-]\d{1,4}\)[,.;:!?]?$/i,
+    /^\(\d{2,3}\)[,.;:!?]?$/,
+];
+const LEADING_DECORATION_CHARS = new Set(['"', "'", '“', '‘', '(', '[', '{']);
 
 /**
  * Check if a token is a standalone dash.
@@ -89,6 +104,93 @@ export interface TokenizeResult {
         finalTokenCount: number;
     };
 }
+
+export type ReferenceTokenMode = 'keep' | 'compact' | 'suppress';
+
+export interface ReferenceNormalizationResult {
+    tokens: string[];
+    metadata: {
+        referencesDetected: number;
+        referencesSuppressed: number;
+        referencesCompacted: number;
+    };
+}
+
+export interface LongWordSplitOptions {
+    /** Minimum core-word length before splitting is applied */
+    minLength?: number;
+    /** Maximum core-word length per segment (excluding continuation marker) */
+    maxSegmentLength?: number;
+    /** Marker appended to non-final segments */
+    continuationMarker?: string;
+}
+
+const DEFAULT_LONG_WORD_SPLIT_OPTIONS: Required<LongWordSplitOptions> = {
+    minLength: 12,
+    maxSegmentLength: 8,
+    continuationMarker: '-',
+};
+
+/**
+ * Split very long tokens into RSVP-friendly chunks.
+ *
+ * Examples:
+ *   "characteristically" -> ["characte-", "ristical-", "ly"]
+ *   "institutionalization," -> ["institut-", "ionaliza-", "tion,"]
+ */
+export const splitLongWordForRSVP = (
+    token: string,
+    options: LongWordSplitOptions = {},
+): string[] => {
+    if (!token || token.trim().length === 0) return [];
+    if (isReferenceToken(token)) return [REFERENCE_MARKER_TOKEN];
+    if (isPauseToken(token)) return [token];
+    if (isHyphenatedPart(token) || isSlashPart(token)) return [token];
+
+    const config = {
+        ...DEFAULT_LONG_WORD_SPLIT_OPTIONS,
+        ...options,
+    };
+
+    const minLength = Math.max(4, config.minLength);
+    const maxSegmentLength = Math.max(4, config.maxSegmentLength);
+    const continuationMarker = config.continuationMarker;
+
+    const punctuationMatch = token.match(TRAILING_PUNCTUATION_PATTERN);
+    const trailingPunctuation = punctuationMatch?.[1] ?? '';
+    const coreToken = trailingPunctuation
+        ? token.slice(0, token.length - trailingPunctuation.length)
+        : token;
+
+    let leadingDecoration = '';
+    for (const character of coreToken) {
+        if (!LEADING_DECORATION_CHARS.has(character)) break;
+        leadingDecoration += character;
+    }
+    const coreWord = leadingDecoration
+           ? coreToken.slice(leadingDecoration.length)
+        : coreToken;
+
+    if (coreWord.length < minLength || coreWord.length <= maxSegmentLength) {
+        return [token];
+    }
+
+    const splitSegments: string[] = [];
+    for (let i = 0; i < coreWord.length; i += maxSegmentLength) {
+        const segment = coreWord.slice(i, i + maxSegmentLength);
+        const isLast = i + maxSegmentLength >= coreWord.length;
+        splitSegments.push(isLast ? segment : `${segment}${continuationMarker}`);
+    }
+
+    if (splitSegments.length <= 1) {
+        return [token];
+    }
+
+    splitSegments[0] = `${leadingDecoration}${splitSegments[0]}`;
+    splitSegments[splitSegments.length - 1] = `${splitSegments[splitSegments.length - 1]}${trailingPunctuation}`;
+
+    return splitSegments;
+};
 
 /**
  * Split a word on hyphens, keeping the hyphen attached to the preceding part.
@@ -308,6 +410,78 @@ export const tokenizeForRSVP = (text: string): TokenizeResult => {
 };
 
 /**
+ * Check whether a token is a citation / note marker.
+ */
+export const isReferenceToken = (token: string): boolean => {
+    const trimmed = token.trim();
+    if (!trimmed) return false;
+    return REFERENCE_TOKEN_PATTERNS.some((pattern) => pattern.test(trimmed));
+};
+
+/**
+ * Normalize reference tokens in an RSVP stream.
+ *
+ * - keep: leaves stream untouched
+ * - compact: converts references to [ref] and collapses adjacent duplicates
+ * - suppress: removes references entirely
+ */
+export const normalizeReferenceTokens = (
+    tokens: string[],
+    mode: ReferenceTokenMode = 'compact',
+): ReferenceNormalizationResult => {
+    if (mode === 'keep') {
+        return {
+            tokens: [...tokens],
+            metadata: {
+                referencesDetected: 0,
+                referencesSuppressed: 0,
+                referencesCompacted: 0,
+            },
+        };
+    }
+
+    const normalized: string[] = [];
+    let referencesDetected = 0;
+    let referencesSuppressed = 0;
+    let referencesCompacted = 0;
+
+    for (const token of tokens) {
+        if (!isReferenceToken(token)) {
+            normalized.push(token);
+            continue;
+        }
+
+        referencesDetected++;
+
+        if (mode === 'suppress') {
+            referencesSuppressed++;
+            continue;
+        }
+
+        const prev = normalized[normalized.length - 1];
+        if (prev === REFERENCE_MARKER_TOKEN) {
+            referencesCompacted++;
+            continue;
+        }
+
+        if (token !== REFERENCE_MARKER_TOKEN) {
+            referencesCompacted++;
+        }
+
+        normalized.push(REFERENCE_MARKER_TOKEN);
+    }
+
+    return {
+        tokens: normalized,
+        metadata: {
+            referencesDetected,
+            referencesSuppressed,
+            referencesCompacted,
+        },
+    };
+};
+
+/**
  * Check if a token represents a pause/break (dash or similar).
  * Used by the display logic to apply special rendering.
  */
@@ -339,6 +513,16 @@ const LONG_WORD_THRESHOLD = 10;
 const LONG_WORD_MS_PER_CHAR = 15;
 
 export const getTokenDisplayProps = (token: string): TokenDisplayProps => {
+    if (isReferenceToken(token)) {
+        return {
+            isPause: false,
+            // References should be brief visual markers, not full cognitive dwell.
+            displayTimeMultiplier: 0.65,
+            useSaccadeRendering: false,
+            cssClass: 'rsvp-reference-token',
+        };
+    }
+
     if (isPauseToken(token)) {
         return {
             isPause: true,

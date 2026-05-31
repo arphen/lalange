@@ -10,6 +10,7 @@ import { describe, it, expect } from 'vitest';
 import {
     tokenizeWord,
     tokenizeForRSVP,
+    splitLongWordForRSVP,
     isStandaloneDash,
     isHyphenatedPart,
     isSlashPart,
@@ -216,6 +217,46 @@ describe('tokenize', () => {
             it('should handle consecutive dashes as single token', () => {
                 expect(tokenizeWord('word————word')).toEqual(['word', '————', 'word']);
             });
+        });
+    });
+
+    describe('splitLongWordForRSVP', () => {
+        it('keeps short tokens unchanged', () => {
+            expect(splitLongWordForRSVP('comfortable')).toEqual(['comfortable']);
+        });
+
+        it('splits long words into continuation chunks', () => {
+            const parts = splitLongWordForRSVP('characteristically', {
+                minLength: 12,
+                maxSegmentLength: 8,
+                continuationMarker: '-',
+            });
+
+            expect(parts).toEqual(['characte-', 'ristical-', 'ly']);
+        });
+
+        it('preserves trailing punctuation on the final segment', () => {
+            const parts = splitLongWordForRSVP('institutionalization,', {
+                minLength: 12,
+                maxSegmentLength: 8,
+                continuationMarker: '-',
+            });
+
+            expect(parts).toEqual(['institut-', 'ionaliza-', 'tion,']);
+        });
+
+        it('preserves leading decoration on the first segment', () => {
+            const parts = splitLongWordForRSVP('"counterrevolutionary"', {
+                minLength: 12,
+                maxSegmentLength: 8,
+                continuationMarker: '-',
+            });
+
+            expect(parts).toEqual(['"counterr-', 'evolutio-', 'nary"']);
+        });
+
+        it('does not split pause tokens', () => {
+            expect(splitLongWordForRSVP('—')).toEqual(['—']);
         });
     });
 

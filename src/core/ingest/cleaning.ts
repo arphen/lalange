@@ -21,8 +21,12 @@ export interface CleaningResult {
     metadata: {
         detectedLicense?: string;
         pageNumbersRemoved: number;
+        referencesSuppressed: number;
+        referencesCompacted: number;
     };
 }
+
+export type ReferenceHandlingMode = 'keep' | 'compact' | 'suppress';
 
 export interface ChapterClassification {
     type: 'content' | 'license' | 'toc' | 'cover' | 'frontmatter' | 'backmatter' | 'image';
@@ -168,6 +172,30 @@ const PAGE_NUMBER_HEURISTICS = {
         /«\s*\d+\s*»/g,         // «42»
     ],
 };
+
+// ============================================================================
+// Reference / Footnote Detection
+// ============================================================================
+
+export const REFERENCE_MARKER_TOKEN = '[ref]';
+
+const BRACKET_REFERENCE_PATTERN = /\[(?:\d{1,4}[a-z]?|fnl?)\](?=[\s.,;:!?)]|$)/gi;
+const BRACKET_PAGE_REFERENCE_PATTERN = /\[(?:p|pp)\.?\s*\d{1,4}(?:\s*[—-]\s*\d{1,4})?\](?=[\s.,;:!?)]|$)/gi;
+const PAREN_CANDIDATE_PATTERN = /\(([^)\n]{1,24})\)(?=[\s.,;:!?]|$)/g;
+const REFERENCE_LINE_PATTERN = /^\s*(?:\[\d{1,4}\]|\(\d{1,4}[.,]\d{1,4}(?:\[\d+\])?\)|\(\d{1,4},\s*[a-z]{2,4}(?:\[\d+\])?\)|\(\d{1,4}[—-]\d{1,4}\))\s+.+$/gim;
+
+const NOTE_BLOCK_HTML_PATTERNS = [
+    /<(?:aside|section|div)[^>]*(?:epub:type|role)="[^"]*(?:footnote|endnote|doc-footnote|doc-endnote)[^"]*"[^>]*>[\s\S]*?<\/(?:aside|section|div)>/gi,
+    /<(?:aside|section|div)[^>]*(?:id|class)="[^"]*(?:endnotes?|footnotes?|notes?-\d+|fn\d+)[^"]*"[^>]*>[\s\S]*?<\/(?:aside|section|div)>/gi,
+    /<h[1-6][^>]*>\s*(?:translator['’]s\s+)?(?:endnotes?|footnotes?|notes?|references?|bibliography)\s*<\/h[1-6]>\s*<(?:ol|ul)[\s\S]*?<\/(?:ol|ul)>/gi,
+    /<(?:p|li|div)[^>]*(?:id|class)="[^"]*(?:footnote|endnote|noteref|note-ref|fn\d+)[^"]*"[^>]*>[\s\S]*?<\/(?:p|li|div)>/gi,
+];
+
+const NOTE_CALLOUT_ANCHOR_PATTERNS = [
+    /<a[^>]*href="#[^"]*(?:note|fn|endnote|footnote)[^"]*"[^>]*>\s*(?:\d{1,4}|[ivxlcdm]{1,8}|\*)\s*<\/a>/gi,
+    /<a[^>]*href="#[^"]+"[^>]*>\s*(?:\d{1,4}|[ivxlcdm]{1,8}|\*)\s*<\/a>/gi,
+    /<sup[^>]*>\s*(?:\d{1,4}|[ivxlcdm]{1,8}|\*)\s*<\/sup>/gi,
+];
 
 // ============================================================================
 // Table of Contents Detection
@@ -498,6 +526,71 @@ function isBackMatter(_content: string, title: string): boolean {
 // Text Cleaning Functions
 // ============================================================================
 
+function isLikelyReferenceParenthetical(innerText: string): boolean {
+    const candidate = innerText.trim().toLowerCase();
+    if (!candidate) return false;
+
+    // Canonical page locators like (p. 42) or (pp. 42-43)
+    if (/^(?:p|pp)\.?\s*\d{1,4}(?:\s*[—-]\s*\d{1,4})?$/.test(candidate)) {
+        return true;
+    }
+
+    // Locators like (324.7), (675-676), (743,fnl), (327,4[6])
+    if (/^\d{1,4}[.,]\d{1,4}(?:\[\d+\])?$/.test(candidate)) return true;
+    if (/^\d{1,4}[—-]\d{1,4}$/.test(candidate)) return true;
+    if (/^\d{1,4},\s*[a-z]{2,4}(?:\[\d+\])?$/.test(candidate)) return true;
+
+    // Short numeric parens are usually references, but keep likely years.
+    if (/^\d{1,3}$/.test(candidate)) return true;
+    if (/^\d{4}$/.test(candidate)) {
+        const year = parseInt(candidate, 10);
+        return year < 1500 || year > 2099;
+    }
+
+    return false;
+}
+
+function normalizeInlineReferences(
+    text: string,
+    mode: Exclude<ReferenceHandlingMode, 'keep'>,
+): { text: string; suppressed: number; compacted: number } {
+    let cleaned = text;
+    let suppressed = 0;
+    let compacted = 0;
+
+    const replaceReference = () => {
+        if (mode === 'suppress') {
+            suppressed++;
+            return ' ';
+        }
+        compacted++;
+        return ` ${REFERENCE_MARKER_TOKEN} `;
+    };
+
+    cleaned = cleaned.replace(BRACKET_PAGE_REFERENCE_PATTERN, () => replaceReference());
+    cleaned = cleaned.replace(BRACKET_REFERENCE_PATTERN, () => replaceReference());
+
+    cleaned = cleaned.replace(PAREN_CANDIDATE_PATTERN, (fullMatch, innerText) => {
+        if (!isLikelyReferenceParenthetical(String(innerText))) {
+            return fullMatch;
+        }
+        return replaceReference();
+    });
+
+    // Drop full reference lines when suppressing (typically endnote entries).
+    if (mode === 'suppress') {
+        cleaned = cleaned.replace(REFERENCE_LINE_PATTERN, (line) => {
+            if (line.trim().length > 0) suppressed++;
+            return '';
+        });
+    }
+
+    // Collapse repeated markers introduced by adjacent references.
+    cleaned = cleaned.replace(/(?:\s*\[ref\]\s*){2,}/gi, ` ${REFERENCE_MARKER_TOKEN} `);
+
+    return { text: cleaned, suppressed, compacted };
+}
+
 /**
  * Main cleaning function - cleans text content
  */
@@ -505,16 +598,22 @@ export function cleanText(text: string, options: {
     removeLicense?: boolean;
     removePageNumbers?: boolean;
     normalizeWhitespace?: boolean;
+    referenceHandling?: ReferenceHandlingMode;
 } = {}): CleaningResult {
     const {
         removeLicense = true,
         removePageNumbers = true,
         normalizeWhitespace = true,
+        referenceHandling = 'keep',
     } = options;
 
     let cleaned = text;
     const removedContent: CleaningResult['removedContent'] = [];
-    const metadata: CleaningResult['metadata'] = { pageNumbersRemoved: 0 };
+    const metadata: CleaningResult['metadata'] = {
+        pageNumbersRemoved: 0,
+        referencesSuppressed: 0,
+        referencesCompacted: 0,
+    };
 
     // Remove license/boilerplate
     if (removeLicense) {
@@ -538,6 +637,25 @@ export function cleanText(text: string, options: {
             removedContent.push({
                 type: 'page-numbers',
                 content: `Removed ${pageResult.count} page number artifacts`,
+            });
+        }
+    }
+
+    // Normalize inline references / citations based on mode.
+    if (referenceHandling !== 'keep') {
+        const referenceResult = normalizeInlineReferences(cleaned, referenceHandling);
+        cleaned = referenceResult.text;
+        metadata.referencesSuppressed = referenceResult.suppressed;
+        metadata.referencesCompacted = referenceResult.compacted;
+
+        if (referenceResult.suppressed > 0 || referenceResult.compacted > 0) {
+            const action = referenceHandling === 'suppress' ? 'suppressed' : 'compacted';
+            const amount = referenceHandling === 'suppress'
+                ? referenceResult.suppressed
+                : referenceResult.compacted;
+            removedContent.push({
+                type: 'boilerplate',
+                content: `${action} ${amount} inline references`,
             });
         }
     }
@@ -765,6 +883,45 @@ export function removePageNumbersFromHtml(html: string): string {
 }
 
 /**
+ * Removes / normalizes footnote and endnote artifacts from HTML.
+ *
+ * - `suppress`: removes note sections and in-text note callouts
+ * - `compact`: removes note sections and replaces callouts with [ref]
+ * - `keep`: returns HTML unchanged
+ */
+export function cleanReferencesFromHtml(
+    html: string,
+    options: { referenceHandling?: ReferenceHandlingMode } = {},
+): string {
+    const { referenceHandling = 'suppress' } = options;
+
+    if (referenceHandling === 'keep') {
+        return html;
+    }
+
+    let cleaned = html;
+    const calloutReplacement = referenceHandling === 'compact'
+        ? ` ${REFERENCE_MARKER_TOKEN} `
+        : ' ';
+
+    // Remove explicit footnote/endnote blocks first.
+    for (const pattern of NOTE_BLOCK_HTML_PATTERNS) {
+        cleaned = cleaned.replace(pattern, ' ');
+    }
+
+    // Remove or normalize inline note callouts.
+    for (const pattern of NOTE_CALLOUT_ANCHOR_PATTERNS) {
+        cleaned = cleaned.replace(pattern, calloutReplacement);
+    }
+
+    if (referenceHandling === 'compact') {
+        cleaned = cleaned.replace(/(?:\s*\[ref\]\s*){2,}/gi, ` ${REFERENCE_MARKER_TOKEN} `);
+    }
+
+    return cleaned;
+}
+
+/**
  * Removes Gutenberg boilerplate elements from HTML
  */
 export function removeGutenbergBoilerplateFromHtml(html: string): string {
@@ -793,8 +950,11 @@ export const _testExports = {
     GUTENBERG_PATTERNS,
     STANDARD_EBOOKS_PATTERNS,
     PAGE_NUMBER_PATTERNS,
+    REFERENCE_MARKER_TOKEN,
     isGutenbergLicenseChapter,
     removeLicenseContent,
     removePageNumbers_internal,
+    normalizeInlineReferences,
+    isLikelyReferenceParenthetical,
     detectTableOfContents,
 };

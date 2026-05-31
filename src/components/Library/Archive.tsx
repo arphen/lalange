@@ -198,6 +198,7 @@ export const Archive: React.FC<ArchiveProps> = ({ onOpenBook }) => {
                             <button
                                 onClick={handleLoadDemo}
                                 disabled={loading}
+                                data-testid="archive-load-demo"
                                 className="px-6 py-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded text-sm font-mono text-gray-400 hover:text-white transition-colors disabled:opacity-50"
                             >
                                 [ LOAD DEMO ]

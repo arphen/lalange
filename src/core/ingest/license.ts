@@ -1,4 +1,10 @@
-import { cleanText, removeGutenbergBoilerplateFromHtml, removePageNumbersFromHtml } from './cleaning';
+import {
+    cleanReferencesFromHtml,
+    cleanText,
+    removeGutenbergBoilerplateFromHtml,
+    removePageNumbersFromHtml,
+    type ReferenceHandlingMode,
+} from './cleaning';
 
 /**
  * Removes license text from plain text content.
@@ -9,6 +15,7 @@ export const removeLicenseText = (text: string): string => {
         removeLicense: true,
         removePageNumbers: true,
         normalizeWhitespace: true,
+        referenceHandling: 'suppress',
     });
     return result.cleanedText;
 };
@@ -92,9 +99,15 @@ export const removeLicenseTextLegacy = (text: string): string => {
  * Cleans HTML content before text extraction.
  * Removes boilerplate elements and page numbers from the DOM.
  */
-export const cleanHtmlBeforeExtraction = (html: string): string => {
+export const cleanHtmlBeforeExtraction = (
+    html: string,
+    options: { referenceHandling?: ReferenceHandlingMode } = {},
+): string => {
+    const { referenceHandling = 'suppress' } = options;
+
     let cleaned = html;
     cleaned = removeGutenbergBoilerplateFromHtml(cleaned);
     cleaned = removePageNumbersFromHtml(cleaned);
+    cleaned = cleanReferencesFromHtml(cleaned, { referenceHandling });
     return cleaned;
 };

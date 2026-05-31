@@ -148,6 +148,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                 <button
                                     onClick={() => onLoadChapter(chapter.id)}
                                     disabled={!isReady && (!chapter.content || chapter.content.length === 0)}
+                                    data-testid="sidebar-chapter-button"
                                     className={clsx(
                                         "flex-1 text-left p-3 transition-colors border-l-2",
                                         isCurrent ? "border-magma-vent bg-white/5 text-white" : "border-transparent text-gray-400 hover:text-white hover:bg-white/5",

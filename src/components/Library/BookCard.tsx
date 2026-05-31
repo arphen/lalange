@@ -96,6 +96,7 @@ export const BookCard: React.FC<BookCardProps> = ({ book, onOpen, onDelete, onSt
     return (
         <div
             onClick={onOpen}
+            data-testid="book-card"
             className="cursor-pointer group relative bg-white/5 border border-white/10 hover:border-dune-gold transition-all duration-300 p-4 flex flex-col h-full"
         >
             <div className="absolute top-2 right-2 z-10 flex gap-2">
@@ -176,7 +177,7 @@ export const BookCard: React.FC<BookCardProps> = ({ book, onOpen, onDelete, onSt
             <div className="flex-1 flex flex-col justify-between gap-2">
                 <div>
                     <h3 className="font-mono text-sm font-bold text-gray-200 group-hover:text-dune-gold transition-colors line-clamp-2 leading-tight mb-1">
-                        {book.title}
+                        <span data-testid="book-card-title">{book.title}</span>
                     </h3>
                     <p className="font-mono text-xs text-gray-500 truncate uppercase tracking-wider">
                         {book.author || 'UNKNOWN AUTHOR'}

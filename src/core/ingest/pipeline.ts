@@ -3,7 +3,7 @@ import * as cheerio from 'cheerio';
 import { initDB, type BookDocType, type ChapterDocType, type ImageDocType, type RawFileDocType } from '../sync/db';
 import { cleanHtmlBeforeExtraction } from './license';
 import { classifyChapter, cleanText } from './cleaning';
-import { tokenizeForRSVP } from '../rsvp/tokenize';
+import { normalizeReferenceTokens, tokenizeForRSVP } from '../rsvp/tokenize';
 import { useSettingsStore } from '../store/settings';
 import { generateUUID } from '../../utils/uuid';
 import { scheduler } from './scheduler';
@@ -224,9 +224,11 @@ export const processChaptersInBackground = async (bookId: string) => {
 
                     if (fileInZip) {
                         const htmlContent = await fileInZip.async('string');
+                        const settings = useSettingsStore.getState();
+                        const referenceHandling = settings.footnoteSuppressor ? 'suppress' : 'compact';
                         
                         // Step 1: Clean HTML at DOM level (remove boilerplate elements, page numbers)
-                        const cleanedHtml = cleanHtmlBeforeExtraction(htmlContent);
+                        const cleanedHtml = cleanHtmlBeforeExtraction(htmlContent, { referenceHandling });
                         const $ = cheerio.load(cleanedHtml);
 
                         // Extract Title if possible (h1)
@@ -283,6 +285,7 @@ export const processChaptersInBackground = async (bookId: string) => {
                             removeLicense: true,
                             removePageNumbers: true,
                             normalizeWhitespace: true,
+                            referenceHandling,
                         });
                         rawText = cleaningResult.cleanedText;
                         
@@ -292,11 +295,16 @@ export const processChaptersInBackground = async (bookId: string) => {
                         if (cleaningResult.metadata.detectedLicense) {
                             console.log(`[Pipeline] Detected and removed ${cleaningResult.metadata.detectedLicense} license content`);
                         }
+                        if (cleaningResult.metadata.referencesSuppressed > 0) {
+                            console.log(`[Pipeline] Suppressed ${cleaningResult.metadata.referencesSuppressed} inline references`);
+                        }
+                        if (cleaningResult.metadata.referencesCompacted > 0) {
+                            console.log(`[Pipeline] Compacted ${cleaningResult.metadata.referencesCompacted} inline references`);
+                        }
                         
                         console.log(`[Pipeline] Chapter ${chapterIndex + 1}: Extracted ${rawText.length} chars of cleaned text.`);
 
                         // Pipeline: Clean -> Editor/Summary -> Density -> Save
-                        const settings = useSettingsStore.getState();
                         const rawChunks = chunkText(rawText, settings.summaryChunkSize || 2500);
                         console.log(`[Pipeline] Chapter ${chapterIndex + 1}: Split into ${rawChunks.length} chunks for AI processing.`);
                         
@@ -318,10 +326,17 @@ export const processChaptersInBackground = async (bookId: string) => {
                             // embedded dashes (em-dash, en-dash) as standalone tokens.
                             // This ensures dashes get their own display moment in RSVP.
                             const tokenResult = tokenizeForRSVP(cleanedChunk);
-                            const newWords = tokenResult.tokens;
+                            const referenceResult = normalizeReferenceTokens(tokenResult.tokens, referenceHandling);
+                            const newWords = referenceResult.tokens;
                             
                             if (tokenResult.metadata.dashesExtracted > 0) {
                                 console.log(`[Pipeline] Chapter ${chapterIndex + 1}, chunk ${i + 1}: Extracted ${tokenResult.metadata.dashesExtracted} dash tokens for RSVP`);
+                            }
+                            if (referenceResult.metadata.referencesSuppressed > 0) {
+                                console.log(`[Pipeline] Chapter ${chapterIndex + 1}, chunk ${i + 1}: Suppressed ${referenceResult.metadata.referencesSuppressed} reference tokens`);
+                            }
+                            if (referenceResult.metadata.referencesCompacted > 0) {
+                                console.log(`[Pipeline] Chapter ${chapterIndex + 1}, chunk ${i + 1}: Compacted ${referenceResult.metadata.referencesCompacted} reference tokens`);
                             }
 
                             if (newWords.length === 0) continue;

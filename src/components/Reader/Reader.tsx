@@ -2,8 +2,16 @@ import React, { useEffect, useLayoutEffect, useRef, useState, useCallback, useMe
 import { type BookDocType, type ChapterDocType, type ReadingStateDocType, type GlobalSummaryType, initDB } from '../../core/sync/db';
 import { getDisplayPlugin, type DisplayPlugin, getVelocireaderORPIndex } from '../../core/rsvp/display';
 import { getVisualProcessingDelay, getSpeedFactor } from '../../core/rsvp/timing';
+import { getTokenDisplayProps, isReferenceToken, splitLongWordForRSVP } from '../../core/rsvp/tokenize';
 import { Sidebar } from './Sidebar';
 import { TTSPlayer } from './TTSPlayer';
+import {
+    clampLensScale,
+    getTouchDistance,
+    getWheelPinchDelta,
+    LENS_SCALE_DEFAULT,
+    mergeTransformWithScale,
+} from './lensGestures';
 import { useSettingsStore } from '../../core/store/settings';
 import { useTTSStore } from '../../core/store/tts';
 import { useFullscreen } from '../../hooks/useFullscreen';
@@ -27,10 +35,19 @@ const getDensityColor = (score: number) => {
     return 'text-red-500 font-bold'; // Profound
 };
 
+const COMPACT_LANDSCAPE_MEDIA_QUERY = '(orientation: landscape) and (max-height: 640px)';
+const LONG_WORD_SPLIT_MIN_LENGTH = 12;
+const LONG_WORD_SPLIT_SEGMENT_LENGTH = 8;
+
 export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
     const [isPlaying, setIsPlaying] = useState(false);
     const [fullscreenTarget, setFullscreenTarget] = useState<HTMLDivElement | null>(null);
     const [fullscreenHint, setFullscreenHint] = useState<string | null>(null);
+    const [isCompactLandscape, setIsCompactLandscape] = useState(() => {
+        if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
+        return window.matchMedia(COMPACT_LANDSCAPE_MEDIA_QUERY).matches;
+    });
+    const [lensScale, setLensScale] = useState(LENS_SCALE_DEFAULT);
     
     // Use individual selectors for all settings to minimize re-renders
     const wpm = useSettingsStore((s) => s.wpm);
@@ -128,6 +145,12 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
     const densitiesRef = useRef<number[]>([]);
     const chaptersRef = useRef(chapters);
     const currentChapterRef = useRef(currentChapter);
+    const isCompactLandscapeRef = useRef(isCompactLandscape);
+    const lensScaleRef = useRef(lensScale);
+    const pinchGestureRef = useRef<{ distance: number; scale: number } | null>(null);
+    const currentWordSegmentsRef = useRef<string[]>([]);
+    const currentSegmentIndexRef = useRef(0);
+    const segmentedWordSourceRef = useRef('');
 
     // Summary Mode Refs
     const [isSummaryActive, setIsSummaryActive] = useState(false);
@@ -141,18 +164,99 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
     const summaryWordsRef = useRef<string[]>([]);
     // Track the last boundary we triggered to prevent re-triggering on restore
     const lastTriggeredBoundaryRef = useRef<number>(-1);
+
+    useEffect(() => {
+        isCompactLandscapeRef.current = isCompactLandscape;
+    }, [isCompactLandscape]);
+
+    useEffect(() => {
+        lensScaleRef.current = lensScale;
+    }, [lensScale]);
+
+    useEffect(() => {
+        if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
+
+        const mediaQuery = window.matchMedia(COMPACT_LANDSCAPE_MEDIA_QUERY);
+        const onChange = (event: MediaQueryListEvent) => {
+            setIsCompactLandscape(event.matches);
+        };
+
+        if (typeof mediaQuery.addEventListener === 'function') {
+            mediaQuery.addEventListener('change', onChange);
+            return () => mediaQuery.removeEventListener('change', onChange);
+        }
+
+        mediaQuery.addListener(onChange);
+        return () => mediaQuery.removeListener(onChange);
+    }, []);
+
+    const getDisplaySegmentsForWord = useCallback((word: string): string[] => {
+        if (!word) return [''];
+
+        if (!isCompactLandscapeRef.current) {
+            return [word];
+        }
+
+        const segments = splitLongWordForRSVP(word, {
+            minLength: LONG_WORD_SPLIT_MIN_LENGTH,
+            maxSegmentLength: LONG_WORD_SPLIT_SEGMENT_LENGTH,
+            continuationMarker: '-',
+        });
+
+        return segments.length > 0 ? segments : [word];
+    }, []);
+
+    const resetDisplaySegments = useCallback((word: string): string => {
+        segmentedWordSourceRef.current = word;
+        currentWordSegmentsRef.current = getDisplaySegmentsForWord(word);
+        currentSegmentIndexRef.current = 0;
+        return currentWordSegmentsRef.current[0] ?? word;
+    }, [getDisplaySegmentsForWord]);
+
+    const getDisplayWordForCurrentSegment = useCallback((word: string): string => {
+        if (
+            segmentedWordSourceRef.current !== word ||
+            currentWordSegmentsRef.current.length === 0
+        ) {
+            return resetDisplaySegments(word);
+        }
+
+        const safeIndex = Math.min(
+            currentSegmentIndexRef.current,
+            Math.max(0, currentWordSegmentsRef.current.length - 1),
+        );
+        return currentWordSegmentsRef.current[safeIndex] ?? word;
+    }, [resetDisplaySegments]);
+
+    const updateLensScale = useCallback((updater: number | ((current: number) => number)) => {
+        setLensScale((previous) => {
+            const next = typeof updater === 'function' ? updater(previous) : updater;
+            return clampLensScale(next);
+        });
+    }, []);
+
+    const applyLensScaleToElement = useCallback((element: HTMLDivElement) => {
+        element.style.transform = mergeTransformWithScale(element.style.transform, lensScaleRef.current);
+        element.style.transformOrigin = 'center center';
+    }, []);
     
     // Define renderWord early, before it's used in startTransition or other callbacks
     // Performance: renderContext=false skips the expensive prev/next context panel updates
-    const renderWord = useCallback((idx: number, words: string[], renderContext: boolean = true) => {
+    const renderWord = useCallback((idx: number, words: string[], renderContext: boolean = true, displayWordOverride?: string) => {
         const plugin = displayPluginRef.current;
         
         // Update RSVP Display
         if (rsvpRef.current) {
-            const currentWord = words[idx];
+            const currentWord = displayWordOverride ?? words[idx];
             if (currentWord) {
-                // Use the active display plugin for rendering
-                rsvpRef.current.innerHTML = plugin.renderWord(currentWord);
+                const referenceWord = isReferenceToken(currentWord);
+
+                if (referenceWord) {
+                    rsvpRef.current.innerHTML = '<span class="uppercase tracking-[0.35em] text-sm md:text-base font-semibold text-gray-400">REF</span>';
+                } else {
+                    // Use the active display plugin for rendering
+                    rsvpRef.current.innerHTML = plugin.renderWord(currentWord);
+                }
                 
                 // Reset common style properties potentially set by other plugins
                 rsvpRef.current.style.transform = '';
@@ -162,11 +266,19 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                 rsvpRef.current.style.width = '';
                 rsvpRef.current.style.textAlign = '';
 
-                // Apply plugin-specific container styling
-                const containerStyle = plugin.getContainerStyle?.(currentWord);
-                if (containerStyle) {
-                    Object.assign(rsvpRef.current.style, containerStyle);
+                if (referenceWord) {
+                    rsvpRef.current.style.letterSpacing = '';
                 }
+
+                // Apply plugin-specific container styling
+                if (!referenceWord) {
+                    const containerStyle = plugin.getContainerStyle?.(currentWord);
+                    if (containerStyle) {
+                        Object.assign(rsvpRef.current.style, containerStyle);
+                    }
+                }
+
+                applyLensScaleToElement(rsvpRef.current);
             }
         }
 
@@ -253,7 +365,12 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
             nextContainerRef.current.innerHTML = html;
             // Scroll to top (default)
         }
-    }, [riverTopEnabled, riverBottomEnabled]);
+    }, [riverTopEnabled, riverBottomEnabled, applyLensScaleToElement]);
+
+    useEffect(() => {
+        if (!rsvpRef.current) return;
+        applyLensScaleToElement(rsvpRef.current);
+    }, [lensScale, applyLensScaleToElement]);
 
     // Clear river content when disabled
     useEffect(() => {
@@ -340,14 +457,15 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
             wpmRef.current = wpm; // Restore user WPM
             
             // Render correct word
-            renderWord(indexRef.current, wordsRef.current);
+            const displayWord = resetDisplaySegments(wordsRef.current[indexRef.current] || '');
+            renderWord(indexRef.current, wordsRef.current, true, displayWord);
             setCurrentWordIndex(indexRef.current);
             
             // Resume if we were playing, or just ready up
             accumulatorRef.current = 0;
             setIsPlaying(true);
         }
-    }, [wpm, renderWord, countdown, setIsPlaying, setCountdown, setTransitionLabel]);
+    }, [wpm, renderWord, countdown, setIsPlaying, setCountdown, setTransitionLabel, resetDisplaySegments]);
 
     const handlePlayGlobalSummary = useCallback((summary: GlobalSummaryType) => {
         // Stop current playback
@@ -367,13 +485,14 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
         wpmRef.current = summaryWpm;
         
         // Render the first word
-        renderWord(0, summaryWordsRef.current);
+        const displayWord = resetDisplaySegments(summaryWordsRef.current[0] || '');
+        renderWord(0, summaryWordsRef.current, true, displayWord);
         
         // Close sidebar and start playing
         setShowChapters(false);
         accumulatorRef.current = 0;
         setIsPlaying(true);
-    }, [summaryWpm, renderWord, setIsPlaying, setShowChapters]);
+    }, [summaryWpm, renderWord, setIsPlaying, setShowChapters, resetDisplaySegments]);
 
     const saveProgress = React.useCallback(async () => {
         if (loading || !readingState || !currentChapter) return;
@@ -425,6 +544,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
 
                 indexRef.current = initialIndex;
                 setCurrentWordIndex(initialIndex);
+                resetDisplaySegments(wordsRef.current[initialIndex] || '');
                 // Reset boundary tracking for new chapter
                 lastTriggeredBoundaryRef.current = -1;
                 // Don't call renderWord here - refs may not be mounted yet
@@ -468,14 +588,16 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                 // Only re-render context windows if NOT playing (user is paused and wants to see updates)
                 if (!isPlayingRef.current) {
                     setCurrentChapter(chapterDoc);
-                    renderWord(indexRef.current, wordsRef.current);
+                    const displayWord = resetDisplaySegments(wordsRef.current[indexRef.current] || '');
+                    renderWord(indexRef.current, wordsRef.current, true, displayWord);
                 }
             }
         });
-    }, [renderWord, book.id]);
+    }, [renderWord, book.id, resetDisplaySegments]);
 
-    // Wheel/touchpad scroll handler for navigating through words
-    const handleWheel = useCallback((e: React.WheelEvent) => {
+    // Wheel/touchpad scroll handler for navigating through words.
+    // This is intentionally used only on the center RSVP lane.
+    const handleWordNavigationWheel = useCallback((e: React.WheelEvent) => {
         // Prevent default page scroll
         e.preventDefault();
         
@@ -516,9 +638,60 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
         if (newIndex !== indexRef.current) {
             indexRef.current = newIndex;
             setCurrentWordIndex(newIndex);
-            renderWord(newIndex, wordsRef.current);
+            const displayWord = resetDisplaySegments(wordsRef.current[newIndex] || '');
+            renderWord(newIndex, wordsRef.current, true, displayWord);
         }
-    }, [renderWord, setIsPlaying]);
+    }, [renderWord, setIsPlaying, resetDisplaySegments]);
+
+    const handleRsvpWheel = useCallback((e: React.WheelEvent) => {
+        // Trackpad pinch is typically exposed as wheel + ctrlKey in Chromium/WebKit.
+        if (e.ctrlKey) {
+            e.preventDefault();
+
+            if (isPlayingRef.current) {
+                setIsPlaying(false);
+            }
+
+            const pinchDelta = getWheelPinchDelta(e.deltaY);
+            updateLensScale((previous) => previous + pinchDelta);
+            return;
+        }
+
+        handleWordNavigationWheel(e);
+    }, [handleWordNavigationWheel, updateLensScale]);
+
+    const handleRsvpTouchStart = useCallback((e: React.TouchEvent<HTMLDivElement>) => {
+        if (e.touches.length !== 2) return;
+
+        const [firstTouch, secondTouch] = [e.touches[0], e.touches[1]];
+        pinchGestureRef.current = {
+            distance: getTouchDistance(firstTouch, secondTouch),
+            scale: lensScaleRef.current,
+        };
+
+        if (isPlayingRef.current) {
+            setIsPlaying(false);
+        }
+    }, []);
+
+    const handleRsvpTouchMove = useCallback((e: React.TouchEvent<HTMLDivElement>) => {
+        if (e.touches.length !== 2 || !pinchGestureRef.current) return;
+
+        const [firstTouch, secondTouch] = [e.touches[0], e.touches[1]];
+        const currentDistance = getTouchDistance(firstTouch, secondTouch);
+
+        if (!Number.isFinite(currentDistance) || currentDistance <= 0) return;
+
+        e.preventDefault();
+        const ratio = currentDistance / pinchGestureRef.current.distance;
+        updateLensScale(pinchGestureRef.current.scale * ratio);
+    }, [updateLensScale]);
+
+    const handleRsvpTouchEnd = useCallback((e: React.TouchEvent<HTMLDivElement>) => {
+        if (e.touches.length < 2) {
+            pinchGestureRef.current = null;
+        }
+    }, []);
 
     const handleRiverClick = (e: React.MouseEvent) => {
         const target = e.target as HTMLElement;
@@ -537,7 +710,8 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                         setIsPlaying(false);
                         indexRef.current = newIndex;
                         setCurrentWordIndex(newIndex);
-                        renderWord(newIndex, wordsRef.current);
+                        const displayWord = resetDisplaySegments(wordsRef.current[newIndex] || '');
+                        renderWord(newIndex, wordsRef.current, true, displayWord);
                     }
                     saveProgress();
                 }
@@ -553,19 +727,24 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
     // close to the next word, then use rAF for precise final timing.
     // This reduces CPU wake-ups from ~60/sec to ~5-10/sec (80-90% reduction).
     
-    const calculateTargetInterval = useCallback((wordIndex: number, words: string[], densities: number[]) => {
-        const currentWord = words[wordIndex] || '';
-        const density = densities[wordIndex];
-        const currentDensity = (density !== undefined && density > 0) ? density : 1.0;
-        
+    const calculateTargetInterval = useCallback((displayWord: string, densityFactor: number, isSegmentedToken: boolean) => {
         const speedFactor = getSpeedFactor(wpmRef.current);
         const baseInterval = 60000 / wpmRef.current;
-        
+        const tokenProps = getTokenDisplayProps(displayWord);
+
         const T_floor = 75 * speedFactor;
-        const infoTime = baseInterval * currentDensity;
-        const visualDelay = getVisualProcessingDelay(currentWord, speedFactor);
-        
-        return T_floor + infoTime + visualDelay;
+        const infoTime = baseInterval * densityFactor;
+        const visualDelay = getVisualProcessingDelay(displayWord, speedFactor);
+
+        if (!isSegmentedToken) {
+            return (T_floor + infoTime + visualDelay) * tokenProps.displayTimeMultiplier;
+        }
+
+        // Segmented tokens need extra dwell for easier reconstruction of long words.
+        const segmentedMultiplier = Math.max(1.15, tokenProps.displayTimeMultiplier);
+        const segmentedBonusMs = 45 * speedFactor;
+
+        return (T_floor + infoTime + visualDelay) * segmentedMultiplier + segmentedBonusMs;
     }, []);
 
     const loop = React.useCallback(function loopInternal(time: number) {
@@ -580,7 +759,28 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
 
         const activeWords = isSummaryActiveRef.current ? summaryWordsRef.current : wordsRef.current;
         const activeDensities = isSummaryActiveRef.current ? [] : densitiesRef.current;
-        const targetInterval = calculateTargetInterval(indexRef.current, activeWords, activeDensities);
+
+        const activeWord = activeWords[indexRef.current] || '';
+        if (!activeWord) {
+            setIsPlaying(false);
+            return;
+        }
+
+        if (
+            segmentedWordSourceRef.current !== activeWord ||
+            currentWordSegmentsRef.current.length === 0
+        ) {
+            resetDisplaySegments(activeWord);
+        }
+
+        const segmentCount = currentWordSegmentsRef.current.length;
+        const segmentIndex = Math.min(currentSegmentIndexRef.current, Math.max(0, segmentCount - 1));
+        const displayWord = currentWordSegmentsRef.current[segmentIndex] || activeWord;
+
+        const density = activeDensities[indexRef.current];
+        const currentDensity = (density !== undefined && density > 0) ? density : 1.0;
+        const densityFactor = segmentCount > 1 ? currentDensity / segmentCount : currentDensity;
+        const targetInterval = calculateTargetInterval(displayWord, densityFactor, segmentCount > 1);
 
         // Cap accumulator to prevent huge jumps
         if (accumulatorRef.current > Math.max(1000, targetInterval * 10)) {
@@ -604,6 +804,17 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
 
         // We're close to the target - process word advancement
         if (accumulatorRef.current >= targetInterval) {
+            // If current long word is segmented, advance through its segments first.
+            if (segmentCount > 1 && segmentIndex < segmentCount - 1) {
+                currentSegmentIndexRef.current = segmentIndex + 1;
+                accumulatorRef.current -= targetInterval;
+
+                const nextDisplayWord = currentWordSegmentsRef.current[currentSegmentIndexRef.current] || activeWord;
+                renderWord(indexRef.current, activeWords, false, nextDisplayWord);
+                requestRef.current = requestAnimationFrame(loopInternal);
+                return;
+            }
+
             if (indexRef.current < activeWords.length - 1) {
                 indexRef.current++;
                 accumulatorRef.current -= targetInterval;
@@ -628,7 +839,8 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                             summaryWordsRef.current = sub.summary!.split(' ');
                             indexRef.current = 0;
                             wpmRef.current = summaryWpm;
-                            renderWord(0, summaryWordsRef.current);
+                            const summaryDisplayWord = resetDisplaySegments(summaryWordsRef.current[0] || '');
+                            renderWord(0, summaryWordsRef.current, true, summaryDisplayWord);
                             accumulatorRef.current = 0;
                         });
                         return;
@@ -637,7 +849,9 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
 
                 // Render the new word
                 const shouldRenderContext = indexRef.current % 3 === 0;
-                renderWord(indexRef.current, activeWords, shouldRenderContext);
+                const nextWord = activeWords[indexRef.current] || '';
+                const nextDisplayWord = resetDisplaySegments(nextWord);
+                renderWord(indexRef.current, activeWords, shouldRenderContext, nextDisplayWord);
 
             } else {
                 // End of words
@@ -650,7 +864,8 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                         setActiveGlobalSummaryId(null);
                         indexRef.current = savedChapterIndexRef.current;
                         wpmRef.current = wpm;
-                        renderWord(indexRef.current, wordsRef.current);
+                        const restoredDisplayWord = resetDisplaySegments(wordsRef.current[indexRef.current] || '');
+                        renderWord(indexRef.current, wordsRef.current, true, restoredDisplayWord);
                         accumulatorRef.current = 0;
                     });
                     return;
@@ -673,7 +888,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
 
         // Continue loop - use rAF for precision timing in final approach
         requestRef.current = requestAnimationFrame(loopInternal);
-    }, [wpm, renderWord, loadChapter, summaryWpm, startTransition, calculateTargetInterval]);
+    }, [wpm, renderWord, loadChapter, summaryWpm, startTransition, calculateTargetInterval, resetDisplaySegments]);
 
     // Sync refs
     useEffect(() => {
@@ -699,7 +914,8 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
             // to reflect any density updates that occurred during playback
             if (currentChapterRef.current) {
                 setCurrentChapter(currentChapterRef.current);
-                renderWord(indexRef.current, wordsRef.current);
+                const displayWord = getDisplayWordForCurrentSegment(wordsRef.current[indexRef.current] || '');
+                renderWord(indexRef.current, wordsRef.current, true, displayWord);
             }
         } else {
             lastTimeRef.current = undefined;
@@ -710,7 +926,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
             if (requestRef.current) cancelAnimationFrame(requestRef.current);
             if (timeoutRef.current) clearTimeout(timeoutRef.current);
         };
-    }, [isPlaying, saveProgress, loop, renderWord]);
+    }, [isPlaying, saveProgress, loop, renderWord, getDisplayWordForCurrentSegment]);
 
     // Spacebar to toggle play/pause
     useEffect(() => {
@@ -916,11 +1132,12 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
         if (!loading && currentChapter && wordsRef.current.length > 0) {
             // Check if all required refs are mounted before rendering
             if (rsvpRef.current && prevContainerRef.current && nextContainerRef.current) {
-                renderWord(currentWordIndex, wordsRef.current);
+                const displayWord = getDisplayWordForCurrentSegment(wordsRef.current[currentWordIndex] || '');
+                renderWord(currentWordIndex, wordsRef.current, true, displayWord);
                 initialRenderDoneRef.current = true;
             }
         }
-    }, [loading, currentChapter, currentWordIndex, renderWord]);
+    }, [loading, currentChapter, currentWordIndex, renderWord, getDisplayWordForCurrentSegment, isCompactLandscape]);
 
     // Fallback effect: if the above didn't trigger (refs not ready), 
     // use a microtask to try again after React finishes its work
@@ -929,13 +1146,14 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
             // Schedule render on next tick to ensure refs are available
             const timer = requestAnimationFrame(() => {
                 if (rsvpRef.current) {
-                    renderWord(currentWordIndex, wordsRef.current);
+                    const displayWord = getDisplayWordForCurrentSegment(wordsRef.current[currentWordIndex] || '');
+                    renderWord(currentWordIndex, wordsRef.current, true, displayWord);
                     initialRenderDoneRef.current = true;
                 }
             });
             return () => cancelAnimationFrame(timer);
         }
-    }, [loading, currentChapter, currentWordIndex, renderWord]);
+    }, [loading, currentChapter, currentWordIndex, renderWord, getDisplayWordForCurrentSegment, isCompactLandscape]);
 
     if (loading && !currentChapter) {
         return <div className="flex items-center justify-center h-full font-mono text-dune-gold animate-pulse">INITIALIZING COCKPIT...</div>;
@@ -982,6 +1200,16 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
     const wordToRender = isSummaryActive 
         ? (summaryWordsRef.current[indexRef.current] || '')
         : (currentChapter?.content?.[currentWordIndex] || wordsRef.current[currentWordIndex] || '');
+    const displayWordToRender = getDisplayWordForCurrentSegment(wordToRender);
+    const rsvpTypographyClass = isCompactLandscape ? 'text-4xl sm:text-5xl md:text-6xl' : 'text-6xl md:text-8xl';
+    const rsvpContainerStyle = {
+        ...(displayPlugin.getContainerStyle?.(displayWordToRender) || {}),
+    } as React.CSSProperties;
+    rsvpContainerStyle.transform = mergeTransformWithScale(
+        typeof rsvpContainerStyle.transform === 'string' ? rsvpContainerStyle.transform : undefined,
+        lensScale,
+    );
+    rsvpContainerStyle.transformOrigin = 'center center';
 
     return (
         <div ref={setFullscreenTarget} className="relative w-full h-full min-h-0 bg-basalt text-white overflow-hidden flex">
@@ -1126,6 +1354,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                     {/* Chapters Button */}
                     <button
                         onClick={() => setShowChapters(!showChapters)}
+                        data-testid="toggle-chapters"
                         className="p-3 bg-black/40 backdrop-blur-md rounded-full border border-white/10 text-dune-gold hover:bg-white/10 transition-colors shadow-lg"
                         title="Chapters"
                     >
@@ -1189,9 +1418,10 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                     >
                         <div 
                             ref={prevContainerRef} 
-                            className={`reader-context-panel w-full max-w-2xl h-full flex flex-wrap content-end justify-start p-8 md:p-16 font-mono text-lg md:text-xl leading-relaxed select-none overflow-hidden border-x border-white/5 cursor-ns-resize ${riverTopEnabled ? '' : 'invisible'}`}
+                            data-testid="reader-context-top"
+                            className={`reader-context-panel w-full max-w-2xl h-full flex flex-wrap content-end justify-start p-8 md:p-16 font-mono text-lg md:text-xl leading-relaxed select-none overflow-y-auto overflow-x-hidden overscroll-contain border-x border-white/5 cursor-text ${riverTopEnabled ? '' : 'invisible'}`}
                             onClick={handleRiverClick}
-                            onWheel={handleWheel}
+                            style={{ touchAction: 'pan-y pinch-zoom' }}
                         ></div>
                         {/* River Toggle - Top */}
                         <button
@@ -1217,16 +1447,25 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                     >
                         {/* Text area container with border */}
                         <div 
-                            className="w-full max-w-2xl h-full flex items-center justify-center bg-black/20 border border-white/5 hover:border-white/10 transition-colors cursor-ns-resize"
-                            onWheel={handleWheel}
+                            className="w-full max-w-2xl h-full flex items-center justify-center bg-black/20 border border-white/5 hover:border-white/10 transition-colors cursor-zoom-in"
+                            onWheel={handleRsvpWheel}
+                            onTouchStart={handleRsvpTouchStart}
+                            onTouchMove={handleRsvpTouchMove}
+                            onTouchEnd={handleRsvpTouchEnd}
+                            onTouchCancel={handleRsvpTouchEnd}
+                            style={{ touchAction: 'none' }}
                         >
                         {/* Display Plugin Word - Content is set by renderWord via ref, not React JSX */}
                         {/* This allows the playback loop to update the display at 60fps without React re-renders */}
                             <div 
                                 ref={rsvpRef} 
-                                className={`text-6xl md:text-8xl font-mono tracking-tight whitespace-nowrap drop-shadow-[0_0_15px_rgba(255,255,255,0.5)] ${displayPlugin.getContainerClass()} ${isSummaryActive ? 'text-cyan-300 italic opacity-80' : 'text-white'}`}
-                                style={displayPlugin.getContainerStyle?.(wordToRender) || undefined}
+                                className={`${rsvpTypographyClass} font-mono tracking-tight whitespace-nowrap drop-shadow-[0_0_15px_rgba(255,255,255,0.5)] ${displayPlugin.getContainerClass()} ${isSummaryActive ? 'text-cyan-300 italic opacity-80' : 'text-white'}`}
+                                style={rsvpContainerStyle}
                             />
+                        </div>
+
+                        <div className="absolute top-2 right-2 px-2 py-1 rounded border border-white/10 bg-black/35 backdrop-blur-sm text-[10px] font-mono uppercase tracking-wider text-white/70 pointer-events-none">
+                            lens {Math.round(lensScale * 100)}%
                         </div>
 
                         {/* Subchapter Progress Lights */}
@@ -1278,9 +1517,10 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                     >
                         <div 
                             ref={nextContainerRef} 
-                            className={`reader-context-panel w-full max-w-2xl h-full flex flex-wrap content-start justify-start p-8 md:p-16 font-mono text-lg md:text-xl leading-relaxed select-none overflow-hidden border-x border-white/5 cursor-ns-resize ${riverBottomEnabled ? '' : 'invisible'}`}
+                            data-testid="reader-context-bottom"
+                            className={`reader-context-panel w-full max-w-2xl h-full flex flex-wrap content-start justify-start p-8 md:p-16 font-mono text-lg md:text-xl leading-relaxed select-none overflow-y-auto overflow-x-hidden overscroll-contain border-x border-white/5 cursor-text ${riverBottomEnabled ? '' : 'invisible'}`}
                             onClick={handleRiverClick}
-                            onWheel={handleWheel}
+                            style={{ touchAction: 'pan-y pinch-zoom' }}
                         ></div>
                         {/* River Toggle - Bottom */}
                         <button
@@ -1304,7 +1544,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 9l4-4 4 4m0 6l-4 4-4-4" />
                             </svg>
-                            scroll to navigate
+                            pinch lens to zoom - scroll rivers naturally
                         </div>
                     </div>
 
@@ -1433,7 +1673,8 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                         // Sync TTS position to RSVP reader
                         indexRef.current = wordIndex;
                         setCurrentWordIndex(wordIndex);
-                        renderWord(wordIndex, wordsRef.current);
+                        const displayWord = resetDisplaySegments(wordsRef.current[wordIndex] || '');
+                        renderWord(wordIndex, wordsRef.current, true, displayWord);
                     }}
                     bookId={book.id}
                     chapterId={currentChapter.id}
