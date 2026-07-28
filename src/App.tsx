@@ -143,25 +143,27 @@ function App() {
         </Routes>
       </div>
 
-      <div className="fixed top-4 right-4 z-[70]">
-        <button
-          type="button"
-          onClick={handleThemeToggle}
-          className={clsx(
-            'theme-toggle-btn',
-            isDayTheme ? 'theme-toggle-btn--day' : 'theme-toggle-btn--night'
-          )}
-          title={isDayTheme ? 'Switch to dark theme' : 'Switch to day theme'}
-          aria-label={isDayTheme ? 'Switch to dark theme' : 'Switch to day theme'}
-        >
-          <span className="theme-toggle-btn__dot" aria-hidden />
-          <span className="theme-toggle-btn__kicker">Theme</span>
-          <span className="theme-toggle-btn__value">{isDayTheme ? 'Day' : 'Dark'}</span>
-        </button>
-      </div>
+      {view !== 'reader' && (
+        <div className="fixed top-4 right-4 z-[70]">
+          <button
+            type="button"
+            onClick={handleThemeToggle}
+            className={clsx(
+              'theme-toggle-btn',
+              isDayTheme ? 'theme-toggle-btn--day' : 'theme-toggle-btn--night'
+            )}
+            title={isDayTheme ? 'Switch to dark theme' : 'Switch to day theme'}
+            aria-label={isDayTheme ? 'Switch to dark theme' : 'Switch to day theme'}
+          >
+            <span className="theme-toggle-btn__dot" aria-hidden />
+            <span className="theme-toggle-btn__kicker">Theme</span>
+            <span className="theme-toggle-btn__value">{isDayTheme ? 'Day' : 'Dark'}</span>
+          </button>
+        </div>
+      )}
 
       {/* Made by Arphen Corner Label - Only show if not in Manifesto */}
-      {view !== 'manifesto' && (
+      {view !== 'manifesto' && view !== 'reader' && (
         <div className="fixed bottom-4 right-4 z-50">
           <button
             onClick={() => navigate('/manifesto')}
@@ -172,7 +174,7 @@ function App() {
         </div>
       )}
 
-      <LocalAccessQr />
+      {view !== 'reader' && <LocalAccessQr />}
 
       {/* PWA Update Prompt */}
       <UpdatePrompt />

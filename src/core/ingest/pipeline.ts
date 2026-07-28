@@ -379,6 +379,7 @@ export const processChaptersInBackground = async (bookId: string) => {
                                 id: `${chapterId}_density_${i}`,
                                 bookId,
                                 chapterId,
+                                chapterIndex,
                                 subchapterIndex: i,
                                 startWordIndex,
                                 endWordIndex,
@@ -576,7 +577,7 @@ export const resumeIncompleteAnalysis = async (bookId: string, currentChapterId?
     // Track if we've passed the current chapter in the book
     let passedCurrentChapter = !currentChapterId; // If no current chapter, process all
 
-    for (const chapterId of book.chapterIds) {
+    for (const [chapterIndex, chapterId] of book.chapterIds.entries()) {
         const chapter = await db.chapters.findOne(chapterId).exec();
         if (!chapter || !chapter.subchapters || chapter.subchapters.length === 0) continue;
         if (chapter.content.length === 0) continue; // Skip empty/skipped chapters
@@ -634,6 +635,7 @@ export const resumeIncompleteAnalysis = async (bookId: string, currentChapterId?
                     id: `${chapterId}_density_${i}`,
                     bookId,
                     chapterId,
+                    chapterIndex,
                     subchapterIndex: i,
                     startWordIndex: sub.startWordIndex,
                     endWordIndex: sub.endWordIndex,

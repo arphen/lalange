@@ -13,7 +13,7 @@ const DEMO_WORDS = DEMO_TEXT.split(' ');
 const SUMMARY_WORDS = SUMMARY_TEXT.split(' ');
 
 export const Onboarding: React.FC = () => {
-    const { setHasCompletedOnboarding, displayPlugin: displayPluginId } = useSettingsStore();
+    const { setHasCompletedOnboarding, setAiEnabled, displayPlugin: displayPluginId } = useSettingsStore();
     const aiState = useAIStore();
     const [step, setStep] = useState<1 | 2 | 3>(1);
     const [downloadStarted, setDownloadStarted] = useState(false);
@@ -64,6 +64,11 @@ export const Onboarding: React.FC = () => {
         setHasCompletedOnboarding(true);
     };
 
+    const handleContinueWithoutAI = () => {
+        setAiEnabled(false);
+        setHasCompletedOnboarding(true);
+    };
+
     // Actually, downloadModelToCache sets loading=true, then loading=false.
     // We can track completion roughly by checking if loading went back to false and we started it.
     // A more robust way is checking `isModelCached('tiny')` but that's async. 
@@ -104,8 +109,7 @@ export const Onboarding: React.FC = () => {
                             <div className="space-y-4 sm:space-y-6">
                                 <h2 className="text-2xl sm:text-4xl font-bold text-white">Local Setup</h2>
                                 <p className="text-base sm:text-lg text-gray-400 leading-relaxed font-light">
-                                    You are about to install the <BrandName /> <span className="text-white font-bold">local processing profile</span>. 
-                                    This downloads a small on-device package (TinyLlama, ~700MB) to browser storage.
+                                    Start reading immediately, or add the optional <BrandName /> <span className="text-white font-bold">local AI profile</span> for adaptive pacing and summaries.
                                 </p>
                             </div>
 
@@ -126,23 +130,31 @@ export const Onboarding: React.FC = () => {
                                         2
                                     </div>
                                     <div>
-                                        <h3 className="font-bold text-white">Starter profile</h3>
+                                        <h3 className="font-bold text-white">Optional download</h3>
                                         <p className="text-sm text-gray-400 mt-1">
-                                            We start with the lightest option for speed. You can switch profiles in Settings later.
+                                            The starter model uses about 700MB. You can enable it now or later in Settings.
                                         </p>
                                     </div>
                                 </div>
                             </div>
 
-                            <button
-                                onClick={handleStartDownload}
-                                className="w-full py-4 sm:py-6 bg-dune-gold hover:bg-white text-black font-bold text-base sm:text-xl tracking-widest uppercase transition-all rounded"
-                            >
-                                Start Local Setup
-                            </button>
-                            
+                            <div className="space-y-3">
+                                <button
+                                    onClick={handleContinueWithoutAI}
+                                    className="w-full py-4 sm:py-6 bg-dune-gold hover:bg-white text-black font-bold text-base sm:text-xl tracking-widest uppercase transition-all rounded"
+                                >
+                                    Enter Library
+                                </button>
+                                <button
+                                    onClick={handleStartDownload}
+                                    className="w-full py-3 sm:py-4 border border-white/20 hover:border-dune-gold text-white/80 hover:text-white font-bold text-sm tracking-widest uppercase transition-colors rounded"
+                                >
+                                    Enable Local AI · 700MB
+                                </button>
+                            </div>
+
                             <p className="text-center text-xs text-gray-600 font-mono">
-                                By proceeding, you agree to become a Pilot of the text, not merely a reader.
+                                Reading works without AI. Your choice can be changed in Settings.
                             </p>
                         </div>
                     )}
@@ -186,8 +198,8 @@ export const Onboarding: React.FC = () => {
                                     </div>
                                     <div className="aspect-square bg-black border-2 border-white/20 rounded-lg flex flex-col items-center justify-center relative overflow-hidden shadow-2xl shadow-black">
                                          {/* Guides */}
-                                         <div className="absolute top-0 bottom-0 w-px bg-red-900/30 left-1/2 -translate-x-1/2" />
-                                         <div className="absolute left-0 right-0 h-px bg-red-900/30 top-1/2 -translate-y-1/2" />
+                                         <div className="absolute top-0 bottom-0 w-px bg-white/10 left-1/2 -translate-x-1/2" />
+                                         <div className="absolute left-0 right-0 h-px bg-white/10 top-1/2 -translate-y-1/2" />
                                          
                                          {/* The Word - Using Display Plugin */}
                                          <div 

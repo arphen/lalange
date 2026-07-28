@@ -71,3 +71,62 @@ build: install-deps
 run: build
 	@echo "Starting production preview server..."
 	@npm run preview -- --host
+
+# =====================================================================
+# Exhibition Render Pipeline (see docs/exhibition.md)
+# =====================================================================
+# Source epubs live in ./books (not ~/downloads). Override with BOOKS_DIR=...
+BOOKS_DIR        = books
+EXHIBITION_TEXTS = public/exhibition-texts
+RAW_RENDERS      = renders/raw
+FINAL_RENDERS    = renders/final
+RAW_RENDERS_OFFSET30   = renders/raw_offset30
+FINAL_RENDERS_OFFSET30 = renders/final_offset30
+RENDER_DURATION  = 600
+RENDER_RETRIES   = 2
+RENDER_WPM       = 450
+RENDER_WPM_OFFSET30 = 550
+RENDER_START_OFFSET30 = 0.30
+
+.PHONY: setup-exhibition parse-books render-test render-full render-full-offset30 clean-renders clean-renders-offset30
+
+setup-exhibition:
+	git checkout -b feature/exhibition-render || git checkout feature/exhibition-render
+	npm install puppeteer --save-dev
+	mkdir -p $(RAW_RENDERS) $(FINAL_RENDERS) $(EXHIBITION_TEXTS)
+
+parse-books:
+	node scripts/parse_books.js --source=$(BOOKS_DIR)
+
+# Renders 6 books for 30 seconds, stitches them into one 3840x2160 grid.
+render-test: parse-books
+	node scripts/render_books.js --batch=test --duration=30
+	bash scripts/stitch_grid.sh --batch=test
+
+# Renders 3 batches of 6 books for 10 minutes each, stitches grids, concatenates.
+render-full: parse-books
+	node scripts/render_books.js --batch=1 --duration=$(RENDER_DURATION) --wpm=$(RENDER_WPM) --retries=$(RENDER_RETRIES)
+	bash scripts/stitch_grid.sh --batch=1
+	node scripts/render_books.js --batch=2 --duration=$(RENDER_DURATION) --wpm=$(RENDER_WPM) --retries=$(RENDER_RETRIES)
+	bash scripts/stitch_grid.sh --batch=2
+	node scripts/render_books.js --batch=3 --duration=$(RENDER_DURATION) --wpm=$(RENDER_WPM) --retries=$(RENDER_RETRIES)
+	bash scripts/stitch_grid.sh --batch=3
+	bash scripts/concatenate.sh
+
+# Second 30-minute set from the same books, starting around 30% into each text,
+# and running at 550 WPM.
+render-full-offset30: parse-books
+	mkdir -p $(RAW_RENDERS_OFFSET30) $(FINAL_RENDERS_OFFSET30)
+	node scripts/render_books.js --batch=1 --duration=$(RENDER_DURATION) --wpm=$(RENDER_WPM_OFFSET30) --retries=$(RENDER_RETRIES) --start=$(RENDER_START_OFFSET30) --out=$(RAW_RENDERS_OFFSET30)
+	RAW_DIR=$(RAW_RENDERS_OFFSET30) FINAL_DIR=$(FINAL_RENDERS_OFFSET30) bash scripts/stitch_grid.sh --batch=1
+	node scripts/render_books.js --batch=2 --duration=$(RENDER_DURATION) --wpm=$(RENDER_WPM_OFFSET30) --retries=$(RENDER_RETRIES) --start=$(RENDER_START_OFFSET30) --out=$(RAW_RENDERS_OFFSET30)
+	RAW_DIR=$(RAW_RENDERS_OFFSET30) FINAL_DIR=$(FINAL_RENDERS_OFFSET30) bash scripts/stitch_grid.sh --batch=2
+	node scripts/render_books.js --batch=3 --duration=$(RENDER_DURATION) --wpm=$(RENDER_WPM_OFFSET30) --retries=$(RENDER_RETRIES) --start=$(RENDER_START_OFFSET30) --out=$(RAW_RENDERS_OFFSET30)
+	RAW_DIR=$(RAW_RENDERS_OFFSET30) FINAL_DIR=$(FINAL_RENDERS_OFFSET30) bash scripts/stitch_grid.sh --batch=3
+	FINAL_DIR=$(FINAL_RENDERS_OFFSET30) bash scripts/concatenate.sh --out=$(FINAL_RENDERS_OFFSET30)/exhibition_final_offset30.mp4
+
+clean-renders:
+	rm -rf $(RAW_RENDERS)/* $(FINAL_RENDERS)/*
+
+clean-renders-offset30:
+	rm -rf $(RAW_RENDERS_OFFSET30)/* $(FINAL_RENDERS_OFFSET30)/*

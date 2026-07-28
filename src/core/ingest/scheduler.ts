@@ -10,6 +10,7 @@ export interface IngestionTask {
     id: string;
     bookId: string;
     chapterId: string;
+    chapterIndex?: number;
     subchapterIndex: number;
     startWordIndex: number;
     endWordIndex: number;
@@ -105,8 +106,11 @@ export class IngestionScheduler {
         };
         this.tasks.push(newTask);
         console.log(`[Scheduler] Added task: ${task.type} ${task.chapterId} ${task.subchapterIndex} (${initialStatus})`);
-        
-        if (initialStatus === 'pending') {
+
+        // A newly discovered next-chapter task may already be inside the active
+        // lookahead window even when the pipeline initially marks it dormant.
+        this.wakeUpDormantTasks();
+        if (newTask.status === 'pending') {
             this.rebalancePriorities();
             this.processNext();
         }
@@ -182,6 +186,9 @@ export class IngestionScheduler {
         const chapterTasks = this.tasks.filter(
             (t) => t.bookId === this.currentBookId && t.chapterId === this.currentChapterId
         );
+        const currentChapterIndex = chapterTasks.find(
+            (task) => task.chapterIndex !== undefined
+        )?.chapterIndex;
 
         // Prefer using DENSITY tasks to locate the current chunk (they share indices with SUMMARY).
         const locatorTasks = chapterTasks.filter((t) => t.type === 'DENSITY');
@@ -218,8 +225,19 @@ export class IngestionScheduler {
                     task.status = 'pending';
                     console.log(`[Scheduler] Waking up task: ${task.id} (Chunk: ${task.subchapterIndex}, Current: ${currentChunkIndex}, WordDist: ${task.startWordIndex - this.currentWordIndex})`);
                 }
+            } else if (
+                task.type === 'DENSITY' &&
+                currentChapterIndex !== undefined &&
+                task.chapterIndex === currentChapterIndex + 1
+            ) {
+                const isWithinWordLookahead = task.startWordIndex < DENSITY_LOOKAHEAD_WORDS;
+                const isWithinChunkLookahead = task.subchapterIndex < MIN_DENSITY_CHUNKS;
+
+                if (isWithinWordLookahead || isWithinChunkLookahead) {
+                    task.status = 'pending';
+                    console.log(`[Scheduler] Preloading next chapter task: ${task.id}`);
+                }
             }
-            // TODO: Handle next chapter lookahead
         });
     }
 
