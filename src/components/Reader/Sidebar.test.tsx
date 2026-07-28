@@ -250,6 +250,45 @@ describe('Sidebar Component', () => {
     });
 
     describe('Summary Expansion', () => {
+        it('loads subchapter start on mobile tap and keeps summary collapsed', () => {
+            const chapter = createMockChapter({
+                subchapters: [
+                    { title: 'Part 1', summary: 'Summary text', startWordIndex: 0, endWordIndex: 5 },
+                ],
+            });
+            const onLoadChapter = vi.fn();
+            const originalWidth = window.innerWidth;
+            Object.defineProperty(window, 'innerWidth', {
+                configurable: true,
+                value: 375,
+            });
+
+            try {
+                render(
+                    <Sidebar
+                        {...defaultProps}
+                        chapters={[chapter]}
+                        onLoadChapter={onLoadChapter}
+                    />
+                );
+
+                fireEvent.click(screen.getByTestId('subchapter-btn-0'));
+
+                expect(onLoadChapter).toHaveBeenCalledWith('chapter-1', 0);
+
+                const summaryContainer = screen.getByTestId('summary-content-0').parentElement;
+                expect(summaryContainer).toHaveClass('max-h-0');
+
+                const subchapterPlayButton = screen.getByTitle('Read Subchapter');
+                expect(subchapterPlayButton).toHaveClass('hidden');
+            } finally {
+                Object.defineProperty(window, 'innerWidth', {
+                    configurable: true,
+                    value: originalWidth,
+                });
+            }
+        });
+
         it('should expand summary on click when summary exists', () => {
             const chapter = createMockChapter({
                 densities: [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5],

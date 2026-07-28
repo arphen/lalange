@@ -127,4 +127,40 @@ describe('IngestionScheduler Dormant Tasks', () => {
         const tasks = (scheduler as any).tasks;
         expect(tasks[0].status).toBe('dormant');
     });
+
+    it('should preload density tasks for the next chapter', () => {
+        // Keep the queue stable so the assertion can inspect the wake-up decision.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (scheduler as any).isRunning = true;
+
+        scheduler.addTask({
+            id: 'current',
+            bookId: 'book1',
+            chapterId: 'chapter1',
+            chapterIndex: 0,
+            subchapterIndex: 0,
+            startWordIndex: 0,
+            endWordIndex: 100,
+            type: 'DENSITY',
+            text: 'current chapter'
+        }, 'dormant');
+        scheduler.addTask({
+            id: 'next',
+            bookId: 'book1',
+            chapterId: 'chapter2',
+            chapterIndex: 1,
+            subchapterIndex: 0,
+            startWordIndex: 0,
+            endWordIndex: 100,
+            type: 'DENSITY',
+            text: 'next chapter'
+        }, 'dormant');
+
+        scheduler.setCursor('book1', 'chapter1', 0);
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const tasks = (scheduler as any).tasks;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        expect(tasks.find((task: any) => task.id === 'next').status).toBe('pending');
+    });
 });

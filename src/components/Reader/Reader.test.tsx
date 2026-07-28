@@ -4,6 +4,12 @@ import type { MyDatabase } from '../../core/sync/db';
 import { Reader } from './Reader';
 import * as dbModule from '../../core/sync/db';
 
+const mockSetSchedulerCursor = vi.hoisted(() => vi.fn());
+
+vi.mock('../../core/ingest/scheduler', () => ({
+    scheduler: { setCursor: mockSetSchedulerCursor },
+}));
+
 // Mock the DB module
 vi.mock('../../core/sync/db', () => ({
     initDB: vi.fn(),
@@ -112,6 +118,53 @@ describe('Reader Component', () => {
         expect(rsvpContainer).toHaveTextContent('Hello');
     });
 
+    it('should skip an empty saved placeholder and open the first readable chapter', async () => {
+        const emptyPlaceholder = {
+            id: 'chapter-0',
+            bookId: 'book-1',
+            index: 0,
+            title: 'Cover',
+            status: 'ready',
+            content: [],
+            metadata: { classificationType: 'image' },
+            toJSON: function () { return this; }
+        };
+        const savedPlaceholderState = {
+            ...mockReadingState,
+            currentChapterId: 'chapter-0',
+            toJSON: function () { return this; }
+        };
+        const chapters = [emptyPlaceholder, mockChapter1, mockChapter2];
+
+        mockDb.reading_states.findOne.mockReturnValue({
+            exec: vi.fn().mockResolvedValue(savedPlaceholderState)
+        });
+        mockDb.chapters.findOne.mockImplementation((id) => ({
+            exec: vi.fn().mockResolvedValue(chapters.find(chapter => chapter.id === id)),
+            $: {
+                subscribe: vi.fn().mockImplementation((callback) => {
+                    callback(chapters.find(chapter => chapter.id === id));
+                    return { unsubscribe: vi.fn() };
+                })
+            }
+        }));
+        mockDb.chapters.find.mockReturnValue({
+            $: {
+                subscribe: vi.fn().mockImplementation((callback) => {
+                    callback(chapters);
+                    return { unsubscribe: vi.fn() };
+                })
+            },
+            exec: vi.fn().mockResolvedValue(chapters)
+        });
+
+        render(<Reader book={{ ...mockBook, chapterIds: ['chapter-0', 'chapter-1', 'chapter-2'] }} />);
+
+        await waitFor(() => {
+            expect(screen.getByTestId('rsvp-container')).toHaveTextContent('Hello');
+        });
+    });
+
     it('should display chapter title', async () => {
         render(<Reader book={mockBook} />);
         await waitFor(() => {
@@ -153,6 +206,67 @@ describe('Reader Component', () => {
         });
     });
 
+    it('should ignore ghost click after touch drag on RSVP lane', async () => {
+        render(<Reader book={mockBook} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('play-overlay')).toBeInTheDocument();
+        });
+
+        const rsvpContainer = screen.getByTestId('rsvp-container');
+        const touchSurface = rsvpContainer.firstElementChild as HTMLElement;
+        expect(touchSurface).toBeTruthy();
+
+        fireEvent.touchStart(touchSurface, {
+            touches: [{ identifier: 1, clientX: 100, clientY: 100 }],
+        });
+        fireEvent.touchMove(touchSurface, {
+            touches: [{ identifier: 1, clientX: 100, clientY: 132 }],
+        });
+        fireEvent.touchEnd(touchSurface, { touches: [] });
+
+        fireEvent.click(rsvpContainer);
+
+        expect(screen.getByTestId('play-overlay')).toBeInTheDocument();
+    });
+
+    it('should not toggle play from river background click after scroll', async () => {
+        render(<Reader book={mockBook} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('play-overlay')).toBeInTheDocument();
+        });
+
+        const topRiver = screen.getByTestId('reader-context-top');
+        fireEvent.scroll(topRiver);
+        fireEvent.click(topRiver);
+
+        expect(screen.getByTestId('play-overlay')).toBeInTheDocument();
+    });
+
+    it('should keep playback running when selecting a river word', async () => {
+        const { container } = render(<Reader book={mockBook} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('play-overlay')).toBeInTheDocument();
+        });
+
+        const rsvpContainer = screen.getByTestId('rsvp-container');
+        fireEvent.click(rsvpContainer);
+
+        await waitFor(() => {
+            expect(screen.queryByTestId('play-overlay')).not.toBeInTheDocument();
+        });
+
+        await waitFor(() => {
+            const wordSpan = container.querySelector('[data-index="2"]');
+            expect(wordSpan).toBeInTheDocument();
+        });
+
+        const wordSpan = container.querySelector('[data-index="2"]');
+        expect(wordSpan).toBeTruthy();
+        fireEvent.click(wordSpan!);
+
+        expect(screen.queryByTestId('play-overlay')).not.toBeInTheDocument();
+    });
+
     it('should navigate to next chapter', async () => {
         render(<Reader book={mockBook} />);
         await waitFor(() => {
@@ -176,6 +290,69 @@ describe('Reader Component', () => {
             const rsvpContainer = screen.getByTestId('rsvp-container');
             expect(rsvpContainer).toHaveTextContent('Second');
         });
+
+        await waitFor(() => {
+            const sidebar = screen.getByTestId('sidebar-container');
+            expect(sidebar).toHaveClass('translate-x-full');
+        });
+    });
+
+    it('should close the chapter drawer on swipe-right gesture', async () => {
+        render(<Reader book={mockBook} />);
+
+        await waitFor(() => {
+            const sidebar = screen.getByTestId('sidebar-container');
+            expect(sidebar).toHaveClass('translate-x-0');
+        });
+
+        const sidebar = screen.getByTestId('sidebar-container');
+        fireEvent.touchStart(sidebar, {
+            touches: [{ identifier: 1, clientX: 24, clientY: 120 }],
+        });
+        fireEvent.touchMove(sidebar, {
+            touches: [{ identifier: 1, clientX: 120, clientY: 124 }],
+        });
+        fireEvent.touchEnd(sidebar, { touches: [] });
+
+        await waitFor(() => {
+            expect(sidebar).toHaveClass('translate-x-full');
+        });
+    });
+
+    it('should keep the chapter drawer closed by default on mobile', async () => {
+        const originalWidth = window.innerWidth;
+        Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 });
+
+        const { unmount } = render(<Reader book={mockBook} />);
+
+        await waitFor(() => {
+            expect(screen.getByTestId('sidebar-container')).toHaveClass('translate-x-full');
+        });
+
+        unmount();
+        Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth });
+    });
+
+    it('should seek forward when swiping up on the RSVP lane', async () => {
+        render(<Reader book={mockBook} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('rsvp-container')).toHaveTextContent('Hello');
+        });
+
+        const rsvpContainer = screen.getByTestId('rsvp-container');
+        const touchSurface = rsvpContainer.firstElementChild as HTMLElement;
+        fireEvent.touchStart(touchSurface, {
+            touches: [{ identifier: 1, clientX: 100, clientY: 120 }],
+        });
+        fireEvent.touchMove(touchSurface, {
+            touches: [{ identifier: 1, clientX: 100, clientY: 64 }],
+        });
+        fireEvent.touchEnd(touchSurface, {
+            touches: [],
+            changedTouches: [{ identifier: 1, clientX: 100, clientY: 64 }],
+        });
+
+        expect(rsvpContainer).toHaveTextContent('this');
     });
 
     it('should save progress when pausing', async () => {
@@ -255,6 +432,10 @@ describe('Reader Component', () => {
         // This verifies reading position persistence works correctly
         const rsvpContainer = screen.getByTestId('rsvp-container');
         expect(rsvpContainer).toHaveTextContent('chapter');
+
+        await waitFor(() => {
+            expect(mockSetSchedulerCursor).toHaveBeenCalledWith('book-1', 'chapter-2', 1, 7);
+        });
     });
 
     it('should display the first word in the RSVP center area immediately after loading', async () => {

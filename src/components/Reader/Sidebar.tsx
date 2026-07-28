@@ -3,7 +3,9 @@ import { type ChapterDocType, type GlobalSummaryType } from '../../core/sync/db'
 import { formatReadingTime } from '../../hooks/useReadingTimeEstimate';
 import { useAIStore } from '../../core/store/ai';
 import { clsx } from 'clsx';
+import { X } from 'lucide-react';
 import { getSubchapterDisplayName } from './Sidebar.utils';
+import { isReadingChapter } from './readerNavigation';
 
 interface SidebarProps {
     chapters: ChapterDocType[];
@@ -17,6 +19,7 @@ interface SidebarProps {
     activeSummaryId?: string | null;
     globalSummaries?: GlobalSummaryType[];
     onPlayGlobalSummary?: (summary: GlobalSummaryType) => void;
+    onClose?: () => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -30,14 +33,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
     now,
     activeSummaryId,
     globalSummaries = [],
-    onPlayGlobalSummary
+    onPlayGlobalSummary,
+    onClose
 }) => {
     const [expandedSummary, setExpandedSummary] = useState<string | null>(null);
     useAIStore(); // Keep subscription for re-renders but ignore returned object
     const expandedSummaryId = activeSummaryId ?? expandedSummary;
 
     // Filter out image chapters
-    const displayChapters = chapters.filter(c => c.metadata?.classificationType !== 'image');
+    const displayChapters = chapters.filter(isReadingChapter);
 
     // Calculate total stats
     const totalWords = displayChapters.reduce((acc, c) => acc + (c.content?.length || 0), 0);
@@ -80,12 +84,25 @@ export const Sidebar: React.FC<SidebarProps> = ({
     return (
         <div className={clsx("flex flex-col h-full bg-basalt font-mono text-xs", className)}>
             {/* Header */}
-            <div className="p-4 border-b border-white/10">
-                <h3 className="text-dune-gold font-bold tracking-widest mb-1">LIBRARIAN</h3>
-                <div className="flex justify-between text-gray-500">
-                    <span>{chapters.length} CHUNKS</span>
-                    <span>{timeBank} BANKED</span>
+            <div className="p-4 border-b border-white/10 flex items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                    <h3 className="text-dune-gold font-bold tracking-widest mb-1">CHAPTERS</h3>
+                    <div className="flex justify-between text-gray-500">
+                        <span>{displayChapters.length} CHUNKS</span>
+                        <span>{timeBank} BANKED</span>
+                    </div>
                 </div>
+                {onClose && (
+                    <button
+                        type="button"
+                        onClick={onClose}
+                        className="p-2 -mt-1 -mr-1 text-white/60 hover:text-white rounded hover:bg-white/10 transition-colors"
+                        title="Close chapters"
+                        aria-label="Close chapters"
+                    >
+                        <X className="w-5 h-5" />
+                    </button>
+                )}
             </div>
 
             {/* Chapter List (Fill-Bars) */}
@@ -151,7 +168,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                     data-testid="sidebar-chapter-button"
                                     className={clsx(
                                         "flex-1 text-left p-3 transition-colors border-l-2",
-                                        isCurrent ? "border-magma-vent bg-white/5 text-white" : "border-transparent text-gray-400 hover:text-white hover:bg-white/5",
+                                        isCurrent ? "border-dune-gold bg-white/5 text-white" : "border-transparent text-gray-400 hover:text-white hover:bg-white/5",
                                         (!isReady && (!chapter.content || chapter.content.length === 0)) && "opacity-50 cursor-not-allowed"
                                     )}
                                 >
@@ -253,6 +270,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                                             onClick={(e) => {
                                                                 e.stopPropagation();
                                                                 e.preventDefault();
+
+                                                                // On mobile, tapping a subchapter row should jump straight to that start.
+                                                                if (typeof window !== 'undefined' && window.innerWidth < 768) {
+                                                                    if (hasStarted) {
+                                                                        onLoadChapter(chapter.id, sub.startWordIndex);
+                                                                    }
+                                                                    return;
+                                                                }
+
                                                                 setExpandedSummary(isExpanded ? null : summaryId);
                                                             }}
                                                             data-testid={`subchapter-btn-${idx}`}
@@ -266,7 +292,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                                                 {/* Row 1: Density (Red/Magma) - 1px */}
                                                                 <div className="w-full h-[1px] bg-gray-800/50 overflow-hidden relative" data-testid={`density-bar-${idx}`}>
                                                                     <div 
-                                                                        className="absolute inset-y-0 left-0 bg-magma-vent transition-all duration-500"
+                                                                        className="absolute inset-y-0 left-0 bg-atlantic-blue transition-all duration-500"
                                                                         style={{ width: `${densityProgress * 100}%` }}
                                                                         data-testid={`density-fill-${idx}`}
                                                                     />
@@ -306,12 +332,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                                         }}
                                                         disabled={!hasStarted}
                                                         className={clsx(
-                                                            "p-1 rounded hover:bg-white/10 transition-colors flex-shrink-0",
+                                                            "hidden md:inline-flex items-center justify-center p-0.5 rounded hover:bg-white/10 transition-colors flex-shrink-0",
                                                             hasStarted ? "text-dune-gold" : "text-gray-600 opacity-50 cursor-not-allowed"
                                                         )}
                                                         title="Read Subchapter"
                                                     >
-                                                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
                                                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                                                         </svg>

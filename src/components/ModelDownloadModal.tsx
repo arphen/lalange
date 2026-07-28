@@ -11,7 +11,7 @@ import { BrandName } from './BrandName';
  */
 export const ModelDownloadModal: React.FC = () => {
     const location = useLocation();
-    const { editorModel, setEditorModel, setLibrarianModelTier, setSummarizerModel } = useSettingsStore();
+    const { aiEnabled, editorModel, setEditorModel, setLibrarianModelTier, setSummarizerModel } = useSettingsStore();
     const [isOpen, setIsOpen] = useState(false);
     const [selectedTier, setSelectedTier] = useState<ModelTier>(editorModel);
     const [error, setError] = useState<string | null>(null);
@@ -22,7 +22,7 @@ export const ModelDownloadModal: React.FC = () => {
         location.pathname.startsWith('/settings');
 
     useEffect(() => {
-        if (!shouldPromptOnRoute) return;
+        if (!aiEnabled || !shouldPromptOnRoute) return;
         
         const checkCache = async () => {
             const cached = await isModelCached(editorModel);
@@ -31,7 +31,7 @@ export const ModelDownloadModal: React.FC = () => {
             }
         };
         checkCache();
-    }, [editorModel, shouldPromptOnRoute]);
+    }, [aiEnabled, editorModel, shouldPromptOnRoute]);
 
     const handleDownload = async () => {
         // Update all models to the selected tier for consistency
@@ -65,7 +65,7 @@ export const ModelDownloadModal: React.FC = () => {
     };
 
     // Show only when setup is needed for the current route.
-    if (!isOpen) return null;
+    if (!aiEnabled || !isOpen) return null;
 
     return (
         <div className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">

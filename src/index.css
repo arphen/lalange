@@ -11,8 +11,8 @@
 
   /* --- BIOME: THE VOLCANIC INTERIOR (Nightmode) --- */
   --color-basalt: #111111;
-  --color-magma-vent: #CF1020;
-  --color-magma-crust: #EB5121;
+  --color-magma-vent: #3A8DA8;
+  --color-magma-crust: #DDBB62;
   --color-canarian-pine: #01796F;
 
   /* --- BIOME: YUMBO NIGHTLIFE (LSD/Psychedelic) --- */
@@ -285,6 +285,22 @@ body.theme-ash {
 .theme-toggle-btn--night {
   background: rgba(12, 12, 12, 0.82);
   color: #FFF7E8;
+}
+
+@media (max-width: 768px) and (orientation: portrait) {
+  .theme-toggle-btn {
+    gap: 0.4rem;
+    padding: 0.42rem 0.65rem;
+  }
+
+  .theme-toggle-btn__kicker {
+    display: none;
+  }
+
+  .theme-toggle-btn__value {
+    font-size: 0.62rem;
+    letter-spacing: 0.12em;
+  }
 }
 
 /* --- COMPONENTS --- */

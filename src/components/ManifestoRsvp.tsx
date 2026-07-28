@@ -11,7 +11,7 @@ const getDensityColor = (score: number) => {
   if (score <= 1.2) return 'text-yellow-200';
   if (score <= 1.5) return 'text-yellow-500';
   if (score <= 2.0) return 'text-orange-500';
-  return 'text-red-500 font-bold';
+  return 'text-white font-bold';
 };
 
 interface ManifestoRsvpProps {

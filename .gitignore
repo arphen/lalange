@@ -24,3 +24,8 @@ dist-ssr
 *.sw?
 coverage
 local_models/
+books/
+
+# Exhibition render pipeline (generated artifacts)
+renders/
+public/exhibition-texts/
