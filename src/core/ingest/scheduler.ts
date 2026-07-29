@@ -45,6 +45,7 @@ export class IngestionScheduler {
     private currentGlobalWordIndex: number = 0;  // Tracks position across entire book
     private previousAiEnabled: boolean = true;
     private previousSummariesEnabled: boolean = false;
+    private crashPauseLogged = false;
 
     constructor() {
         // Subscribe to aiEnabled changes to resume processing when re-enabled
@@ -335,6 +336,16 @@ export class IngestionScheduler {
             console.log("[Scheduler] AI disabled, pausing task processing.");
             return;
         }
+
+        const aiState = useAIStore.getState();
+        if (aiState.lifecycleState === 'crashed') {
+            if (!this.crashPauseLogged) {
+                console.log("[Scheduler] AI crashed, pausing task processing until recovery.");
+                this.crashPauseLogged = true;
+            }
+            return;
+        }
+        this.crashPauseLogged = false;
 
         // Check for pending global summary tasks first (lower priority than density but important)
         const summariesEnabled = settings.summariesEnabled !== false;

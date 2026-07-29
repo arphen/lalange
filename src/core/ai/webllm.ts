@@ -128,7 +128,7 @@ export const getEngine = async (
     console.log(`[WebLLM] Requesting engine for tier: ${tier} (Model ID: ${modelId})`);
     
     const aiStore = useAIStore.getState();
-    const { setProgress, setLoading, setReady, setError, setActiveModelName, startModelLoad, completeModelLoad, recordCrash, setLifecycleState } = aiStore;
+    const { setProgress, setLoading, setReady, setError, setActiveModelName, startModelLoad, completeModelLoad, setLifecycleState } = aiStore;
 
     // Check if model is already in cache to determine lifecycle state
     const isCached = await hasModelInCache(modelId, APP_CONFIG);
@@ -213,7 +213,6 @@ export const getEngine = async (
         }
         
         setError(errorMessage);
-        recordCrash(errorMessage); // Record the crash
         throw error;
     } finally {
         setLoading(false);

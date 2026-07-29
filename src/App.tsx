@@ -19,8 +19,9 @@ import { GlobalNavSidebar, type ViewState } from './components/GlobalNavSidebar'
 
 function App() {
   const { theme, setTheme, navSidebarCollapsed } = useSettingsStore()
+  const aiEnabled = useSettingsStore((state) => state.aiEnabled);
   const showReaderAIStatus = useAIStore((state) => (
-    !state.isSetupOpen && (state.isLoading || Boolean(state.activity) || Boolean(state.error))
+    aiEnabled && !state.isSetupOpen && (state.isLoading || Boolean(state.activity))
   ));
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
   const navigate = useNavigate();

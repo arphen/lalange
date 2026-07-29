@@ -57,6 +57,7 @@ describe('IngestionScheduler', () => {
         });
 
         (useAIStore.getState as any).mockReturnValue({
+            lifecycleState: 'ready',
             setActivity: vi.fn(),
             setCurrentTask: vi.fn(),
             updateTaskProgress: vi.fn(),
@@ -305,6 +306,35 @@ describe('IngestionScheduler', () => {
 
         // Should not crash, and should try to process next if any (none here)
         expect(analyzeDensityRange).toHaveBeenCalled();
+    });
+
+    it('should pause task processing while AI lifecycle is crashed', async () => {
+        (useAIStore.getState as any).mockReturnValue({
+            lifecycleState: 'crashed',
+            setActivity: vi.fn(),
+            setCurrentTask: vi.fn(),
+            updateTaskProgress: vi.fn(),
+            startSummaryTiming: vi.fn(),
+            completeSummaryTiming: vi.fn(),
+        });
+
+        scheduler.addTask({
+            id: 'task_crash_pause',
+            bookId: 'book1',
+            chapterId: 'chapter1',
+            subchapterIndex: 0,
+            startWordIndex: 0,
+            endWordIndex: 100,
+            type: 'DENSITY',
+            text: 'some text',
+        });
+
+        await new Promise(resolve => setTimeout(resolve, 10));
+
+        expect(analyzeDensityRange).not.toHaveBeenCalled();
+        expect((scheduler as any).tasks).toEqual(expect.arrayContaining([
+            expect.objectContaining({ id: 'task_crash_pause', status: 'pending' }),
+        ]));
     });
 
     it('should prioritize current chunk over passed chunks and future chunks', async () => {
