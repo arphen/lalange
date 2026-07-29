@@ -1,12 +1,13 @@
 import React, { useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { clsx } from 'clsx';
-import { ArrowLeft, Focus, Gauge, Headphones, List, Moon, Play, Sun, X } from 'lucide-react';
+import { ArrowLeft, Focus, Gauge, Headphones, List, Moon, Play, Share2, Sun, X } from 'lucide-react';
 import { type BookDocType, type ChapterDocType, type ReadingStateDocType, type GlobalSummaryType, initDB } from '../../core/sync/db';
 import { getDisplayPlugin, type DisplayPlugin, getVelocireaderORPIndex } from '../../core/rsvp/display';
 import { getVisualProcessingDelay, getSpeedFactor } from '../../core/rsvp/timing';
 import { getTokenDisplayProps, isReferenceToken, splitLongWordForRSVP } from '../../core/rsvp/tokenize';
 import { Sidebar } from './Sidebar';
 import { TTSPlayer } from './TTSPlayer';
+import { ExchangeSheet } from '../Exchange/ExchangeSheet';
 import {
     clampLensScale,
     getTouchDistance,
@@ -141,7 +142,9 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
 
     // TTS State
     const [showTTSPlayer, setShowTTSPlayer] = useState(false);
+    const [showExchange, setShowExchange] = useState(false);
     const ttsPlaybackState = useTTSStore((s) => s.playbackState);
+    const ttsPosition = useTTSStore((s) => s.currentPosition);
 
     const prevContainerRef = useRef<HTMLDivElement>(null);
     const nextContainerRef = useRef<HTMLDivElement>(null);
@@ -1875,6 +1878,19 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
 
                     <button
                         type="button"
+                        onClick={() => setShowExchange(true)}
+                        className="reader-toolbar-button reader-focus-fade"
+                        title="Continue on another device"
+                        aria-label="Continue on another device"
+                        aria-hidden={focusModeEnabled}
+                        tabIndex={focusModeEnabled ? -1 : undefined}
+                    >
+                        <Share2 className="reader-toolbar-icon" />
+                        <span className="reader-toolbar-label">Share</span>
+                    </button>
+
+                    <button
+                        type="button"
                         onClick={() => setTheme(isDayTheme ? 'volcanic' : 'day')}
                         className="reader-toolbar-button reader-focus-fade"
                         title={isDayTheme ? 'Switch to dark theme' : 'Switch to day theme'}
@@ -2274,6 +2290,24 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                     />
                 </div>
             )}
+
+            <ExchangeSheet
+                isOpen={showExchange}
+                onClose={() => setShowExchange(false)}
+                books={[book]}
+                initialBookIds={[book.id]}
+                initialIntent="handoff"
+                continuation={currentChapter ? {
+                    bookId: book.id,
+                    chapterId: currentChapter.id,
+                    wordIndex: currentWordIndex,
+                    mode: ttsPlaybackState === 'playing' || ttsPlaybackState === 'paused' || ttsPlaybackState === 'generating'
+                        ? 'listening'
+                        : 'reading',
+                    sentenceIndex: ttsPosition?.chapterId === currentChapter.id ? ttsPosition.sentenceIndex : undefined,
+                    audioTime: ttsPosition?.chapterId === currentChapter.id ? ttsPosition.audioTime : undefined,
+                } : undefined}
+            />
 
         </div>
     );

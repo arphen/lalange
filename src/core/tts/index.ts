@@ -32,12 +32,9 @@ export {
     
     // Constants
     TTS_MODEL_ID,
-    TTS_MODEL_OPTIONS,
     
     // Types
-    type TTSQuantization,
     type TTSDevice,
-    type TTSModelInfo,
     type TTSAudioResult,
     type SentenceBoundary,
     type VoiceInfo,

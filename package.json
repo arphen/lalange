@@ -27,6 +27,7 @@
     "kokoro-js": "^1.2.1",
     "lucide-react": "^0.562.0",
     "p-queue": "^9.0.1",
+    "qr-scanner": "^1.4.2",
     "qrcode.react": "^4.2.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",

@@ -14,6 +14,7 @@ const BUFFER_CLEANUP_BEHIND = 2;
 
 export interface AudioPlayerOptions {
     onSentenceChange?: (sentenceIndex: number) => void;
+    onWordChange?: (wordIndex: number) => void;
     onEnded?: () => void;
     onError?: (error: Error) => void;
     onAudioQueued?: (sentenceIndex: number, queueSize: number) => void;
@@ -233,6 +234,7 @@ class TTSAudioPlayer {
         useTTSStore.getState().setDuration(duration);
         useTTSStore.getState().setCurrentSentence(sentence.index);
         useTTSStore.getState().setCurrentWordIndex(sentence.startWordIndex);
+        this.options.onWordChange?.(sentence.startWordIndex);
         
         // Start word tracking
         this.startWordTracking();
@@ -296,6 +298,7 @@ class TTSAudioPlayer {
             const store = useTTSStore.getState();
             if (store.currentWordIndex !== currentWord) {
                 store.setCurrentWordIndex(currentWord);
+                this.options.onWordChange?.(currentWord);
             }
             
             // Keep running until sentence ends (onended will stop tracking)

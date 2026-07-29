@@ -6,7 +6,6 @@ import { ttsPlayer } from '../../core/tts/player';
 
 const mocks = vi.hoisted(() => ({
     voice: 'af_heart',
-    quantization: 'q8' as 'fp32' | 'fp16' | 'q8' | 'q4' | 'q4f16',
     backendPreference: 'auto' as 'auto' | 'wasm' | 'webgpu',
     bufferAhead: 5,
     setVoice: vi.fn(),
@@ -27,7 +26,6 @@ vi.mock('../../core/store/tts', () => ({
             volume: 1,
             speed: 1,
             voice: mocks.voice,
-            quantization: mocks.quantization,
             backendPreference: mocks.backendPreference,
             bufferAhead: mocks.bufferAhead,
             currentWordIndex: 0,
@@ -70,22 +68,20 @@ vi.mock('../../core/tts/player', () => ({
 describe('TTSPlayer voice changes', () => {
     beforeEach(() => {
         mocks.voice = 'af_heart';
-        mocks.quantization = 'q8';
         mocks.backendPreference = 'auto';
         mocks.bufferAhead = 5;
         mocks.sentences = [{ index: 0, text: 'Hello world.', startWordIndex: 0, endWordIndex: 1 }];
         vi.clearAllMocks();
     });
 
-    it('initializes TTS with the selected model quantization', async () => {
-        mocks.quantization = 'fp16';
+    it('initializes the fp32-only TTS runtime', async () => {
         vi.mocked(streamSpeech).mockReturnValue((async function* () {})());
 
         const { container } = render(<TTSPlayer words={['Hello', 'world.']} currentWordIndex={0} />);
         fireEvent.click(container.querySelector('button')!);
 
         await waitFor(() => {
-            expect(initTTS).toHaveBeenCalledWith('fp16', undefined, expect.any(Function));
+            expect(initTTS).toHaveBeenCalledWith(undefined, expect.any(Function));
         });
     });
 
@@ -97,7 +93,7 @@ describe('TTSPlayer voice changes', () => {
         fireEvent.click(container.querySelector('button')!);
 
         await waitFor(() => {
-            expect(initTTS).toHaveBeenCalledWith('q8', 'wasm', expect.any(Function));
+            expect(initTTS).toHaveBeenCalledWith('wasm', expect.any(Function));
         });
     });
 
@@ -131,6 +127,26 @@ describe('TTSPlayer voice changes', () => {
                 expect.any(Object),
             );
         });
+    });
+
+    it('forwards interpolated audio words directly to the reader', async () => {
+        const onPositionChange = vi.fn();
+        vi.mocked(streamSpeech).mockReturnValue((async function* () {})());
+
+        const { container } = render(
+            <TTSPlayer
+                words={['Hello', 'world.']}
+                currentWordIndex={0}
+                onPositionChange={onPositionChange}
+            />,
+        );
+        fireEvent.click(container.querySelector('button')!);
+
+        await waitFor(() => expect(ttsPlayer.play).toHaveBeenCalled());
+        const options = vi.mocked(ttsPlayer.setOptions).mock.calls.at(-1)?.[0];
+        act(() => options?.onWordChange?.(1));
+
+        expect(onPositionChange).toHaveBeenCalledWith(1);
     });
 
     it('repairs a legacy foreign voice and clears its queued audio', async () => {

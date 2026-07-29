@@ -10,6 +10,7 @@ import { Manual } from './components/Manual'
 import { AISetupWizard } from './components/ModelDownloadModal'
 import { AIStatusPanel } from './components/AIStatusPanel'
 import { SyncPage } from './components/Sync/SyncPage'
+import { ExchangePage } from './components/Exchange/ExchangePage'
 import { UpdatePrompt } from './components/UpdatePrompt'
 import { LocalAccessQr } from './components/LocalAccessQr'
 import { useSettingsStore } from './core/store/settings'
@@ -32,8 +33,10 @@ function App() {
     setTheme(isDayTheme ? 'volcanic' : 'day');
   };
 
-  // /sync page is completely standalone - no sidebar, no AI modal, no onboarding
+  // Incoming device routes are completely standalone: receiving a book must not
+  // require AI setup or any other first-run flow.
   const isSyncPage = location.pathname === '/sync';
+  const isExchangePage = location.pathname === '/exchange';
 
   // Determine current view for sidebar highlighting
   let view: ViewState = 'archive';
@@ -59,6 +62,9 @@ function App() {
   // Sync page bypasses onboarding and all app chrome
   if (isSyncPage) {
     return <SyncPage />;
+  }
+  if (isExchangePage) {
+    return <ExchangePage />;
   }
 
   return (
@@ -124,6 +130,7 @@ function App() {
         <Routes>
           <Route path="/" element={<Archive onOpenBook={(book) => navigate(`/reader/${book.id}`)} />} />
           <Route path="/sync" element={<SyncPage />} />
+          <Route path="/exchange" element={<ExchangePage />} />
           <Route path="/reader/:bookId" element={<ReaderPage />} />
           <Route path="/library" element={
             <div className="w-full h-full max-w-4xl pt-16 px-4 pb-4 md:p-4 flex flex-col">

@@ -39,7 +39,6 @@ interface TTSState {
     
     // Settings (persisted)
     voice: string;
-    quantization: 'fp32' | 'fp16' | 'q8' | 'q4' | 'q4f16';
     backendPreference: TTSBackendPreference;
     bufferAhead: number;
     autoPlay: boolean;
@@ -65,7 +64,6 @@ interface TTSState {
     
     // Actions - Settings
     setVoice: (voice: string) => void;
-    setQuantization: (quantization: 'fp32' | 'fp16' | 'q8' | 'q4' | 'q4f16') => void;
     setBackendPreference: (backendPreference: TTSBackendPreference) => void;
     setBufferAhead: (bufferAhead: number) => void;
     setAutoPlay: (autoPlay: boolean) => void;
@@ -97,7 +95,6 @@ export const useTTSStore = create<TTSState>()(
             
             // Settings - Initial (persisted)
             voice: 'af_heart',
-            quantization: 'q8',
             backendPreference: 'auto',
             bufferAhead: 5,
             autoPlay: false,
@@ -123,7 +120,6 @@ export const useTTSStore = create<TTSState>()(
             
             // Actions - Settings
             setVoice: (voice) => set({ voice }),
-            setQuantization: (quantization) => set({ quantization }),
             setBackendPreference: (backendPreference) => set({ backendPreference }),
             setBufferAhead: (bufferAhead) => set({ bufferAhead: Math.max(3, Math.min(12, Math.round(bufferAhead))) }),
             setAutoPlay: (autoPlay) => set({ autoPlay }),
@@ -143,13 +139,17 @@ export const useTTSStore = create<TTSState>()(
             // Only persist settings, not runtime state
             partialize: (state) => ({
                 voice: state.voice,
-                quantization: state.quantization,
                 backendPreference: state.backendPreference,
                 bufferAhead: state.bufferAhead,
                 autoPlay: state.autoPlay,
                 volume: state.volume,
                 speed: state.speed,
             }),
+            merge: (persistedState, currentState) => {
+                const settings = { ...(persistedState as Record<string, unknown>) };
+                delete settings.quantization;
+                return { ...currentState, ...settings } as TTSState;
+            },
         }
     )
 );

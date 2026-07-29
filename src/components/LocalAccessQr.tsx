@@ -145,9 +145,9 @@ export const LocalAccessQr: React.FC = () => {
             <button
                 onClick={() => setIsOpen(true)}
                 className="fixed bottom-4 left-4 z-[75] px-3 py-2 bg-black/55 backdrop-blur-md rounded-full border border-white/10 text-white/80 hover:text-white hover:bg-white/10 transition-colors shadow-lg font-mono text-[10px] uppercase tracking-wider"
-                title="Open phone access QR"
+                title="Open this route on another local device"
             >
-                Phone QR
+                Local Link
             </button>
 
             {isOpen && (
@@ -156,10 +156,10 @@ export const LocalAccessQr: React.FC = () => {
                         <div className="p-6 border-b border-white/10 bg-black/20 flex items-start justify-between gap-4">
                             <div>
                                 <h2 className="text-lg font-mono font-bold text-dune-gold tracking-widest uppercase">
-                                    Open On Phone
+                                    Open Local Route
                                 </h2>
                                 <p className="text-xs text-gray-400 mt-2 font-mono">
-                                    Scan to open this exact route over local Wi-Fi.
+                                    Scan to open this exact route over local Wi-Fi. No books are transferred.
                                 </p>
                             </div>
 

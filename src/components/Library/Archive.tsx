@@ -4,7 +4,7 @@ import { initialIngest, processChaptersInBackground, stopProcessing, estimateBoo
 import { useAIStore } from '../../core/store/ai';
 import { useSettingsStore } from '../../core/store/settings';
 import { BookCard } from './BookCard';
-import { SyncModal } from '../Sync/SyncModal';
+import { ExchangeSheet } from '../Exchange/ExchangeSheet';
 import { SeoHead } from '../SeoHead';
 
 interface ArchiveProps {
@@ -42,7 +42,8 @@ export const Archive: React.FC<ArchiveProps> = ({ onOpenBook }) => {
     const [books, setBooks] = useState<BookDocType[]>([]);
     const [loading, setLoading] = useState(false);
     const [status, setStatus] = useState('');
-    const [syncBook, setSyncBook] = useState<BookDocType | null>(null);
+    const [exchangeOpen, setExchangeOpen] = useState(false);
+    const [exchangeBookIds, setExchangeBookIds] = useState<string[]>([]);
     
     // Only subscribe to the specific AI state properties we need
     const aiIsLoading = useAIStore((s) => s.isLoading);
@@ -142,9 +143,10 @@ export const Archive: React.FC<ArchiveProps> = ({ onOpenBook }) => {
         }
     };
 
-    const handleSync = (e: React.MouseEvent, book: BookDocType) => {
+    const handleShare = (e: React.MouseEvent, book: BookDocType) => {
         e.stopPropagation();
-        setSyncBook(book);
+        setExchangeBookIds([book.id]);
+        setExchangeOpen(true);
     };
 
     const handleEstimateDensity = async (e: React.MouseEvent, bookId: string) => {
@@ -248,6 +250,17 @@ export const Archive: React.FC<ArchiveProps> = ({ onOpenBook }) => {
 
                             <div className="reader-toolbar-controls archive-action-rail flex items-center">
                                 <button
+                                    type="button"
+                                    onClick={() => {
+                                        setExchangeBookIds(books.map((book) => book.id));
+                                        setExchangeOpen(true);
+                                    }}
+                                    disabled={books.length === 0}
+                                    className="archive-action-btn"
+                                >
+                                    EXCHANGE
+                                </button>
+                                <button
                                     onClick={handleLoadDemo}
                                     disabled={loading}
                                     data-testid="archive-load-demo"
@@ -296,7 +309,7 @@ export const Archive: React.FC<ArchiveProps> = ({ onOpenBook }) => {
                                     onDelete={(e) => handleDelete(e, book.id)}
                                     onStop={(e) => handleStopProcessing(e, book.id)}
                                     onEstimateDensity={(e) => handleEstimateDensity(e, book.id)}
-                                    onSync={(e) => handleSync(e, book)}
+                                    onShare={(e) => handleShare(e, book)}
                                 />
                             ))}
                         </div>
@@ -304,10 +317,14 @@ export const Archive: React.FC<ArchiveProps> = ({ onOpenBook }) => {
                 </div>
             </div>
 
-            <SyncModal
-                isOpen={!!syncBook}
-                onClose={() => setSyncBook(null)}
-                book={syncBook}
+            <ExchangeSheet
+                key={`archive-exchange-${exchangeBookIds.join('-')}`}
+                isOpen={exchangeOpen}
+                onClose={() => setExchangeOpen(false)}
+                books={books}
+                initialBookIds={exchangeBookIds}
+                initialIntent="give"
+                libraryComplete
             />
         </div>
     );
