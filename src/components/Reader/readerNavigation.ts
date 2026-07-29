@@ -22,6 +22,16 @@ export const findNextReadableChapter = (
     return chapters.slice(currentIndex + 1).find(isReadableChapter) ?? null;
 };
 
+export const findPreviousReadableChapter = (
+    chapters: ChapterDocType[],
+    currentChapterId: string,
+): ChapterDocType | null => {
+    const currentIndex = chapters.findIndex((chapter) => chapter.id === currentChapterId);
+    if (currentIndex <= 0) return null;
+
+    return chapters.slice(0, currentIndex).reverse().find(isReadableChapter) ?? null;
+};
+
 export const getGlobalWordIndex = (
     chapters: ChapterDocType[],
     currentChapterId: string,

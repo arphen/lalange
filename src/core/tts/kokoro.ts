@@ -85,6 +85,10 @@ export const VOICES: VoiceInfo[] = [
 
 export const DEFAULT_VOICE = 'af_heart';
 
+export function resolveVoiceId(voiceId: string | undefined): string {
+    return VOICES.some((voice) => voice.id === voiceId) ? voiceId as string : DEFAULT_VOICE;
+}
+
 /**
  * Check if WebGPU is available for acceleration
  */
@@ -273,7 +277,8 @@ export async function generateSpeech(
         throw new Error('TTS not initialized');
     }
     
-    const { voice = DEFAULT_VOICE, speed = 1.0 } = options;
+    const { voice: requestedVoice, speed = 1.0 } = options;
+    const voice = resolveVoiceId(requestedVoice);
     
     // Get store using lazy getter
     const useTTSStore = await getTTSStore();
@@ -474,7 +479,8 @@ export async function* streamSpeech(
         throw new Error('TTS not initialized');
     }
     
-    const { voice = DEFAULT_VOICE, speed = 1.0, onSentenceStart, onSentenceComplete } = options;
+    const { voice: requestedVoice, speed = 1.0, onSentenceStart, onSentenceComplete } = options;
+    const voice = resolveVoiceId(requestedVoice);
     const useTTSStore = await getTTSStore();
     const store = useTTSStore.getState();
     

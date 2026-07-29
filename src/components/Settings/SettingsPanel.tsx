@@ -279,6 +279,18 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                                 <p className="text-gray-500 text-sm">Control how the reader adapts to text density.</p>
                             </div>
 
+                            <Toggle
+                                label="Adaptive AI Pacing"
+                                description={aiState.isLoading
+                                    ? 'Local model setup is running in the background. Reading remains available.'
+                                    : 'Uses local logprobs to speed up predictable words and slow down surprising or dense passages. Setup is optional and stays on this device.'}
+                                checked={settings.aiEnabled}
+                                onChange={(enabled) => {
+                                    if (!enabled) settings.setAiEnabled(false);
+                                    else if (!aiState.isLoading) aiState.requestSetup('pacing');
+                                }}
+                            />
+
                             {/* Pacing Engine Explanation */}
                             <div className="bg-white/5 rounded-lg border border-white/10 p-6 space-y-4">
                                 <h4 className="text-dune-gold font-bold uppercase tracking-widest text-xs">The Problem with Speed Reading</h4>
@@ -439,6 +451,20 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                     {/* Summarizer Tab */}
                     {activeTab === 'summarizer' && (
                         <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-300">
+                            <Toggle
+                                label="Automatic Summaries"
+                                description="Generate periodic book summaries in the background. Adaptive pacing works without this."
+                                checked={settings.summariesEnabled}
+                                onChange={(enabled) => {
+                                    if (!enabled) {
+                                        settings.setSummariesEnabled(false);
+                                    } else if (settings.aiEnabled) {
+                                        settings.setSummariesEnabled(true);
+                                    } else if (!aiState.isLoading) {
+                                        aiState.requestSetup('summaries');
+                                    }
+                                }}
+                            />
                              <AgentConfig
                                 title="The Summarizer"
                                 description="Your automated reading journal."
@@ -521,6 +547,10 @@ const Toggle = ({ label, description, checked, onChange }: { label: string, desc
             <div className="text-xs text-gray-500 mt-1">{description}</div>
         </div>
         <button
+            type="button"
+            role="switch"
+            aria-checked={checked}
+            aria-label={label}
             onClick={() => onChange(!checked)}
             className={clsx(
                 "w-12 h-6 rounded-full relative transition-colors flex-shrink-0 ml-4",

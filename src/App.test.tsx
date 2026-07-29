@@ -28,7 +28,6 @@ vi.mock('./core/store/settings', () => ({
     useSettingsStore: () => ({ 
         theme: mockTheme,
         editorModel: 'tiny',
-        hasCompletedOnboarding: true,
         setTheme: mockSetTheme,
         setEditorModel: vi.fn(),
         setLibrarianModelTier: vi.fn(),
@@ -37,9 +36,12 @@ vi.mock('./core/store/settings', () => ({
 }));
 
 vi.mock('./core/store/ai', () => ({
-    useAIStore: () => ({ 
+        useAIStore: (selector?: (state: Record<string, unknown>) => unknown) => {
+            const state = {
         activity: null,
         isLoading: false,
+                isSetupOpen: false,
+                setupIntent: 'pacing',
         progress: '',
         progressValue: 0,
         lifecycleState: 'idle',
@@ -63,8 +65,12 @@ vi.mock('./core/store/ai', () => ({
             currentStartTime: null,
             averageDuration: null
         },
-        getSummaryProgress: () => null
-    })
+                getSummaryProgress: () => null,
+                closeSetup: vi.fn(),
+                requestSetup: vi.fn()
+            };
+            return selector ? selector(state) : state;
+        }
 }));
 
 // Mock WebLLM

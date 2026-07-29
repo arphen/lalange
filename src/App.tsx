@@ -7,17 +7,21 @@ import { SettingsPanel } from './components/Settings/SettingsPanel'
 import { Manifesto } from './components/Manifesto'
 import { Research } from './components/Research'
 import { Manual } from './components/Manual'
-import { ModelDownloadModal } from './components/ModelDownloadModal'
-import { Onboarding } from './components/Onboarding/Onboarding'
+import { AISetupWizard } from './components/ModelDownloadModal'
+import { AIStatusPanel } from './components/AIStatusPanel'
 import { SyncPage } from './components/Sync/SyncPage'
 import { UpdatePrompt } from './components/UpdatePrompt'
 import { LocalAccessQr } from './components/LocalAccessQr'
 import { useSettingsStore } from './core/store/settings'
+import { useAIStore } from './core/store/ai'
 import { clsx } from 'clsx'
 import { GlobalNavSidebar, type ViewState } from './components/GlobalNavSidebar'
 
 function App() {
-  const { theme, setTheme, hasCompletedOnboarding, navSidebarCollapsed } = useSettingsStore()
+  const { theme, setTheme, navSidebarCollapsed } = useSettingsStore()
+  const showReaderAIStatus = useAIStore((state) => (
+    !state.isSetupOpen && (state.isLoading || Boolean(state.activity) || Boolean(state.error))
+  ));
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
@@ -54,10 +58,6 @@ function App() {
   // Sync page bypasses onboarding and all app chrome
   if (isSyncPage) {
     return <SyncPage />;
-  }
-
-  if (!hasCompletedOnboarding) {
-        return <Onboarding />;
   }
 
   return (
@@ -111,11 +111,14 @@ function App() {
         </>
       )}
 
-      <div className="flex-1 min-w-0 min-h-0 overflow-auto flex justify-center relative">
+      <div className={clsx(
+        "flex-1 min-w-0 min-h-0 flex justify-center relative",
+        view === 'reader' ? "overflow-hidden" : "overflow-auto",
+      )}>
         {/* Mica Dust Layer */}
         <div className="mica-dust-layer" />
 
-        <ModelDownloadModal />
+        <AISetupWizard />
 
         <Routes>
           <Route path="/" element={<Archive onOpenBook={(book) => navigate(`/reader/${book.id}`)} />} />
@@ -142,6 +145,12 @@ function App() {
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </div>
+
+      {view === 'reader' && showReaderAIStatus && (
+        <div className="fixed left-3 bottom-24 z-[80] w-[min(22rem,calc(100vw-1.5rem))] md:left-6 md:bottom-6">
+          <AIStatusPanel variant="global" />
+        </div>
+      )}
 
       {view !== 'reader' && (
         <div className="fixed top-4 right-4 z-[70]">

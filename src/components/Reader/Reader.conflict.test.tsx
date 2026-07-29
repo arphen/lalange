@@ -146,8 +146,10 @@ describe('Reader Component - Conflict Handling', () => {
 
         // Click Next Chapter while playing
         // Open Sidebar
-        const chaptersBtn = screen.getByTitle('Chapters');
-        fireEvent.click(chaptersBtn);
+        const chaptersBtn = screen.getByTestId('toggle-chapters');
+        if (chaptersBtn.getAttribute('aria-expanded') === 'false') {
+            fireEvent.click(chaptersBtn);
+        }
 
         // Click Chapter 2 in sidebar
         const chapter2Btn = screen.getByText('Chapter 2').closest('button');

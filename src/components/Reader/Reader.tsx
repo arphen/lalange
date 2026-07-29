@@ -1,5 +1,6 @@
 import React, { useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo } from 'react';
-import { Moon, Sun } from 'lucide-react';
+import { clsx } from 'clsx';
+import { ArrowLeft, Focus, Gauge, Headphones, List, Moon, Play, Sun, X } from 'lucide-react';
 import { type BookDocType, type ChapterDocType, type ReadingStateDocType, type GlobalSummaryType, initDB } from '../../core/sync/db';
 import { getDisplayPlugin, type DisplayPlugin, getVelocireaderORPIndex } from '../../core/rsvp/display';
 import { getVisualProcessingDelay, getSpeedFactor } from '../../core/rsvp/timing';
@@ -14,9 +15,9 @@ import {
     mergeTransformWithScale,
 } from './lensGestures';
 import { useSettingsStore } from '../../core/store/settings';
+import { useAIStore } from '../../core/store/ai';
 import { useTTSStore } from '../../core/store/tts';
-import { useFullscreen } from '../../hooks/useFullscreen';
-import { findNextReadableChapter, getGlobalWordIndex, isReadableChapter } from './readerNavigation';
+import { findNextReadableChapter, findPreviousReadableChapter, getGlobalWordIndex, isReadableChapter } from './readerNavigation';
 
 import { scheduler } from '../../core/ingest/scheduler';
 import { processChaptersInBackground, resumeIncompleteAnalysis } from '../../core/ingest/pipeline';
@@ -28,13 +29,13 @@ interface ReaderProps {
 
 const getDensityColor = (score: number) => {
     if (score === 0) return 'text-gray-700 opacity-50'; // Pending
-    if (score <= 0.6) return 'text-blue-400'; // Fast
-    if (score <= 0.8) return 'text-blue-300'; // Brisk
+    if (score <= 0.6) return 'text-sky-500'; // Fast
+    if (score <= 0.8) return 'text-sky-300'; // Brisk
     if (score <= 1.0) return 'text-gray-400'; // Normal
-    if (score <= 1.2) return 'text-yellow-200'; // Deliberate
-    if (score <= 1.5) return 'text-yellow-500'; // Slow
-    if (score <= 2.0) return 'text-orange-500'; // Very Slow
-    return 'text-white font-bold'; // Profound
+    if (score <= 1.2) return 'text-cyan-300'; // Deliberate
+    if (score <= 1.5) return 'text-emerald-300'; // Slow
+    if (score <= 2.0) return 'text-teal-300'; // Very Slow
+    return 'text-blue-100 font-bold'; // Profound
 };
 
 const COMPACT_LANDSCAPE_MEDIA_QUERY = '(orientation: landscape) and (max-height: 640px)';
@@ -45,11 +46,17 @@ const TOUCH_WORD_STEP_PX = 28;
 const RIVER_SCROLL_CLICK_SUPPRESSION_MS = 180;
 const CHAPTER_DRAWER_SWIPE_CLOSE_DISTANCE_PX = 72;
 const CHAPTER_DRAWER_SWIPE_MAX_VERTICAL_PX = 56;
+const CHAPTER_BRAKE_DURATION_MS = 720;
+const CHAPTER_PAUSED_CROSSING_DELAY_MS = 720;
+const CHAPTER_LAUNCH_DURATION_MS = 1100;
+const CHAPTER_BRAKE_SPEED = 0.06;
+const CHAPTER_LAUNCH_SPEED = 0.34;
+
+type ChapterTransitionPhase = 'braking' | 'crossing' | 'launching';
 
 export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
     const [isPlaying, setIsPlaying] = useState(false);
-    const [fullscreenTarget, setFullscreenTarget] = useState<HTMLDivElement | null>(null);
-    const [fullscreenHint, setFullscreenHint] = useState<string | null>(null);
+    const [playbackSession, setPlaybackSession] = useState(0);
     const [isCompactLandscape, setIsCompactLandscape] = useState(() => {
         if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
         return window.matchMedia(COMPACT_LANDSCAPE_MEDIA_QUERY).matches;
@@ -71,22 +78,22 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
     const setRiverTopEnabled = useSettingsStore((s) => s.setRiverTopEnabled);
     const setRiverBottomEnabled = useSettingsStore((s) => s.setRiverBottomEnabled);
     
-    // Focus mode - hides rivers and sidebars for distraction-free reading
+    // Focus mode - visually isolates the RSVP lane without changing reader settings
     const focusModeEnabled = useSettingsStore((s) => s.focusModeEnabled);
     const setFocusModeEnabled = useSettingsStore((s) => s.setFocusModeEnabled);
-    const setNavSidebarCollapsed = useSettingsStore((s) => s.setNavSidebarCollapsed);
     
-    // Ref to store previous state before entering focus mode
+    // Ref to restore an open contents drawer after leaving focus mode
     const preFocusStateRef = useRef<{
+        showChapters: boolean;
         riverTop: boolean;
         riverBottom: boolean;
-        showChapters: boolean;
-        showTTSPlayer: boolean;
     } | null>(null);
     
     // AI toggle - disable AI features to save battery
     const aiEnabled = useSettingsStore((s) => s.aiEnabled);
     const setAiEnabled = useSettingsStore((s) => s.setAiEnabled);
+    const aiIsReady = useAIStore((s) => s.isReady);
+    const aiIsLoading = useAIStore((s) => s.isLoading);
     
     // Get the active display plugin
     const displayPlugin = useMemo(() => getDisplayPlugin(displayPluginId), [displayPluginId]);
@@ -128,11 +135,10 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
     const [showTTSPlayer, setShowTTSPlayer] = useState(false);
     const ttsPlaybackState = useTTSStore((s) => s.playbackState);
 
-    const { isFullscreen, isFullscreenSupported, toggleFullscreen } = useFullscreen(fullscreenTarget);
-
     const prevContainerRef = useRef<HTMLDivElement>(null);
     const nextContainerRef = useRef<HTMLDivElement>(null);
     const rsvpRef = useRef<HTMLDivElement>(null);
+    const contextHistoryStartRef = useRef(0);
     
     // Track if initial render has been done (to trigger full render once all refs are mounted)
     const initialRenderDoneRef = useRef(false);
@@ -184,13 +190,61 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
     const [activeGlobalSummaryId, setActiveGlobalSummaryId] = useState<string | null>(null);
     const [countdown, setCountdown] = useState<number | null>(null);
     const [transitionLabel, setTransitionLabel] = useState<string | null>(null); // To show "Chunk Summary:" or "Resuming Text:"
+    const [transitionKind, setTransitionKind] = useState<'chapter' | 'summary' | null>(null);
+    const [chapterTransitionPhase, setChapterTransitionPhase] = useState<ChapterTransitionPhase | null>(null);
+    const [chapterPulseActive, setChapterPulseActive] = useState(false);
+    const [progressReminder, setProgressReminder] = useState<number | null>(null);
     const countdownIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const momentumAnimationFrameRef = useRef<number | null>(null);
+    const momentumCompletionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const chapterTransitionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const chapterTransitionActiveRef = useRef(false);
+    const pauseAfterChapterTransitionRef = useRef(false);
+    const playbackMomentumRef = useRef(1);
+    const chapterPulseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const progressReminderTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const lastProgressMilestoneRef = useRef<number | null>(null);
 
     const isSummaryActiveRef = useRef(false);
     const savedChapterIndexRef = useRef(0);
     const summaryWordsRef = useRef<string[]>([]);
     // Track the last boundary we triggered to prevent re-triggering on restore
     const lastTriggeredBoundaryRef = useRef<number>(-1);
+
+    const updateProgressMilestone = useCallback((chapterId: string, wordIndex: number, announce: boolean) => {
+        const readableChapters = chaptersRef.current.filter(isReadableChapter);
+        const totalWords = readableChapters.reduce((total, chapter) => total + chapter.content.length, 0);
+        if (totalWords === 0) return;
+
+        const globalIndex = getGlobalWordIndex(readableChapters, chapterId, wordIndex);
+        const milestone = Math.floor((globalIndex / totalWords) * 10) * 10;
+        const previousMilestone = lastProgressMilestoneRef.current;
+
+        if (!announce || previousMilestone === null) {
+            lastProgressMilestoneRef.current = Math.max(previousMilestone ?? 0, milestone);
+            return;
+        }
+
+        if (milestone < 10 || milestone <= previousMilestone) return;
+
+        lastProgressMilestoneRef.current = milestone;
+        setCurrentWordIndex(wordIndex);
+        setProgressReminder(milestone);
+        if (progressReminderTimerRef.current) clearTimeout(progressReminderTimerRef.current);
+        progressReminderTimerRef.current = setTimeout(() => {
+            setProgressReminder(null);
+            progressReminderTimerRef.current = null;
+        }, 3500);
+    }, []);
+
+    useEffect(() => {
+        lastProgressMilestoneRef.current = null;
+        setProgressReminder(null);
+        if (progressReminderTimerRef.current) {
+            clearTimeout(progressReminderTimerRef.current);
+            progressReminderTimerRef.current = null;
+        }
+    }, [book.id]);
 
     useEffect(() => {
         isCompactLandscapeRef.current = isCompactLandscape;
@@ -312,7 +366,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
         // Render Previous Context (Last ~150 words for better vertical fill)
         // Performance: Skip when renderContext=false (during rapid playback) or riverTopEnabled=false
         if (renderContext && riverTopEnabled && prevContainerRef.current) {
-            const start = Math.max(0, idx - 150);
+            const start = Math.max(contextHistoryStartRef.current, idx - 150);
             const end = idx;
             const prevWords = words.slice(start, end);
             const html = prevWords.map((w, i) => {
@@ -323,10 +377,10 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                 let innerHtml = '';
                 for (let j = 0; j < w.length; j++) {
                     const d = Math.abs(j - orp);
-                    let c = 'font-light opacity-60 group-hover:opacity-100';
+                    let c = 'font-light opacity-60';
                     if (d === 0) c = 'font-extrabold opacity-100';
                     // Neighbors: Medium weight (less than bold), slightly reduced opacity
-                    else if (d === 1) c = 'font-medium opacity-80 group-hover:opacity-100';
+                    else if (d === 1) c = 'font-medium opacity-80';
                     innerHtml += `<span class="${c}">${w[j]}</span>`;
                 }
                 
@@ -339,7 +393,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
 
                 return `
                     <span 
-                        class="word-span group inline-block mr-1.5 mb-1 transition-all duration-300 cursor-pointer ${colorClass} hover:text-white"
+                        class="word-span inline-block mr-1.5 mb-1 cursor-pointer ${colorClass}"
                         data-index="${actualIndex}"
                     >
                         ${innerHtml}
@@ -366,10 +420,10 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                 let innerHtml = '';
                 for (let j = 0; j < w.length; j++) {
                     const d = Math.abs(j - orp);
-                    let c = 'font-light opacity-60 group-hover:opacity-100';
+                    let c = 'font-light opacity-60';
                     if (d === 0) c = 'font-extrabold opacity-100';
                     // Neighbors: Medium weight (less than bold), slightly reduced opacity
-                    else if (d === 1) c = 'font-medium opacity-80 group-hover:opacity-100';
+                    else if (d === 1) c = 'font-medium opacity-80';
                     innerHtml += `<span class="${c}">${w[j]}</span>`;
                 }
                 
@@ -381,7 +435,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
 
                 return `
                     <span 
-                        class="word-span group inline-block mr-1.5 mb-1 transition-all duration-300 cursor-pointer ${colorClass} hover:text-white"
+                        class="word-span inline-block mr-1.5 mb-1 cursor-pointer ${colorClass}"
                         data-index="${actualIndex}"
                     >
                         ${innerHtml}
@@ -412,33 +466,162 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
         }
     }, [riverBottomEnabled]);
 
-    useEffect(() => {
-        if (!fullscreenHint) return;
-        const timeout = setTimeout(() => setFullscreenHint(null), 3200);
-        return () => clearTimeout(timeout);
-    }, [fullscreenHint]);
+    const handleToggleFocusMode = useCallback(() => {
+        const newFocusMode = !focusModeEnabled;
 
-    const handleToggleFullscreen = useCallback(async () => {
-        const didToggle = await toggleFullscreen();
-        if (didToggle) {
-            setFullscreenHint(null);
+        if (newFocusMode) {
+            preFocusStateRef.current = {
+                showChapters,
+                riverTop: riverTopEnabled,
+                riverBottom: riverBottomEnabled,
+            };
+            setShowChapters(false);
+        } else {
+            const previousState = preFocusStateRef.current;
+            if (previousState) {
+                setShowChapters(previousState.showChapters);
+            }
+            setRiverTopEnabled(previousState?.riverTop ?? true);
+            setRiverBottomEnabled(previousState?.riverBottom ?? true);
+            preFocusStateRef.current = null;
+        }
+
+        setFocusModeEnabled(newFocusMode);
+    }, [focusModeEnabled, riverBottomEnabled, riverTopEnabled, setFocusModeEnabled, setRiverBottomEnabled, setRiverTopEnabled, showChapters]);
+
+    useEffect(() => {
+        if (!focusModeEnabled) return;
+        setShowChapters(false);
+    }, [focusModeEnabled]);
+
+    const animatePlaybackMomentum = useCallback((
+        from: number,
+        to: number,
+        durationMs: number,
+        onComplete: () => void,
+    ) => {
+        if (momentumAnimationFrameRef.current) cancelAnimationFrame(momentumAnimationFrameRef.current);
+        if (momentumCompletionTimerRef.current) clearTimeout(momentumCompletionTimerRef.current);
+
+        let startedAt: number | null = null;
+        let isComplete = false;
+        playbackMomentumRef.current = from;
+
+        const finish = () => {
+            if (isComplete) return;
+            isComplete = true;
+            if (momentumAnimationFrameRef.current) cancelAnimationFrame(momentumAnimationFrameRef.current);
+            if (momentumCompletionTimerRef.current) clearTimeout(momentumCompletionTimerRef.current);
+            momentumAnimationFrameRef.current = null;
+            momentumCompletionTimerRef.current = null;
+            playbackMomentumRef.current = to;
+            onComplete();
+        };
+
+        const updateMomentum = (timestamp: number) => {
+            if (startedAt === null) startedAt = timestamp;
+            const elapsedMs = timestamp - startedAt;
+            const progress = Math.min(1, elapsedMs / durationMs);
+            const easedProgress = 1 - Math.pow(1 - progress, 3);
+            playbackMomentumRef.current = from + ((to - from) * easedProgress);
+
+            if (progress >= 1) finish();
+            else momentumAnimationFrameRef.current = requestAnimationFrame(updateMomentum);
+        };
+
+        momentumAnimationFrameRef.current = requestAnimationFrame(updateMomentum);
+        momentumCompletionTimerRef.current = setTimeout(finish, durationMs);
+    }, []);
+
+    const startTransition = useCallback((
+        label: string,
+        onComplete: () => void | Promise<void>,
+        options: {
+            kind?: 'chapter' | 'summary';
+            closeContents?: boolean;
+            resumeAfterComplete?: boolean;
+        } = {},
+    ) => {
+        const {
+            kind = 'summary',
+            closeContents = false,
+            resumeAfterComplete = true,
+        } = options;
+
+        if (kind === 'chapter') {
+            if (chapterTransitionActiveRef.current) return;
+
+            chapterTransitionActiveRef.current = true;
+            pauseAfterChapterTransitionRef.current = false;
+            const wasPlaying = isPlayingRef.current;
+
+            if (closeContents) setShowChapters(false);
+            setTransitionLabel(label);
+            setTransitionKind(kind);
+            setChapterTransitionPhase(wasPlaying ? 'braking' : 'crossing');
+
+            const crossIntoChapter = () => {
+                setIsPlaying(false);
+                isPlayingRef.current = false;
+                playbackMomentumRef.current = 0;
+                setChapterTransitionPhase('crossing');
+
+                Promise.resolve(onComplete())
+                    .then(() => {
+                        playbackMomentumRef.current = CHAPTER_LAUNCH_SPEED;
+                        accumulatorRef.current = 0;
+                        lastTimeRef.current = undefined;
+                        setChapterTransitionPhase('launching');
+                        setChapterPulseActive(true);
+                        if (chapterPulseTimerRef.current) clearTimeout(chapterPulseTimerRef.current);
+                        chapterPulseTimerRef.current = setTimeout(() => {
+                            setChapterPulseActive(false);
+                            chapterPulseTimerRef.current = null;
+                        }, 1400);
+                        const shouldPlay = !pauseAfterChapterTransitionRef.current;
+                        isPlayingRef.current = shouldPlay;
+                        setIsPlaying(shouldPlay);
+                        if (shouldPlay) setPlaybackSession((session) => session + 1);
+
+                        animatePlaybackMomentum(
+                            CHAPTER_LAUNCH_SPEED,
+                            1,
+                            CHAPTER_LAUNCH_DURATION_MS,
+                            () => {
+                                chapterTransitionActiveRef.current = false;
+                                setChapterTransitionPhase(null);
+                                setTransitionLabel(null);
+                                setTransitionKind(null);
+                            },
+                        );
+                    })
+                    .catch((error) => {
+                        console.error('Reader transition failed', error);
+                        playbackMomentumRef.current = 1;
+                        chapterTransitionActiveRef.current = false;
+                        setChapterTransitionPhase(null);
+                        setTransitionLabel(null);
+                        setTransitionKind(null);
+                    });
+            };
+
+            if (wasPlaying) {
+                animatePlaybackMomentum(1, CHAPTER_BRAKE_SPEED, CHAPTER_BRAKE_DURATION_MS, crossIntoChapter);
+            } else {
+                chapterTransitionTimerRef.current = setTimeout(() => {
+                    chapterTransitionTimerRef.current = null;
+                    crossIntoChapter();
+                }, CHAPTER_PAUSED_CROSSING_DELAY_MS);
+            }
             return;
         }
 
-        if (isFullscreenSupported) {
-            setFullscreenHint('Fullscreen was blocked. Tap again after interacting with the page.');
-        } else {
-            setFullscreenHint('For true edge-to-edge on this browser, install the app to your home screen.');
-        }
-    }, [isFullscreenSupported, toggleFullscreen]);
-
-    const startTransition = useCallback((label: string, onComplete: () => void) => {
         // Stop playback immediately
         setIsPlaying(false);
         isPlayingRef.current = false;
-        
-        // Open sidebar to show context
-        setShowChapters(true);
+
+        if (closeContents) setShowChapters(false);
+        else if (kind === 'summary') setShowChapters(true);
 
         // Clear RSVP display
         if (rsvpRef.current) {
@@ -448,6 +631,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
         let count = 3;
         setCountdown(count);
         setTransitionLabel(label);
+        setTransitionKind(kind);
         
         if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
         
@@ -457,20 +641,30 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                 setCountdown(count);
             } else {
                 if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
-                setCountdown(null);
-                setTransitionLabel(null);
-                onComplete();
-                // Resume playback
-                setIsPlaying(true); 
+                countdownIntervalRef.current = null;
+                Promise.resolve(onComplete())
+                    .then(() => {
+                        setCountdown(null);
+                        setTransitionLabel(null);
+                        setTransitionKind(null);
+                        if (resumeAfterComplete) setIsPlaying(true);
+                    })
+                    .catch((error) => {
+                        console.error('Reader transition failed', error);
+                        setCountdown(null);
+                        setTransitionLabel(null);
+                        setTransitionKind(null);
+                    });
             }
         }, 1000);
-    }, [setIsPlaying, setCountdown, setTransitionLabel, setShowChapters]);
+    }, [animatePlaybackMomentum, setIsPlaying, setCountdown, setTransitionLabel, setShowChapters]);
 
     const handleSkipSummary = useCallback(() => {
         // Clear countdown if running
         if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
         setCountdown(null);
         setTransitionLabel(null);
+        setTransitionKind(null);
 
         // Logic to skip directly to post-summary state
         if (isSummaryActiveRef.current || countdown) {
@@ -533,6 +727,11 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
             });
         }
     }, [loading, readingState, currentChapter, book.id]);
+    const saveProgressRef = useRef(saveProgress);
+
+    useEffect(() => {
+        saveProgressRef.current = saveProgress;
+    }, [saveProgress]);
 
     // Ref to hold the current chapter subscription
     const chapterSubRef = useRef<{ unsubscribe: () => void } | null>(null);
@@ -551,83 +750,144 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
             chapterSubRef.current = null;
         }
 
-        // Subscribe to the chapter document
-        chapterSubRef.current = db.chapters.findOne(chapterId).$.subscribe(async (doc) => {
-            if (!doc) return;
-            const chapterDoc = doc.toJSON() as ChapterDocType;
+        await new Promise<void>((resolve) => {
+            // Subscribe to the chapter document and keep the live subscription after the initial load.
+            chapterSubRef.current = db.chapters.findOne(chapterId).$.subscribe(async (doc) => {
+                if (!doc) return;
+                const chapterDoc = doc.toJSON() as ChapterDocType;
 
-            if (!isReadableChapter(chapterDoc)) {
-                return;
-            }
+                if (!isReadableChapter(chapterDoc)) return;
 
-            if (isFirstEmission) {
-                isFirstEmission = false;
-                setCurrentChapter(chapterDoc);
-                wordsRef.current = chapterDoc.content;
-                densitiesRef.current = chapterDoc.densities || [];
+                if (isFirstEmission) {
+                    isFirstEmission = false;
+                    setCurrentChapter(chapterDoc);
+                    wordsRef.current = chapterDoc.content;
+                    densitiesRef.current = chapterDoc.densities || [];
 
-                indexRef.current = initialIndex;
-                setCurrentWordIndex(initialIndex);
-                resetDisplaySegments(wordsRef.current[initialIndex] || '');
-                // Reset boundary tracking for new chapter
-                lastTriggeredBoundaryRef.current = -1;
-                // Don't call renderWord here - refs may not be mounted yet
-                // The useLayoutEffect will call renderWord once React has rendered the DOM
-                setLoading(false);
-                // Reset initial render flag so effects can trigger fresh render
-                initialRenderDoneRef.current = false;
-                // setShowSidebar(false); // Keep sidebar open by default
+                    indexRef.current = initialIndex;
+                    setCurrentWordIndex(initialIndex);
+                    updateProgressMilestone(chapterId, initialIndex, false);
+                    resetDisplaySegments(wordsRef.current[initialIndex] || '');
+                    lastTriggeredBoundaryRef.current = -1;
+                    setLoading(false);
+                    initialRenderDoneRef.current = false;
 
-                // Update state immediately if starting fresh
-                if (initialIndex === 0) {
-                    const stateDoc = await db.reading_states.findOne(book.id).exec();
-                    if (stateDoc) {
-                        await stateDoc.incrementalPatch({
-                            currentChapterId: chapterId,
-                            currentWordIndex: 0
-                        });
+                    if (initialIndex === 0) {
+                        const stateDoc = await db.reading_states.findOne(book.id).exec();
+                        if (stateDoc) {
+                            await stateDoc.incrementalPatch({
+                                currentChapterId: chapterId,
+                                currentWordIndex: 0
+                            });
+                        }
                     }
+
+                    if (autoPlay) {
+                        if (chapterPulseTimerRef.current) clearTimeout(chapterPulseTimerRef.current);
+                        setChapterPulseActive(true);
+                        chapterPulseTimerRef.current = setTimeout(() => {
+                            setChapterPulseActive(false);
+                            chapterPulseTimerRef.current = null;
+                        }, 1400);
+                        setIsPlaying(true);
+                    }
+
+                    resolve();
+                    return;
                 }
 
-                if (autoPlay) {
-                    setIsPlaying(true);
-                }
-            } else {
-                // Live update - ONLY update refs to avoid re-render stutter during playback
-                // The playback loop reads from refs, so this is sufficient.
-                // We intentionally do NOT call setCurrentChapter or renderWord here
-                // to prevent flickering/stuttering during LLM density updates.
-                
-                // Update words ref only if content actually changed (rare, but possible)
+                // Live updates only refresh refs, avoiding playback flicker during density analysis.
                 if (chapterDoc.content.length !== wordsRef.current.length) {
                     wordsRef.current = chapterDoc.content;
                 }
-                
-                // Always update densities - this is the main thing that changes during processing
                 densitiesRef.current = chapterDoc.densities || [];
-                
-                // Update currentChapterRef for subchapter boundary checks (without triggering re-render)
                 currentChapterRef.current = chapterDoc;
-                
-                // Only re-render context windows if NOT playing (user is paused and wants to see updates)
+
                 if (!isPlayingRef.current) {
                     setCurrentChapter(chapterDoc);
                     const displayWord = resetDisplaySegments(wordsRef.current[indexRef.current] || '');
                     renderWord(indexRef.current, wordsRef.current, true, displayWord);
                 }
-            }
+            });
         });
-    }, [renderWord, book.id, resetDisplaySegments]);
+    }, [renderWord, book.id, resetDisplaySegments, updateProgressMilestone]);
+
+    const beginChapterTransition = useCallback((chapterId: string, initialIndex: number = 0) => {
+        if (countdownIntervalRef.current || chapterTransitionActiveRef.current) return;
+
+        const targetChapter = chaptersRef.current.find((chapter) => chapter.id === chapterId);
+        if (!targetChapter || !isReadableChapter(targetChapter)) return;
+        const targetIndex = Math.max(0, Math.min(targetChapter.content.length - 1, initialIndex));
+
+        const currentChapterId = currentChapterRef.current?.id;
+        const currentPosition = chaptersRef.current.findIndex((chapter) => chapter.id === currentChapterId);
+        const targetPosition = chaptersRef.current.findIndex((chapter) => chapter.id === chapterId);
+        const isSameChapter = currentChapterId === chapterId;
+        const direction = targetPosition < currentPosition ? 'Previous chapter' : 'Next chapter';
+        const targetSection = targetChapter.subchapters?.find((section) => section.startWordIndex === targetIndex);
+        const label = isSameChapter
+            ? `${targetChapter.title}${targetSection?.title ? ` / ${targetSection.title}` : ''}`
+            : `${direction} / ${targetChapter.title}`;
+        const activateDestination = (activate: () => void | Promise<void>) => {
+            contextHistoryStartRef.current = targetIndex;
+            if (prevContainerRef.current) prevContainerRef.current.replaceChildren();
+            if (nextContainerRef.current) nextContainerRef.current.replaceChildren();
+            return activate();
+        };
+        const activateTarget = isSameChapter
+            ? () => activateDestination(() => {
+                indexRef.current = targetIndex;
+                setCurrentWordIndex(targetIndex);
+                updateProgressMilestone(chapterId, targetIndex, false);
+                lastTriggeredBoundaryRef.current = -1;
+                accumulatorRef.current = 0;
+                const displayWord = resetDisplaySegments(targetChapter.content[targetIndex] || '');
+                renderWord(targetIndex, targetChapter.content, true, displayWord);
+                syncSchedulerCursor(chapterId, targetIndex);
+            })
+            : () => activateDestination(() => loadChapter(chapterId, targetIndex, false));
+
+        startTransition(
+            label,
+            activateTarget,
+            {
+                kind: 'chapter',
+                closeContents: true,
+            },
+        );
+    }, [loadChapter, renderWord, resetDisplaySegments, startTransition, syncSchedulerCursor, updateProgressMilestone]);
 
     const moveToWord = useCallback((wordIndex: number) => {
+        if (wordIndex < 0 && currentChapterRef.current) {
+            const previousChapter = findPreviousReadableChapter(chaptersRef.current, currentChapterRef.current.id);
+            if (previousChapter) {
+                beginChapterTransition(
+                    previousChapter.id,
+                    Math.max(0, previousChapter.content.length + wordIndex),
+                );
+            }
+            return;
+        }
+
+        if (wordIndex >= wordsRef.current.length && currentChapterRef.current) {
+            const nextChapter = findNextReadableChapter(chaptersRef.current, currentChapterRef.current.id);
+            if (nextChapter) {
+                beginChapterTransition(nextChapter.id, Math.max(0, wordIndex - wordsRef.current.length));
+            }
+            return;
+        }
+
         const nextIndex = Math.max(0, Math.min(wordsRef.current.length - 1, wordIndex));
         if (nextIndex === indexRef.current) return;
 
         indexRef.current = nextIndex;
         setCurrentWordIndex(nextIndex);
+        if (currentChapterRef.current) {
+            updateProgressMilestone(currentChapterRef.current.id, nextIndex, true);
+        }
         const displayWord = resetDisplaySegments(wordsRef.current[nextIndex] || '');
         renderWord(nextIndex, wordsRef.current, true, displayWord);
-    }, [renderWord, resetDisplaySegments]);
+    }, [beginChapterTransition, renderWord, resetDisplaySegments, updateProgressMilestone]);
 
     // Wheel/touchpad scroll handler for navigating through words.
     // This is intentionally used only on the center RSVP lane.
@@ -760,13 +1020,28 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
     }, [moveToWord]);
 
     const handleRsvpClick = useCallback(() => {
+        if (countdown !== null) return;
+
+        if (chapterTransitionPhase === 'braking' || chapterTransitionPhase === 'crossing') {
+            pauseAfterChapterTransitionRef.current = !pauseAfterChapterTransitionRef.current;
+            return;
+        }
+
         if (suppressNextRsvpTapRef.current) {
             suppressNextRsvpTapRef.current = false;
             return;
         }
 
         setIsPlaying(!isPlayingRef.current);
-    }, []);
+    }, [countdown, chapterTransitionPhase]);
+
+    const handleRsvpKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+
+        event.preventDefault();
+        event.stopPropagation();
+        handleRsvpClick();
+    }, [handleRsvpClick]);
 
     const handleRiverScroll = useCallback(() => {
         riverLastScrollAtRef.current = performance.now();
@@ -858,8 +1133,9 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
     // This reduces CPU wake-ups from ~60/sec to ~5-10/sec (80-90% reduction).
     
     const calculateTargetInterval = useCallback((displayWord: string, densityFactor: number, isSegmentedToken: boolean) => {
-        const speedFactor = getSpeedFactor(wpmRef.current);
-        const baseInterval = 60000 / wpmRef.current;
+        const effectiveWpm = Math.max(1, wpmRef.current * playbackMomentumRef.current);
+        const speedFactor = getSpeedFactor(effectiveWpm);
+        const baseInterval = 60000 / effectiveWpm;
         const tokenProps = getTokenDisplayProps(displayWord);
 
         const T_floor = 75 * speedFactor;
@@ -923,7 +1199,10 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
         // This is the key battery optimization - don't poll at 60fps!
         if (timeRemaining > 50) {
             // Sleep for most of the remaining time, leaving 40ms for rAF precision
-            const sleepTime = Math.max(10, timeRemaining - 40);
+            const normalSleepTime = Math.max(10, timeRemaining - 40);
+            const sleepTime = chapterTransitionActiveRef.current
+                ? Math.min(50, normalSleepTime)
+                : normalSleepTime;
             timeoutRef.current = setTimeout(() => {
                 if (isPlayingRef.current) {
                     requestRef.current = requestAnimationFrame(loopInternal);
@@ -955,6 +1234,10 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                     currentChapterRef.current
                 ) {
                     syncSchedulerCursor(currentChapterRef.current.id, indexRef.current);
+                }
+
+                if (!isSummaryActiveRef.current && currentChapterRef.current) {
+                    updateProgressMilestone(currentChapterRef.current.id, indexRef.current, true);
                 }
 
                 // Track word timestamp for actual WPM calculation
@@ -1017,7 +1300,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                     : null;
 
                 if (nextChapter) {
-                    loadChapter(nextChapter.id, 0, true);
+                    beginChapterTransition(nextChapter.id, 0);
                 } else {
                     setIsPlaying(false);
                     setShowChapters(true);
@@ -1028,7 +1311,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
 
         // Continue loop - use rAF for precision timing in final approach
         requestRef.current = requestAnimationFrame(loopInternal);
-    }, [wpm, renderWord, loadChapter, summaryWpm, startTransition, calculateTargetInterval, resetDisplaySegments, syncSchedulerCursor]);
+    }, [wpm, renderWord, beginChapterTransition, summaryWpm, startTransition, calculateTargetInterval, resetDisplaySegments, syncSchedulerCursor, updateProgressMilestone]);
 
     // Sync refs
     useEffect(() => {
@@ -1039,11 +1322,17 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
 
     useEffect(() => {
         chaptersRef.current = chapters;
-    }, [chapters]);
+        if (currentChapterRef.current && lastProgressMilestoneRef.current === null) {
+            updateProgressMilestone(currentChapterRef.current.id, indexRef.current, false);
+        }
+    }, [chapters, updateProgressMilestone]);
 
     useEffect(() => {
         currentChapterRef.current = currentChapter;
-    }, [currentChapter]);
+        if (currentChapter && lastProgressMilestoneRef.current === null) {
+            updateProgressMilestone(currentChapter.id, indexRef.current, false);
+        }
+    }, [currentChapter, updateProgressMilestone]);
 
     useEffect(() => {
         if (currentChapter) {
@@ -1072,11 +1361,13 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
             if (requestRef.current) cancelAnimationFrame(requestRef.current);
             if (timeoutRef.current) clearTimeout(timeoutRef.current);
         };
-    }, [isPlaying, saveProgress, loop, renderWord, getDisplayWordForCurrentSegment]);
+    }, [isPlaying, playbackSession, saveProgress, loop, renderWord, getDisplayWordForCurrentSegment]);
 
     // Spacebar to toggle play/pause
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.target instanceof Element && e.target.closest('button, a, input, textarea, select, [role="button"]')) return;
+
             if (e.code === 'Space') {
                 e.preventDefault(); // Prevent scrolling
                 setIsPlaying(prev => !prev);
@@ -1137,9 +1428,15 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
     // Save on unmount
     useEffect(() => {
         return () => {
-            saveProgress();
+            if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
+            if (momentumAnimationFrameRef.current) cancelAnimationFrame(momentumAnimationFrameRef.current);
+            if (momentumCompletionTimerRef.current) clearTimeout(momentumCompletionTimerRef.current);
+            if (chapterTransitionTimerRef.current) clearTimeout(chapterTransitionTimerRef.current);
+            if (chapterPulseTimerRef.current) clearTimeout(chapterPulseTimerRef.current);
+            if (progressReminderTimerRef.current) clearTimeout(progressReminderTimerRef.current);
+            void saveProgressRef.current();
         };
-    }, [saveProgress]);
+    }, []);
 
     // Load initial state & Subscribe to chapters
     useEffect(() => {
@@ -1331,7 +1628,26 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
     }, [loading, currentChapter, currentWordIndex, renderWord, getDisplayWordForCurrentSegment, isCompactLandscape]);
 
     if (loading && !currentChapter) {
-        return <div className="flex items-center justify-center h-full font-mono text-dune-gold animate-pulse">INITIALIZING COCKPIT...</div>;
+        return (
+            <div className="relative flex h-full min-h-0 items-center justify-center bg-basalt text-white">
+                {onBack && (
+                    <button
+                        type="button"
+                        onClick={onBack}
+                        className="absolute left-4 top-4 inline-flex min-h-11 items-center gap-2 rounded border border-white/15 bg-black/30 px-3 text-sm text-white/75 transition-colors hover:bg-white/10 hover:text-white"
+                        aria-label="Back to library"
+                    >
+                        <ArrowLeft className="h-4 w-4" />
+                        <span>Library</span>
+                    </button>
+                )}
+                <div className="text-center" role="status" aria-live="polite">
+                    <div className="mx-auto mb-4 h-6 w-6 animate-spin rounded-full border-2 border-white/15 border-t-cyan-300" />
+                    <p className="font-mono text-sm text-white/80">Loading book...</p>
+                    <p className="mt-1 text-xs text-white/40">Preparing the text</p>
+                </div>
+            </div>
+        );
     }
 
     // Calculate Subchapter Progress
@@ -1362,10 +1678,24 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
         subchapterProgress = Math.min(1, Math.max(0, current / total));
     }
 
+    const readableChapters = chapters.filter(isReadableChapter);
+    const totalReadableWords = readableChapters.reduce((total, chapter) => total + chapter.content.length, 0);
+    const currentChapterNumber = currentChapter
+        ? readableChapters.findIndex((chapter) => chapter.id === currentChapter.id) + 1
+        : 0;
+    const globalWordIndex = currentChapter
+        ? getGlobalWordIndex(readableChapters, currentChapter.id, currentWordIndex)
+        : 0;
+    const bookProgress = totalReadableWords > 0
+        ? Math.min(100, Math.max(0, Math.round((globalWordIndex / totalReadableWords) * 100)))
+        : 0;
+    const isTransitioning = countdown !== null || chapterTransitionPhase !== null;
+    const hasSeenDestinationHistory = currentWordIndex > contextHistoryStartRef.current;
+
     // Color based on actual speed vs target
     const speedColor = actualWpm === 0 ? 'text-gray-500' : 
         actualWpm < wpm * 0.8 ? 'text-blue-400' : 
-        actualWpm > wpm * 1.2 ? 'text-red-400' : 'text-dune-gold';
+        actualWpm > wpm * 1.2 ? 'text-cyan-300' : 'text-emerald-300';
 
     // Calculate word to render for React (to avoid stale content on re-renders)
     // When playing, the loop updates the DOM directly.
@@ -1387,191 +1717,154 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
     rsvpContainerStyle.transformOrigin = 'center center';
 
     return (
-        <div ref={setFullscreenTarget} className="relative w-full h-full min-h-0 bg-basalt text-white overflow-hidden flex">
+        <div
+            data-testid="reader-shell"
+            className={clsx(
+                'reader-shell relative w-full h-full min-h-0 text-white overflow-hidden flex',
+                focusModeEnabled && 'reader-shell--focus',
+            )}
+        >
+            <div
+                className="reader-book-progress reader-focus-fade"
+                role="progressbar"
+                aria-label="Book reading progress"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={bookProgress}
+                aria-hidden={focusModeEnabled}
+            >
+                <span style={{ width: `${bookProgress}%` }} />
+            </div>
+            {progressReminder !== null && (
+                <div className="reader-progress-reminder reader-focus-fade" aria-live="polite">
+                    {progressReminder}% through book
+                </div>
+            )}
             {/* Floating Header / Controls */}
-            <div className="absolute top-0 left-0 right-0 z-[60] p-4 flex justify-between items-start pointer-events-none">
+            <div className="reader-toolbar absolute top-0 left-0 right-0 z-[90] p-2 md:p-4 flex justify-between items-start pointer-events-none">
                 {onBack ? (
                     <button
                         onClick={onBack}
-                        className="pointer-events-auto p-3 bg-black/40 backdrop-blur-md rounded-full border border-white/10 text-white/70 hover:bg-white/10 hover:text-white transition-all hover:scale-105 active:scale-95 shadow-lg"
+                        className="reader-toolbar-button reader-focus-fade pointer-events-auto bg-black/40 backdrop-blur-md border border-white/10 text-white/70 hover:bg-white/10 hover:text-white transition-all hover:scale-105 active:scale-95 shadow-lg"
                         title="Back to Archive"
+                        aria-label="Back to Archive"
+                        aria-hidden={focusModeEnabled}
+                        tabIndex={focusModeEnabled ? -1 : undefined}
                     >
-                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-                        </svg>
+                        <ArrowLeft className="h-5 w-5 md:h-6 md:w-6" />
                     </button>
                 ) : (
-                    <div className="w-12" />
+                    <div className="w-10 md:w-12" />
                 )}
 
-                {/* Chapter Title (Centered) - hidden on mobile/small-screens to prevent layout collision */}
-                <div className="hidden md:block mt-2 px-6 py-2 bg-black/20 backdrop-blur-sm rounded-full border border-white/5 shadow-lg">
-                    <h3 className="font-mono text-xs text-gray-400 tracking-widest uppercase">{currentChapter?.title}</h3>
-                </div>
-
-                <div className="pointer-events-auto relative flex items-start gap-3">
-                    {/* Fullscreen Button */}
-                    <button
-                        onClick={handleToggleFullscreen}
-                        className={`hidden md:inline-flex p-3 backdrop-blur-md rounded-full border transition-colors shadow-lg ${
-                            isFullscreen
-                                ? 'bg-dune-gold/80 border-dune-gold text-black'
-                                : 'bg-black/40 border-white/10 text-white/70 hover:bg-white/10 hover:text-white'
-                        } ${!isFullscreenSupported ? 'opacity-75' : ''}`}
-                        title={isFullscreen ? 'Exit Fullscreen' : 'Enter Fullscreen'}
-                    >
-                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            {isFullscreen ? (
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 4.5V9H4.5M15 4.5V9h4.5M9 19.5V15H4.5M15 19.5V15h4.5" />
-                            ) : (
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4.5 9V4.5H9M15 4.5h4.5V9M4.5 15v4.5H9M15 19.5h4.5V15" />
-                            )}
-                        </svg>
-                    </button>
-
+                <div
+                    data-testid="reader-toolbar-controls"
+                    className="reader-toolbar-controls pointer-events-auto relative flex items-start"
+                >
                     {/* Focus Mode Button */}
                     <button
-                        onClick={() => {
-                            const newFocusMode = !focusModeEnabled;
-                            setFocusModeEnabled(newFocusMode);
-                            if (newFocusMode) {
-                                // Save current state before entering focus mode
-                                preFocusStateRef.current = {
-                                    riverTop: riverTopEnabled,
-                                    riverBottom: riverBottomEnabled,
-                                    showChapters: showChapters,
-                                    showTTSPlayer: showTTSPlayer,
-                                };
-                                // Enter focus mode: hide all distractions
-                                setRiverTopEnabled(false);
-                                setRiverBottomEnabled(false);
-                                setShowChapters(false);
-                                setShowTTSPlayer(false);
-                                setNavSidebarCollapsed(true);
-                            } else {
-                                // Exit focus mode: restore previous state
-                                const prev = preFocusStateRef.current;
-                                if (prev) {
-                                    setRiverTopEnabled(prev.riverTop);
-                                    setRiverBottomEnabled(prev.riverBottom);
-                                    setShowChapters(prev.showChapters);
-                                    setShowTTSPlayer(prev.showTTSPlayer);
-                                } else {
-                                    // Fallback if no saved state
-                                    setRiverTopEnabled(true);
-                                    setRiverBottomEnabled(true);
-                                }
-                                setNavSidebarCollapsed(false);
-                                preFocusStateRef.current = null;
-                            }
-                        }}
-                        className={`hidden md:inline-flex p-3 backdrop-blur-md rounded-full border transition-colors shadow-lg ${
-                            focusModeEnabled 
-                                ? 'bg-dune-gold/80 border-dune-gold text-black' 
-                                : 'bg-black/40 border-white/10 text-white/70 hover:bg-white/10 hover:text-white'
-                        }`}
+                        onClick={handleToggleFocusMode}
+                        className={clsx('reader-toolbar-button reader-focus-toggle', focusModeEnabled && 'reader-toolbar-button--active')}
                         title={focusModeEnabled ? 'Exit Focus Mode' : 'Focus Mode (hide distractions)'}
+                        aria-label={focusModeEnabled ? 'Exit Focus Mode' : 'Focus Mode'}
+                        aria-pressed={focusModeEnabled}
                     >
-                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            {focusModeEnabled ? (
-                                // Expand icon (restore full UI)
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15" />
-                            ) : (
-                                // Compress icon (enter focus mode)
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 9V4.5M9 9H4.5M9 9L3.75 3.75M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 9h4.5M15 9V4.5M15 9l5.25-5.25M15 15h4.5M15 15v4.5m0-4.5l5.25 5.25" />
-                            )}
-                        </svg>
+                        <Focus className="reader-toolbar-icon" />
+                        <span className="reader-toolbar-label">Focus</span>
                     </button>
 
                     {/* AI Toggle Button */}
                     <button
-                        onClick={() => setAiEnabled(!aiEnabled)}
-                        className={`hidden md:inline-flex p-3 backdrop-blur-md rounded-full border transition-colors shadow-lg ${
-                            aiEnabled 
-                                ? 'bg-green-600/60 border-green-400/50 text-green-200' 
-                                : 'bg-black/40 border-white/10 text-white/30 hover:bg-white/10 hover:text-white/50'
-                        }`}
-                        title={aiEnabled ? 'AI On (tap to disable for battery saving)' : 'AI Off (tap to enable density analysis)'}
+                        onClick={() => {
+                            if (aiEnabled) setAiEnabled(false);
+                            else if (aiIsReady && !aiIsLoading) setAiEnabled(true);
+                        }}
+                        className={clsx('reader-toolbar-button reader-focus-fade', aiEnabled && 'reader-toolbar-button--active')}
+                        title={aiEnabled ? 'Disable adaptive pacing' : aiIsLoading ? 'Adaptive pacing is loading' : aiIsReady ? 'Enable adaptive pacing' : 'Adaptive pacing is not configured'}
+                        aria-label={aiEnabled ? 'Disable adaptive pacing' : aiIsLoading ? 'Adaptive pacing is loading' : aiIsReady ? 'Enable adaptive pacing' : 'Adaptive pacing unavailable'}
+                        aria-pressed={aiEnabled}
+                        aria-hidden={focusModeEnabled}
+                        tabIndex={focusModeEnabled ? -1 : undefined}
+                        disabled={!aiEnabled && (!aiIsReady || aiIsLoading)}
                     >
-                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-                        </svg>
-                        {!aiEnabled && (
-                            <span className="absolute inset-0 flex items-center justify-center">
-                                <svg className="w-8 h-8 text-red-500/60" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
-                                </svg>
-                            </span>
-                        )}
+                        <Gauge className="reader-toolbar-icon" />
+                        <span className="reader-toolbar-label">Pacing</span>
                     </button>
 
                     {/* TTS / Listen Button */}
                     <button
                         onClick={() => setShowTTSPlayer(!showTTSPlayer)}
-                        className={`hidden md:inline-flex p-3 backdrop-blur-md rounded-full border transition-colors shadow-lg ${
-                            ttsPlaybackState === 'playing' 
-                                ? 'bg-purple-600/80 border-purple-400 text-white' 
-                                : showTTSPlayer
-                                    ? 'bg-purple-900/60 border-purple-500/50 text-purple-300'
-                                    : 'bg-black/40 border-white/10 text-white/70 hover:bg-white/10 hover:text-white'
-                        }`}
-                        title="Listen (Text to Speech)"
-                    >
-                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} 
-                                d="M12 3c-4.97 0-9 4.03-9 9v7a2 2 0 002 2h1a2 2 0 002-2v-3a2 2 0 00-2-2H5v-2c0-3.87 3.13-7 7-7s7 3.13 7 7v2h-1a2 2 0 00-2 2v3a2 2 0 002 2h1a2 2 0 002-2v-7c0-4.97-4.03-9-9-9z" />
-                        </svg>
-                        {ttsPlaybackState === 'playing' && (
-                            <span className="absolute -top-1 -right-1 w-3 h-3 bg-green-500 rounded-full animate-pulse" />
+                        className={clsx(
+                            'reader-toolbar-button reader-focus-fade',
+                            (showTTSPlayer || ttsPlaybackState === 'playing') && 'reader-toolbar-button--active',
                         )}
+                        title="Listen (Text to Speech)"
+                        aria-label="Listen"
+                        aria-pressed={showTTSPlayer || ttsPlaybackState === 'playing'}
+                        aria-hidden={focusModeEnabled}
+                        tabIndex={focusModeEnabled ? -1 : undefined}
+                    >
+                        <Headphones className="reader-toolbar-icon" />
+                        <span className="reader-toolbar-label">Audio</span>
                     </button>
 
                     <button
                         type="button"
                         onClick={() => setTheme(isDayTheme ? 'volcanic' : 'day')}
-                        className="inline-flex p-3 bg-black/40 backdrop-blur-md rounded-full border border-white/10 text-white/70 hover:bg-white/10 hover:text-white transition-colors shadow-lg"
+                        className="reader-toolbar-button reader-focus-fade"
                         title={isDayTheme ? 'Switch to dark theme' : 'Switch to day theme'}
                         aria-label={isDayTheme ? 'Switch to dark theme' : 'Switch to day theme'}
+                        aria-hidden={focusModeEnabled}
+                        tabIndex={focusModeEnabled ? -1 : undefined}
                     >
-                        {isDayTheme ? <Moon className="w-6 h-6" /> : <Sun className="w-6 h-6" />}
+                        {isDayTheme ? <Moon className="reader-toolbar-icon" /> : <Sun className="reader-toolbar-icon" />}
+                        <span className="reader-toolbar-label">Theme</span>
                     </button>
                     
                     {/* Chapters Button */}
                     <button
+                        type="button"
                         onClick={() => setShowChapters(!showChapters)}
                         data-testid="toggle-chapters"
-                        className="p-3 bg-black/40 backdrop-blur-md rounded-full border border-white/10 text-dune-gold hover:bg-white/10 transition-colors shadow-lg"
-                        title="Chapters"
+                        className={clsx('reader-toolbar-button reader-focus-fade', showChapters && 'reader-toolbar-button--active')}
+                        title={showChapters ? 'Close contents' : 'Open contents'}
+                        aria-label={showChapters ? 'Close contents' : 'Open contents'}
+                        aria-expanded={showChapters}
+                        aria-controls="reader-contents"
+                        aria-hidden={focusModeEnabled}
+                        tabIndex={focusModeEnabled ? -1 : undefined}
                     >
-                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            {showChapters ? (
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                            ) : (
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-                            )}
-                        </svg>
+                        {showChapters ? (
+                            <X className="reader-toolbar-icon" />
+                        ) : (
+                            <List className="reader-toolbar-icon" />
+                        )}
+                        <span className="reader-toolbar-label">{showChapters ? 'Close' : 'Contents'}</span>
                     </button>
 
-                    {fullscreenHint && (
-                        <div className="absolute top-full right-0 mt-2 w-64 p-2 bg-black/70 backdrop-blur-md border border-white/10 rounded-md text-[10px] uppercase tracking-wide font-mono text-dune-gold/90 leading-relaxed">
-                            {fullscreenHint}
-                        </div>
-                    )}
                 </div>
             </div>
 
             {/* Backdrop click-shield for sidebar on mobile/small-screens */}
-            {showChapters && (
-                <div 
-                    className="fixed inset-0 bg-black/60 backdrop-blur-xs z-[75] md:hidden"
-                    onClick={() => setShowChapters(false)}
-                />
-            )}
+            <div
+                className={clsx(
+                    'fixed inset-0 bg-black/60 backdrop-blur-xs z-[75] md:hidden transition-opacity duration-500',
+                    showChapters ? 'opacity-100' : 'opacity-0 pointer-events-none',
+                )}
+                onClick={() => setShowChapters(false)}
+                aria-hidden="true"
+            />
 
             {/* Chapters Drawer (Right) - responsive width so it doesn't crowd small mobile viewports */}
             <div
+                id="reader-contents"
                 data-testid="sidebar-container"
-                className={`fixed inset-y-0 right-0 z-[80] w-[88vw] max-w-sm sm:w-80 bg-basalt border-l border-white/10 transform transition-transform duration-300 ${showChapters ? 'translate-x-0' : 'translate-x-full'}`}
+                className={clsx(
+                    'reader-contents-panel fixed inset-y-0 right-0 z-[80] w-[min(84vw,20rem)] transform',
+                    showChapters ? 'translate-x-0' : 'translate-x-full pointer-events-none',
+                )}
+                aria-hidden={!showChapters}
+                inert={!showChapters}
                 onTouchStart={handleChapterDrawerTouchStart}
                 onTouchMove={handleChapterDrawerTouchMove}
                 onTouchEnd={handleChapterDrawerTouchEnd}
@@ -1582,38 +1875,47 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                     chapters={chapters}
                     currentChapter={currentChapter}
                     onLoadChapter={(id, index) => {
-                        loadChapter(id, index || 0);
-                        setShowChapters(false);
+                        beginChapterTransition(id, index || 0);
                     }}
-                    onInspectChapter={(chapter) => setInspectingChapterId(chapter.id)}
                     wpm={wpm}
                     currentWordIndex={currentWordIndex}
                     now={now}
                     activeSummaryId={activeSummaryId}
                     globalSummaries={globalSummaries}
                     onPlayGlobalSummary={handlePlayGlobalSummary}
-                    onClose={() => setShowChapters(false)}
                 />
             </div>
 
             {/* Main Reader Area (Full Screen) - uses responsive margins to prevent shifting/squishing text on mobile */}
             <div
-                className={`flex-1 h-full relative flex flex-col min-w-0 pb-20 md:pb-0 transition-all duration-300 ${showChapters ? 'md:mr-80 mr-0' : 'mr-0'}`}
+                className={`reader-main-stage flex-1 h-full relative flex flex-col min-w-0 pb-20 md:pb-0 transition-all duration-500 ${showChapters ? 'md:mr-80 mr-0' : 'mr-0'}`}
             >
-                <div className="w-full h-full flex flex-col relative group">
+                <div className={clsx(
+                    'reader-reading-plane w-full h-full flex flex-col relative group mx-auto',
+                    chapterPulseActive && 'reader-reading-plane--chapter-arrival',
+                    chapterTransitionPhase && `reader-reading-plane--${chapterTransitionPhase}`,
+                )}>
 
                     {/* Top Zone: Previous Context */}
                     <div 
-                        className="flex-1 w-full overflow-hidden relative mask-gradient-top flex justify-center"
+                        className="reader-context-region reader-context-region--top reader-focus-fade flex-1 w-full overflow-hidden relative flex justify-center"
+                        aria-hidden={focusModeEnabled}
+                        inert={focusModeEnabled}
                     >
                         <div 
                             ref={prevContainerRef} 
                             data-testid="reader-context-top"
-                            className={`reader-context-panel w-full max-w-2xl h-full flex flex-wrap content-end justify-start p-8 md:p-16 font-mono text-lg md:text-xl leading-relaxed select-none overflow-y-auto overflow-x-hidden overscroll-contain border-x border-white/5 cursor-text ${riverTopEnabled ? '' : 'invisible'}`}
+                            className={`reader-context-panel reader-scroll-surface w-full h-full flex flex-wrap content-end justify-start p-8 md:p-14 font-mono text-lg md:text-xl leading-relaxed select-none overflow-y-auto overflow-x-hidden overscroll-contain cursor-text ${riverTopEnabled ? '' : 'invisible'}`}
                             onClick={handleRiverClick}
                             onScroll={handleRiverScroll}
                             style={{ touchAction: 'pan-y pinch-zoom' }}
                         ></div>
+                        {currentChapter && hasSeenDestinationHistory && (
+                            <div className="reader-river-marker reader-river-marker--chapter" aria-hidden="true">
+                                <span>Chapter {String(currentChapterNumber).padStart(2, '0')}</span>
+                                <span className="reader-river-marker__detail">{currentChapter.title}</span>
+                            </div>
+                        )}
                         {/* River Toggle - Top */}
                         <button
                             onClick={(e) => { e.stopPropagation(); setRiverTopEnabled(!riverTopEnabled); }}
@@ -1630,15 +1932,26 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                         </button>
                     </div>
 
+                    {transitionKind === 'chapter' && transitionLabel && (
+                        <div className="sr-only" role="status" aria-live="polite">
+                            {transitionLabel}
+                        </div>
+                    )}
+
                     {/* Middle Zone: RSVP (Click to Toggle) */}
                     <div
                         data-testid="rsvp-container"
-                        className="relative h-48 w-full flex items-center justify-center z-30"
+                        className="reader-focus-region relative h-48 w-full flex items-center justify-center z-30 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-300"
                         onClick={handleRsvpClick}
+                        onKeyDown={handleRsvpKeyDown}
+                        role="button"
+                        tabIndex={0}
+                        aria-label={isPlaying ? 'Pause reading' : 'Play reading'}
+                        aria-pressed={isPlaying}
                     >
                         {/* Text area container with border */}
                         <div 
-                            className="w-full max-w-2xl h-full flex items-center justify-center bg-black/20 border border-white/5 hover:border-white/10 transition-colors cursor-zoom-in"
+                            className="reader-focus-lane w-full h-full flex items-center justify-center transition-colors cursor-zoom-in"
                             onWheel={handleRsvpWheel}
                             onTouchStart={handleRsvpTouchStart}
                             onTouchMove={handleRsvpTouchMove}
@@ -1650,14 +1963,16 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                         {/* This allows the playback loop to update the display at 60fps without React re-renders */}
                             <div 
                                 ref={rsvpRef} 
-                                className={`${rsvpTypographyClass} font-mono tracking-tight whitespace-nowrap drop-shadow-[0_0_15px_rgba(255,255,255,0.5)] ${displayPlugin.getContainerClass()} ${isSummaryActive ? 'text-cyan-300 italic opacity-80' : 'text-white'}`}
+                                className={`${rsvpTypographyClass} font-mono tracking-tight whitespace-nowrap ${displayPlugin.getContainerClass()} ${isSummaryActive ? 'text-cyan-300 italic opacity-80' : 'text-white'}`}
                                 style={rsvpContainerStyle}
                             />
                         </div>
 
-                        <div className="absolute top-2 right-2 px-2 py-1 rounded border border-white/10 bg-black/35 backdrop-blur-sm text-[10px] font-mono uppercase tracking-wider text-white/70 pointer-events-none">
-                            lens {Math.round(lensScale * 100)}%
-                        </div>
+                        {lensScale !== LENS_SCALE_DEFAULT && (
+                            <div className="absolute top-2 right-2 px-2 py-1 text-[10px] font-mono uppercase tracking-wider text-white/70 pointer-events-none">
+                                Zoom {Math.round(lensScale * 100)}%
+                            </div>
+                        )}
 
                         {/* Subchapter Progress Lights */}
                         {currentSubchapter && (
@@ -1677,25 +1992,30 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                         )}
 
                         {/* Play/Pause Overlay - positioned over the RSVP container */}
-                        {(!isPlaying && !countdown) && (
-                            <div data-testid="play-overlay" className="absolute bottom-3 left-3 pointer-events-none animate-in fade-in duration-200">
-                                <div className="bg-black/50 backdrop-blur-sm p-2 rounded-full border border-white/10 shadow-lg">
-                                    <svg className="w-5 h-5 text-white/70 ml-0.5" fill="currentColor" viewBox="0 0 24 24">
-                                        <path d="M8 5v14l11-7z" />
-                                    </svg>
+                        {(!isPlaying && !isTransitioning) && (
+                            <div data-testid="play-overlay" className="reader-focus-fade absolute bottom-3 left-3 pointer-events-none animate-in fade-in duration-200">
+                                <div className="flex min-h-11 items-center gap-2 px-3 text-white/70">
+                                    <Play className="h-4 w-4 fill-current" />
+                                    <span className="text-xs font-semibold">Play</span>
                                 </div>
                             </div>
                         )}
                         
-                        {/* Countdown Overlay */}
-                        {countdown && (
-                            <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none z-50 animate-in fade-in duration-200 gap-4">
+                        {/* Summary transitions retain an explicit countdown; chapter handoffs are purely kinetic. */}
+                        {isTransitioning && transitionKind !== 'chapter' && (
+                            <div
+                                className={clsx(
+                                    'reader-transition-overlay absolute inset-0 flex flex-col items-center justify-center pointer-events-none z-50 animate-in fade-in duration-200 gap-4',
+                                )}
+                                role="status"
+                                aria-live="polite"
+                            >
                                 {transitionLabel && (
-                                    <div className="font-mono text-sm tracking-widest uppercase text-dune-gold/70 bg-black/40 px-3 py-1 rounded backdrop-blur-sm border border-white/5">
+                                    <div className="reader-transition-label font-mono text-sm uppercase px-3 py-1">
                                         {transitionLabel}
                                     </div>
                                 )}
-                                <div className="font-mono text-8xl font-bold text-dune-gold drop-shadow-lg animate-pulse">
+                                <div className="reader-transition-count font-mono text-8xl font-bold">
                                     {countdown}
                                 </div>
                             </div>
@@ -1704,16 +2024,22 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
 
                     {/* Bottom Zone: Next Context */}
                     <div 
-                        className="flex-1 w-full overflow-hidden relative mask-gradient-bottom flex justify-center"
+                        className="reader-context-region reader-context-region--bottom reader-focus-fade flex-1 w-full overflow-hidden relative flex justify-center"
+                        aria-hidden={focusModeEnabled}
+                        inert={focusModeEnabled}
                     >
                         <div 
                             ref={nextContainerRef} 
                             data-testid="reader-context-bottom"
-                            className={`reader-context-panel w-full max-w-2xl h-full flex flex-wrap content-start justify-start p-8 md:p-16 font-mono text-lg md:text-xl leading-relaxed select-none overflow-y-auto overflow-x-hidden overscroll-contain border-x border-white/5 cursor-text ${riverBottomEnabled ? '' : 'invisible'}`}
+                            className={`reader-context-panel reader-scroll-surface w-full h-full flex flex-wrap content-start justify-start p-8 md:p-14 font-mono text-lg md:text-xl leading-relaxed select-none overflow-y-auto overflow-x-hidden overscroll-contain cursor-text ${riverBottomEnabled ? '' : 'invisible'}`}
                             onClick={handleRiverClick}
                             onScroll={handleRiverScroll}
                             style={{ touchAction: 'pan-y pinch-zoom' }}
                         ></div>
+                        <div className="reader-river-marker reader-river-marker--progress" aria-hidden="true">
+                            <span>{bookProgress}%</span>
+                            <span className="reader-river-marker__detail">Book</span>
+                        </div>
                         {/* River Toggle - Bottom */}
                         <button
                             onClick={(e) => { e.stopPropagation(); setRiverBottomEnabled(!riverBottomEnabled); }}
@@ -1734,7 +2060,15 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
             </div>
 
             {/* Speed Control Overlay */}
-            <div className="absolute inset-x-0 bottom-0 z-[70] h-20 px-4 flex items-center justify-center gap-3 bg-basalt/95 border-t border-white/10 md:inset-x-auto md:bottom-8 md:right-8 md:h-auto md:px-0 md:bg-transparent md:border-0 md:opacity-40 md:hover:opacity-100 transition-opacity duration-300">
+            <div
+                data-testid="speed-controls"
+                className={clsx(
+                    'reader-speed-dock reader-focus-fade absolute inset-x-0 bottom-0 z-[70] h-20 px-4 flex items-center justify-center gap-2 md:inset-x-auto md:bottom-8 md:right-8 md:h-auto md:px-2 md:py-2 md:opacity-70 md:hover:opacity-100',
+                    showChapters ? 'md:mr-80' : 'md:mr-0',
+                )}
+                aria-hidden={focusModeEnabled}
+                inert={focusModeEnabled}
+            >
                 
                 {/* Skip Summary Button (Only Visible when relevant) */}
                 {(isSummaryActive || (countdown && transitionLabel?.includes('summary'))) && (
@@ -1752,7 +2086,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                 {/* Slower Button */}
                 <button
                     onClick={handleSlower}
-                    className="p-2 bg-black/60 backdrop-blur-sm rounded-full border border-white/10 text-white/60 hover:text-white hover:bg-black/80 hover:border-white/30 transition-all active:scale-95"
+                    className="reader-speed-button p-2 text-white/60 hover:text-white transition-all active:scale-95"
                     title="Slower (-50 WPM)"
                 >
                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1761,18 +2095,18 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                 </button>
 
                 {/* WPM Display */}
-                <div className="flex flex-col items-center px-4 py-2 bg-black/60 backdrop-blur-sm rounded-lg border border-white/10 min-w-[100px]">
+                <div className="reader-speed-readout flex flex-col items-center px-4 py-1 min-w-[100px]">
                     {/* Target Speed (The setting) - Prominent for feedback */}
                     <div className="flex items-baseline gap-1 animate-in fade-in zoom-in duration-300">
-                        <span className="text-2xl font-mono font-bold text-dune-gold tabular-nums transition-all filter drop-shadow-[0_0_5px_rgba(217,119,6,0.5)]">
+                        <span className="text-2xl font-mono font-bold text-emerald-300 tabular-nums transition-all">
                             {wpm}
                         </span>
-                        <span className="text-[10px] text-dune-gold/70 font-bold uppercase">WPM</span>
+                        <span className="text-[10px] text-emerald-300/70 font-bold uppercase">WPM</span>
                     </div>
                     
                     {/* Real-time Velocity (The result) - Secondary */}
                     {actualWpm > 0 && (
-                        <div className="flex items-center gap-2 mt-1 border-t border-white/10 pt-1 w-full justify-center">
+                        <div className="flex items-center gap-2 mt-1 w-full justify-center">
                             <span className={`text-xs font-mono tabular-nums ${speedColor}`}>
                                 {actualWpm}
                             </span>
@@ -1792,13 +2126,14 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                 {/* Faster Button */}
                 <button
                     onClick={handleFaster}
-                    className="p-2 bg-black/60 backdrop-blur-sm rounded-full border border-white/10 text-white/60 hover:text-white hover:bg-black/80 hover:border-white/30 transition-all active:scale-95"
+                    className="reader-speed-button p-2 text-white/60 hover:text-white transition-all active:scale-95"
                     title="Faster (+50 WPM)"
                 >
                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
                     </svg>
                 </button>
+
             </div>
 
             {/* Inspection Modal */}
@@ -1806,7 +2141,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                 <div className="absolute inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-4 md:p-12">
                     <div className="bg-basalt w-full h-full max-w-4xl rounded-lg border border-magma-vent/30 flex flex-col shadow-[0_0_50px_rgba(0,0,0,0.8)]">
                         <div className="flex justify-between items-center p-4 border-b border-white/10">
-                            <h2 className="font-mono text-xl font-bold text-dune-gold tracking-widest uppercase">{inspectingChapter.title} // DENSITY_MAP</h2>
+                            <h2 className="font-mono text-xl font-bold text-cyan-200 tracking-widest uppercase">{inspectingChapter.title} // DENSITY_MAP</h2>
                             <button
                                 onClick={() => setInspectingChapterId(null)}
                                 className="text-gray-400 hover:text-magma-vent transition-colors"
@@ -1839,8 +2174,8 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                         <div className="p-4 border-t border-white/10 flex gap-6 text-xs font-mono flex-wrap uppercase tracking-wider bg-black/20">
                             <div className="flex items-center gap-2"><span className="w-2 h-2 bg-blue-400 rounded-full"></span> Fast (&lt;0.8)</div>
                             <div className="flex items-center gap-2"><span className="w-2 h-2 bg-gray-400 rounded-full"></span> Normal</div>
-                            <div className="flex items-center gap-2"><span className="w-2 h-2 bg-yellow-500 rounded-full"></span> Slow (1.2-1.5)</div>
-                            <div className="flex items-center gap-2"><span className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></span> Profound (&gt;2.0)</div>
+                            <div className="flex items-center gap-2"><span className="w-2 h-2 bg-emerald-400 rounded-full"></span> Slow (1.2-1.5)</div>
+                            <div className="flex items-center gap-2"><span className="w-2 h-2 bg-blue-200 rounded-full animate-pulse"></span> Profound (&gt;2.0)</div>
                         </div>
                     </div>
                 </div>
@@ -1848,20 +2183,22 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
 
             {/* TTS Player */}
             {showTTSPlayer && currentChapter && (
-                <TTSPlayer
-                    words={currentChapter.content}
-                    currentWordIndex={currentWordIndex}
-                    onPositionChange={(wordIndex) => {
-                        // Sync TTS position to RSVP reader
-                        indexRef.current = wordIndex;
-                        setCurrentWordIndex(wordIndex);
-                        const displayWord = resetDisplaySegments(wordsRef.current[wordIndex] || '');
-                        renderWord(wordIndex, wordsRef.current, true, displayWord);
-                    }}
-                    bookId={book.id}
-                    chapterId={currentChapter.id}
-                    compact={false}
-                />
+                <div className="reader-focus-fade" aria-hidden={focusModeEnabled} inert={focusModeEnabled}>
+                    <TTSPlayer
+                        words={currentChapter.content}
+                        currentWordIndex={currentWordIndex}
+                        onPositionChange={(wordIndex) => {
+                            // Sync TTS position to RSVP reader
+                            indexRef.current = wordIndex;
+                            setCurrentWordIndex(wordIndex);
+                            const displayWord = resetDisplaySegments(wordsRef.current[wordIndex] || '');
+                            renderWord(wordIndex, wordsRef.current, true, displayWord);
+                        }}
+                        bookId={book.id}
+                        chapterId={currentChapter.id}
+                        compact={false}
+                    />
+                </div>
             )}
 
         </div>

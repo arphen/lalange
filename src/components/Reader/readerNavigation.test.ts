@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ChapterDocType } from '../../core/sync/db';
-import { findNextReadableChapter, getGlobalWordIndex } from './readerNavigation';
+import { findNextReadableChapter, findPreviousReadableChapter, getGlobalWordIndex } from './readerNavigation';
 
 const chapter = (
     id: string,
@@ -27,6 +27,18 @@ describe('reader navigation', () => {
         ];
 
         expect(findNextReadableChapter(chapters, 'chapter-1')?.id).toBe('chapter-5');
+    });
+
+    it('skips image and empty placeholders when moving backward', () => {
+        const chapters = [
+            chapter('chapter-1', ['previous']),
+            chapter('chapter-2', [], { metadata: { classificationType: 'image' } }),
+            chapter('chapter-3', ['license'], { metadata: { classificationType: 'license' } }),
+            chapter('chapter-4', [], { status: 'pending' }),
+            chapter('chapter-5', ['current']),
+        ];
+
+        expect(findPreviousReadableChapter(chapters, 'chapter-5')?.id).toBe('chapter-1');
     });
 
     it('calculates a book-global cursor from preceding chapter lengths', () => {

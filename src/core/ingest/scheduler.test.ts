@@ -124,6 +124,43 @@ describe('IngestionScheduler', () => {
         expect(mockChapter.incrementalModify).toHaveBeenCalled();
     });
 
+    it('should process density but leave summaries pending when summaries are disabled', async () => {
+        (useSettingsStore.getState as any).mockReturnValue({
+            aiEnabled: true,
+            summariesEnabled: false,
+            pacingModelTier: 'basic',
+        });
+
+        scheduler.addTask({
+            id: 'summary1',
+            bookId: 'book1',
+            chapterId: 'chapter1',
+            subchapterIndex: 0,
+            startWordIndex: 0,
+            endWordIndex: 100,
+            type: 'SUMMARY',
+            text: 'some text',
+        });
+        scheduler.addTask({
+            id: 'density1',
+            bookId: 'book1',
+            chapterId: 'chapter1',
+            subchapterIndex: 0,
+            startWordIndex: 0,
+            endWordIndex: 100,
+            type: 'DENSITY',
+            text: 'some text',
+        });
+
+        await new Promise(resolve => setTimeout(resolve, 10));
+
+        expect(analyzeDensityRange).toHaveBeenCalled();
+        expect(generateUnifiedCompletion).not.toHaveBeenCalled();
+        expect((scheduler as any).tasks).toEqual(expect.arrayContaining([
+            expect.objectContaining({ id: 'summary1', status: 'pending' }),
+        ]));
+    });
+
     it('should prioritize current chapter density over other tasks', async () => {
         // Pause processing by making the first task hang
         let resolveTask1: ((v: any) => void) | undefined;

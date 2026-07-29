@@ -4,6 +4,22 @@ import type { MyDatabase } from '../../core/sync/db';
 import { Archive } from './Archive';
 import * as dbModule from '../../core/sync/db';
 
+const mockRequestSetup = vi.hoisted(() => vi.fn());
+
+vi.mock('../../core/store/ai', () => ({
+    useAIStore: (selector: (state: Record<string, unknown>) => unknown) => selector({
+        isLoading: false,
+        progress: '',
+        requestSetup: mockRequestSetup,
+    }),
+}));
+
+vi.mock('../../core/store/settings', () => ({
+    useSettingsStore: (selector: (state: Record<string, unknown>) => unknown) => selector({
+        aiEnabled: false,
+    }),
+}));
+
 // Mock the DB module
 vi.mock('../../core/sync/db', () => ({
     initDB: vi.fn(),
@@ -38,7 +54,9 @@ describe('Archive', () => {
                                 {
                                     id: 'book1',
                                     title: 'Test Book',
-                                    toJSON: () => ({ id: 'book1', title: 'Test Book' }),
+                                    status: 'ready',
+                                    totalWords: 100,
+                                    toJSON: () => ({ id: 'book1', title: 'Test Book', status: 'ready', totalWords: 100 }),
                                     remove: mockRemoveBook
                                 }
                             ]);
@@ -55,7 +73,18 @@ describe('Archive', () => {
                     exec: async () => [{ remove: mockRemoveChapter }],
                     $: {
                         subscribe: (cb: (docs: unknown[]) => void) => {
-                            cb([]); // Return empty chapters for now
+                            cb([{
+                                id: 'chapter1',
+                                bookId: 'book1',
+                                status: 'ready',
+                                content: ['Test'],
+                                toJSON: () => ({
+                                    id: 'chapter1',
+                                    bookId: 'book1',
+                                    status: 'ready',
+                                    content: ['Test'],
+                                }),
+                            }]);
                             return { unsubscribe: vi.fn() };
                         }
                     }
@@ -111,5 +140,14 @@ describe('Archive', () => {
             expect(mockRemoveRawFile).toHaveBeenCalled();
             expect(mockRemoveReadingState).toHaveBeenCalled();
         });
+    });
+
+    it('offers adaptive pacing setup instead of starting density work while AI is off', async () => {
+        render(<Archive onOpenBook={mockOnOpenBook} />);
+
+        fireEvent.click(await screen.findByTitle('Estimate Density'));
+
+        expect(mockRequestSetup).toHaveBeenCalledWith('pacing');
+        expect(global.confirm).not.toHaveBeenCalledWith('Start density estimation for this book? This may take a while.');
     });
 });

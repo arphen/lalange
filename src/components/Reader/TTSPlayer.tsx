@@ -13,6 +13,7 @@ import {
     streamSpeech,
     splitIntoSentences,
     listVoices,
+    resolveVoiceId,
     type SentenceBoundary,
     type TTSAudioResult,
 } from '../../core/tts';
@@ -102,15 +103,37 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
     const [showVoiceMenu, setShowVoiceMenu] = useState(false);
     const [showSpeedMenu, setShowSpeedMenu] = useState(false);
     const [isExpanded, setIsExpanded] = useState(false);
+    const effectiveVoice = resolveVoiceId(voice);
     
     const generatorRef = useRef<AsyncGenerator<{ sentence: SentenceBoundary; audio: TTSAudioResult }> | null>(null);
     const isGeneratingRef = useRef(false);
     const abortControllerRef = useRef<AbortController | null>(null);
+    const generationIdRef = useRef(0);
+    const activeVoiceRef = useRef(effectiveVoice);
     const wordsRef = useRef<string[]>(words);
     const startSentenceIndexRef = useRef<number>(0);
     const hasStartedPlaybackRef = useRef(false); // Track if we've started with a valid position
     const bookIdRef = useRef<string | undefined>(bookId);
     const chapterIdRef = useRef<string | undefined>(chapterId);
+
+    useEffect(() => {
+        const repairedInvalidVoice = voice !== effectiveVoice;
+        const voiceChanged = activeVoiceRef.current !== effectiveVoice;
+        activeVoiceRef.current = effectiveVoice;
+
+        if (repairedInvalidVoice) setVoice(effectiveVoice);
+        if (!repairedInvalidVoice && !voiceChanged) return;
+
+        generationIdRef.current += 1;
+        abortControllerRef.current?.abort();
+        abortControllerRef.current = null;
+        generatorRef.current = null;
+        isGeneratingRef.current = false;
+        hasStartedPlaybackRef.current = false;
+        useTTSStore.getState().setGenerating(false);
+        ttsPlayer.stop();
+        ttsPlayer.clearQueue();
+    }, [effectiveVoice, setVoice, voice]);
     
     // Sync TTS word position to reader - only after playback has properly started
     useEffect(() => {
@@ -127,6 +150,8 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
         if (bookChanged || chapterChanged) {
             console.log(`[TTS UI] Book/chapter changed (book: ${bookIdRef.current} -> ${bookId}, chapter: ${chapterIdRef.current} -> ${chapterId}), full reset`);
             
+            generationIdRef.current += 1;
+
             // Abort any ongoing generation
             if (abortControllerRef.current) {
                 abortControllerRef.current.abort();
@@ -161,6 +186,8 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
         if (wordsChanged) {
             console.log('[TTS UI] Words changed, resetting');
             
+            generationIdRef.current += 1;
+
             // Stop generation
             if (abortControllerRef.current) {
                 abortControllerRef.current.abort();
@@ -193,6 +220,7 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
     // Cleanup on unmount
     useEffect(() => {
         return () => {
+            generationIdRef.current += 1;
             if (abortControllerRef.current) {
                 abortControllerRef.current.abort();
             }
@@ -207,9 +235,11 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
         if (isGeneratingRef.current || sentences.length === 0) return;
         if (fromSentenceIndex >= sentences.length) return;
         
-        // Create abort controller
-        abortControllerRef.current = new AbortController();
-        const signal = abortControllerRef.current.signal;
+        const generationId = generationIdRef.current + 1;
+        generationIdRef.current = generationId;
+        const abortController = new AbortController();
+        abortControllerRef.current = abortController;
+        const signal = abortController.signal;
         
         isGeneratingRef.current = true;
         useTTSStore.getState().setGenerating(true);
@@ -220,8 +250,8 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
         
         console.log(`[TTS UI] Generating sentences ${fromSentenceIndex} to ${endIndex - 1}`);
         
-        generatorRef.current = streamSpeech(sentencesToGenerate, {
-            voice,
+        const generator = streamSpeech(sentencesToGenerate, {
+            voice: effectiveVoice,
             speed,
             onSentenceStart: (sentence) => {
                 if (signal.aborted) return;
@@ -232,10 +262,11 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
                 ttsPlayer.queueAudio(audio, sentence);
             },
         });
+        generatorRef.current = generator;
         
         try {
             // eslint-disable-next-line @typescript-eslint/no-unused-vars
-            for await (const _ of generatorRef.current) {
+            for await (const _ of generator) {
                 if (signal.aborted) break;
             }
         } catch (err) {
@@ -243,11 +274,16 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
                 console.error('[TTS] Generation error:', err);
             }
         } finally {
-            isGeneratingRef.current = false;
-            useTTSStore.getState().setGenerating(false);
-            generatorRef.current = null;
+            if (generationIdRef.current === generationId) {
+                isGeneratingRef.current = false;
+                useTTSStore.getState().setGenerating(false);
+                generatorRef.current = null;
+                if (abortControllerRef.current === abortController) {
+                    abortControllerRef.current = null;
+                }
+            }
         }
-    }, [sentences, voice, speed]);
+    }, [effectiveVoice, sentences, speed]);
     
     // Set up player callbacks
     useEffect(() => {
@@ -377,6 +413,8 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
     // Handle stop - full reset of all TTS resources
     const handleStop = useCallback(() => {
         console.log('[TTS UI] Full stop - clearing all resources');
+
+        generationIdRef.current += 1;
         
         // Abort any ongoing generation
         if (abortControllerRef.current) {
@@ -399,7 +437,7 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
     
     // Voice options
     const voices = listVoices();
-    const currentVoice = voices.find(v => v.id === voice);
+    const currentVoice = voices.find(v => v.id === effectiveVoice);
     
     // Speed presets
     const speedOptions = [0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
@@ -527,7 +565,7 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
                                             setShowVoiceMenu(false);
                                         }}
                                         className={`w-full px-3 py-2 text-left text-sm hover:bg-white/10 transition-colors flex items-center justify-between ${
-                                            v.id === voice ? 'bg-purple-600/30 text-purple-300' : 'text-white/80'
+                                            v.id === effectiveVoice ? 'bg-purple-600/30 text-purple-300' : 'text-white/80'
                                         }`}
                                     >
                                         <span>{v.name}</span>

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { initDB, type BookDocType } from '../../core/sync/db';
 import { initialIngest, processChaptersInBackground, stopProcessing, estimateBookDensity } from '../../core/ingest/pipeline';
 import { useAIStore } from '../../core/store/ai';
+import { useSettingsStore } from '../../core/store/settings';
 import { BookCard } from './BookCard';
 import { SyncModal } from '../Sync/SyncModal';
 import { SeoHead } from '../SeoHead';
@@ -19,6 +20,8 @@ export const Archive: React.FC<ArchiveProps> = ({ onOpenBook }) => {
     // Only subscribe to the specific AI state properties we need
     const aiIsLoading = useAIStore((s) => s.isLoading);
     const aiProgress = useAIStore((s) => s.progress);
+    const requestAISetup = useAIStore((s) => s.requestSetup);
+    const aiEnabled = useSettingsStore((s) => s.aiEnabled);
 
     useEffect(() => {
         let sub: { unsubscribe: () => void };
@@ -108,6 +111,10 @@ export const Archive: React.FC<ArchiveProps> = ({ onOpenBook }) => {
 
     const handleEstimateDensity = async (e: React.MouseEvent, bookId: string) => {
         e.stopPropagation();
+        if (!aiEnabled) {
+            if (!aiIsLoading) requestAISetup('pacing');
+            return;
+        }
         if (confirm('Start density estimation for this book? This may take a while.')) {
             estimateBookDensity(bookId).catch(console.error);
         }

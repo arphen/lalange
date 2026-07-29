@@ -103,7 +103,6 @@ describe('Sidebar Component', () => {
         chapters: [createMockChapter()],
         currentChapter: null,
         onLoadChapter: vi.fn(),
-        onInspectChapter: vi.fn(),
         wpm: 300,
         now: Date.now(),
     };
@@ -112,110 +111,61 @@ describe('Sidebar Component', () => {
         vi.clearAllMocks();
     });
 
-    describe('Progress Bar Rendering', () => {
-        it('should render fused 2px progress bar with density and summary rows', () => {
-            const chapter = createMockChapter({
-                densities: [0.5, 0.5, 0, 0, 0, 0, 0, 0, 0, 0], // Partial density
-                subchapters: [
-                    { title: 'Part 1', summary: '', startWordIndex: 0, endWordIndex: 5 },
-                ],
-            });
-            render(<Sidebar {...defaultProps} chapters={[chapter]} />);
+    describe('Navigation', () => {
+        it('loads a chapter when its row is clicked', () => {
+            const chapter = createMockChapter();
+            const onLoadChapter = vi.fn();
+            render(<Sidebar {...defaultProps} chapters={[chapter]} onLoadChapter={onLoadChapter} />);
 
-            // Should show progress bar since density < 1 and no summary
-            const progressBar = screen.getByTestId('progress-bar-0');
-            expect(progressBar).toBeInTheDocument();
-            expect(progressBar).toHaveClass('h-[2px]'); // 2px total height
+            fireEvent.click(screen.getByTestId('sidebar-chapter-button'));
 
-            // Should have density bar (1px)
-            const densityBar = screen.getByTestId('density-bar-0');
-            expect(densityBar).toHaveClass('h-[1px]');
-
-            // Should have summary bar (1px)
-            const summaryBar = screen.getByTestId('summary-bar-0');
-            expect(summaryBar).toHaveClass('h-[1px]');
+            expect(onLoadChapter).toHaveBeenCalledWith('chapter-1');
         });
 
-        it('should show density fill proportional to processed densities', () => {
-            const chapter = createMockChapter({
-                densities: [0.5, 0.5, 0, 0, 0, 0, 0, 0, 0, 0], // 2/5 = 40% for first subchapter (0-5)
-                subchapters: [
-                    { title: 'Part 1', summary: '', startWordIndex: 0, endWordIndex: 5 },
-                ],
-            });
-            render(<Sidebar {...defaultProps} chapters={[chapter]} />);
+        it('loads a section start regardless of viewport size', () => {
+            const chapter = createMockChapter();
+            const onLoadChapter = vi.fn();
+            render(<Sidebar {...defaultProps} chapters={[chapter]} onLoadChapter={onLoadChapter} />);
 
-            const densityFill = screen.getByTestId('density-fill-0');
-            expect(densityFill).toHaveStyle({ width: '40%' });
+            fireEvent.click(screen.getByTestId('subchapter-btn-1'));
+
+            expect(onLoadChapter).toHaveBeenCalledWith('chapter-1', 5);
         });
 
-        it('should show summary shimmer when density is complete but no summary', () => {
-            const chapter = createMockChapter({
-                densities: [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5], // All processed
-                subchapters: [
-                    { title: 'Part 1', summary: '', startWordIndex: 0, endWordIndex: 5 }, // No summary
-                ],
-            });
-            render(<Sidebar {...defaultProps} chapters={[chapter]} />);
+        it('marks the current chapter and section', () => {
+            const chapter = createMockChapter();
+            render(<Sidebar {...defaultProps} chapters={[chapter]} currentChapter={chapter} currentWordIndex={6} />);
 
-            // Should show shimmer animation (density done, summary pending)
-            const shimmer = screen.getByTestId('summary-shimmer-0');
-            expect(shimmer).toBeInTheDocument();
-            expect(shimmer).toHaveClass('animate-shimmer');
+            expect(screen.getByTestId('sidebar-chapter-button')).toHaveAttribute('aria-current', 'page');
+            expect(screen.getByTestId('subchapter-btn-1')).toHaveAttribute('aria-current', 'location');
+            expect(screen.getByTestId('chapter-progress-chapter-1')).toHaveAttribute('aria-valuenow', '60');
+            expect(screen.getByRole('progressbar', { name: 'Book progress' })).toHaveAttribute('aria-valuenow', '60');
+            expect(screen.getAllByText('60%')).toHaveLength(2);
+            expect(screen.getByText('Here · 20%')).toBeInTheDocument();
         });
 
-        it('should show solid purple bar when density complete but still processing', () => {
-            // This test validates that when density is complete (100%) and summary exists,
-            // but there's still a chunk being processed (densityProgress < 1 on another chunk),
-            // the purple bar shows as complete.
-            // NOTE: When both density AND summary are complete for ALL subchapters, 
-            // the progress bar is hidden entirely (see "should hide progress bars" test).
-            
-            // Create a chapter where first subchapter is complete, but second is not
-            const chapter = createMockChapter({
-                densities: [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5],
-                subchapters: [
-                    { title: 'Part 1', summary: '', startWordIndex: 0, endWordIndex: 5 }, // Density done, no summary - shows shimmer
-                    { title: 'Part 2', summary: 'Completed summary', startWordIndex: 5, endWordIndex: 10 }, // Both done - hidden
-                ],
-            });
-            render(<Sidebar {...defaultProps} chapters={[chapter]} />);
+        it('does not infer progress for non-current chapters', () => {
+            const firstChapter = createMockChapter();
+            const secondChapter = createMockChapter({ id: 'chapter-2', index: 1, title: 'Chapter 2' });
+            render(
+                <Sidebar
+                    {...defaultProps}
+                    chapters={[firstChapter, secondChapter]}
+                    currentChapter={secondChapter}
+                    currentWordIndex={6}
+                />,
+            );
 
-            // First subchapter: density done, no summary -> shows shimmer
-            const shimmer = screen.getByTestId('summary-shimmer-0');
-            expect(shimmer).toBeInTheDocument();
-            
-            // Second subchapter: both complete -> bar hidden entirely
-            const progressBar1 = screen.queryByTestId('progress-bar-1');
-            expect(progressBar1).not.toBeInTheDocument();
+            expect(screen.getByTestId('chapter-progress-chapter-1')).toHaveAttribute('aria-valuenow', '0');
+            expect(screen.getByTestId('chapter-progress-chapter-2')).toHaveAttribute('aria-valuenow', '60');
         });
 
-        it('should show waiting state when density is not complete', () => {
-            const chapter = createMockChapter({
-                densities: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], // No density yet
-                subchapters: [
-                    { title: 'Part 1', summary: '', startWordIndex: 0, endWordIndex: 5 },
-                ],
-            });
+        it('does not expose analysis status in the navigation drawer', () => {
+            const chapter = createMockChapter({ densities: new Array(10).fill(0) });
             render(<Sidebar {...defaultProps} chapters={[chapter]} />);
 
-            const summaryWaiting = screen.getByTestId('summary-waiting-0');
-            expect(summaryWaiting).toBeInTheDocument();
-            expect(summaryWaiting).toHaveClass('w-0');
-        });
-
-        it('should hide progress bars when both density and summary are complete', () => {
-            const chapter = createMockChapter({
-                densities: [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5],
-                subchapters: [
-                    { title: 'Part 1', summary: 'Done', startWordIndex: 0, endWordIndex: 5 },
-                ],
-            });
-            render(<Sidebar {...defaultProps} chapters={[chapter]} />);
-
-            // Progress bar should not exist when both complete
-            const progressBar = screen.queryByTestId('progress-bar-0');
-            expect(progressBar).not.toBeInTheDocument();
+            expect(screen.queryByText(/analyzing density/i)).not.toBeInTheDocument();
+            expect(screen.queryByText(/generating summary/i)).not.toBeInTheDocument();
         });
     });
 
@@ -249,110 +199,6 @@ describe('Sidebar Component', () => {
         });
     });
 
-    describe('Summary Expansion', () => {
-        it('loads subchapter start on mobile tap and keeps summary collapsed', () => {
-            const chapter = createMockChapter({
-                subchapters: [
-                    { title: 'Part 1', summary: 'Summary text', startWordIndex: 0, endWordIndex: 5 },
-                ],
-            });
-            const onLoadChapter = vi.fn();
-            const originalWidth = window.innerWidth;
-            Object.defineProperty(window, 'innerWidth', {
-                configurable: true,
-                value: 375,
-            });
-
-            try {
-                render(
-                    <Sidebar
-                        {...defaultProps}
-                        chapters={[chapter]}
-                        onLoadChapter={onLoadChapter}
-                    />
-                );
-
-                fireEvent.click(screen.getByTestId('subchapter-btn-0'));
-
-                expect(onLoadChapter).toHaveBeenCalledWith('chapter-1', 0);
-
-                const summaryContainer = screen.getByTestId('summary-content-0').parentElement;
-                expect(summaryContainer).toHaveClass('max-h-0');
-
-                const subchapterPlayButton = screen.getByTitle('Read Subchapter');
-                expect(subchapterPlayButton).toHaveClass('hidden');
-            } finally {
-                Object.defineProperty(window, 'innerWidth', {
-                    configurable: true,
-                    value: originalWidth,
-                });
-            }
-        });
-
-        it('should expand summary on click when summary exists', () => {
-            const chapter = createMockChapter({
-                densities: [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5],
-                subchapters: [
-                    { title: 'Part 1', summary: 'This is the summary text', startWordIndex: 0, endWordIndex: 5 },
-                ],
-            });
-            render(<Sidebar {...defaultProps} chapters={[chapter]} />);
-
-            // Summary container should be collapsed initially (max-h-0)
-            const summaryContent = screen.getByTestId('summary-content-0');
-            const container = summaryContent.parentElement;
-            expect(container).toHaveClass('max-h-0');
-
-            // Click to expand
-            const button = screen.getByTestId('subchapter-btn-0');
-            fireEvent.click(button);
-
-            // Summary container should be expanded (max-h-96)
-            expect(container).toHaveClass('max-h-96');
-            expect(screen.getByText('This is the summary text')).toBeInTheDocument();
-        });
-
-        it('should collapse summary on second click', () => {
-            const chapter = createMockChapter({
-                densities: [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5],
-                subchapters: [
-                    { title: 'Part 1', summary: 'Summary to toggle', startWordIndex: 0, endWordIndex: 5 },
-                ],
-            });
-            render(<Sidebar {...defaultProps} chapters={[chapter]} />);
-
-            const button = screen.getByTestId('subchapter-btn-0');
-            const summaryContent = screen.getByTestId('summary-content-0');
-            const container = summaryContent.parentElement;
-            
-            // Click to expand
-            fireEvent.click(button);
-            expect(container).toHaveClass('max-h-96');
-
-            // Click to collapse
-            fireEvent.click(button);
-            expect(container).toHaveClass('max-h-0');
-        });
-
-        it('should show generating message when density complete but no summary', () => {
-            const chapter = createMockChapter({
-                densities: [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5],
-                subchapters: [
-                    { title: 'Part 1', summary: '', startWordIndex: 0, endWordIndex: 5 },
-                ],
-            });
-            render(<Sidebar {...defaultProps} chapters={[chapter]} />);
-
-            const button = screen.getByTestId('subchapter-btn-0');
-            fireEvent.click(button);
-
-            // Should show "Generating summary..." message
-            const generatingEl = screen.getByTestId('summary-generating-0');
-            expect(generatingEl).toBeInTheDocument();
-            expect(generatingEl.parentElement).toHaveClass('max-h-96');
-        });
-    });
-
     describe('Image Chapter Filtering', () => {
         it('should filter out image chapters from display', () => {
             const imageChapter = createMockChapter({
@@ -379,7 +225,7 @@ describe('Sidebar Component', () => {
         it('should not render global summaries section when empty', () => {
             render(<Sidebar {...defaultProps} globalSummaries={[]} />);
 
-            expect(screen.queryByText('📚 Book Summaries')).not.toBeInTheDocument();
+            expect(screen.queryByText('Recaps')).not.toBeInTheDocument();
         });
 
         it('should render global summaries when provided', () => {
@@ -406,7 +252,7 @@ describe('Sidebar Component', () => {
 
             render(<Sidebar {...defaultProps} globalSummaries={globalSummaries} />);
 
-            expect(screen.getByText('📚 Book Summaries')).toBeInTheDocument();
+            expect(screen.getByText('Recaps')).toBeInTheDocument();
             expect(screen.getByText('Summary 1')).toBeInTheDocument();
             expect(screen.getByText('Summary 2')).toBeInTheDocument();
         });
@@ -490,9 +336,8 @@ describe('Sidebar Component', () => {
             const activeButton = screen.getByText('Summary 1').closest('button');
             const inactiveButton = screen.getByText('Summary 2').closest('button');
 
-            // Active summary should have purple highlight classes
-            expect(activeButton).toHaveClass('bg-purple-900/40');
-            expect(activeButton).toHaveClass('border-purple-500/50');
+            expect(activeButton).toHaveClass('bg-cyan-950/40');
+            expect(activeButton).toHaveClass('border-cyan-400/40');
             
             // Inactive summary should not have purple highlight
             expect(inactiveButton).not.toHaveClass('bg-purple-900/40');

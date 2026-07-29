@@ -13,6 +13,7 @@ import {
     findWordForAudioTime,
     listVoices,
     getVoice,
+    resolveVoiceId,
     VOICES,
     DEFAULT_VOICE,
     type SentenceBoundary,
@@ -255,6 +256,16 @@ describe('Voice utilities', () => {
         it('should return undefined for invalid ID', () => {
             const voice = getVoice('invalid-voice-id');
             expect(voice).toBeUndefined();
+        });
+    });
+
+    describe('resolveVoiceId', () => {
+        it('keeps a current English voice', () => {
+            expect(resolveVoiceId('bf_emma')).toBe('bf_emma');
+        });
+
+        it('replaces an unknown legacy voice with the English default', () => {
+            expect(resolveVoiceId('zf_xiaobei')).toBe(DEFAULT_VOICE);
         });
     });
     

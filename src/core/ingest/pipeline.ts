@@ -456,6 +456,7 @@ export const scheduleGlobalSummaries = async (bookId: string, startFromGlobalInd
     if (!book) return;
     
     const settings = useSettingsStore.getState();
+    const summariesEnabled = settings.summariesEnabled !== false;
     const summaryInterval = settings.summaryChunkSize || 2500;
     const totalWords = book.totalWords || 0;
     
@@ -516,7 +517,7 @@ export const scheduleGlobalSummaries = async (bookId: string, startFromGlobalInd
             continue;
         }
         
-        const initialStatus = i < INITIAL_SUMMARIES ? 'pending' : 'dormant';
+        const initialStatus = summariesEnabled && i < INITIAL_SUMMARIES ? 'pending' : 'dormant';
         
         scheduler.addGlobalSummaryTask({
             id: `${bookId}_gsummary_${i}`,

@@ -41,6 +41,8 @@ interface SettingsState {
     setFocusModeEnabled: (enabled: boolean) => void;
     aiEnabled: boolean;
     setAiEnabled: (enabled: boolean) => void;
+    summariesEnabled: boolean;
+    setSummariesEnabled: (enabled: boolean) => void;
 
     // UI
     sidebarOpen: boolean;
@@ -89,10 +91,6 @@ interface SettingsState {
     setPacingOverlapTokens: (tokens: number) => void;
     pacingSensitivity: number;
     setPacingSensitivity: (sensitivity: number) => void;
-
-    // Onboarding
-    hasCompletedOnboarding: boolean;
-    setHasCompletedOnboarding: (completed: boolean) => void;
 
     // Librarian
     librarianModelTier: ModelTier;
@@ -161,8 +159,10 @@ export const useSettingsStore = create<SettingsState>()(
             setRiverBottomEnabled: (riverBottomEnabled) => set({ riverBottomEnabled }),
             focusModeEnabled: false,
             setFocusModeEnabled: (focusModeEnabled) => set({ focusModeEnabled }),
-            aiEnabled: true,
+            aiEnabled: false,
             setAiEnabled: (aiEnabled) => set({ aiEnabled }),
+            summariesEnabled: false,
+            setSummariesEnabled: (summariesEnabled) => set({ summariesEnabled }),
 
             sidebarOpen: true,
             setSidebarOpen: (sidebarOpen) => set({ sidebarOpen }),
@@ -208,9 +208,6 @@ export const useSettingsStore = create<SettingsState>()(
             pacingContextTokens: 128,
             setPacingContextTokens: (pacingContextTokens) => set({ pacingContextTokens }),
             pacingOverlapTokens: 16,
-            hasCompletedOnboarding: false,
-            setHasCompletedOnboarding: (hasCompletedOnboarding) => set({ hasCompletedOnboarding }),
-
             setPacingOverlapTokens: (pacingOverlapTokens) => set({ pacingOverlapTokens }),
             pacingSensitivity: 50,
             setPacingSensitivity: (pacingSensitivity) => set({ pacingSensitivity }),

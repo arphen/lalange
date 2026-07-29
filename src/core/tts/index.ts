@@ -20,6 +20,7 @@ export {
     // Voice utilities
     listVoices,
     getVoice,
+    resolveVoiceId,
     VOICES,
     DEFAULT_VOICE,
     

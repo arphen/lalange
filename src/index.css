@@ -29,6 +29,17 @@
   --glass-border: 1px solid rgba(255, 255, 255, 0.15);
   --glass-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.5);
 
+  --reader-background: #050606;
+  --reader-control-rail: rgba(13, 14, 14, 0.76);
+  --reader-control-rail-edge: rgba(255, 255, 255, 0.1);
+  --reader-control-active: rgba(51, 153, 255, 0.1);
+  --reader-control-ink: rgba(255, 255, 255, 0.66);
+  --reader-accent-blue: #63B3ED;
+  --reader-accent-green: #5EEAD4;
+  --reader-marker-ink: rgba(255, 255, 255, 0.3);
+  --reader-progress: linear-gradient(90deg, rgba(51, 153, 255, 0.08), rgba(94, 234, 212, 0.14) 68%, transparent 100%);
+  --reader-progress-section: linear-gradient(90deg, rgba(51, 153, 255, 0.05), rgba(94, 234, 212, 0.09) 68%, transparent 100%);
+
   /* --- KINETICS: THE TRADE WINDS (ALISIOS) --- */
   --ease-swell: cubic-bezier(0.4, 0.0, 0.2, 1);
   --anim-breath: 6000ms;
@@ -98,6 +109,14 @@ body.theme-dunes {
   --glass-tint: rgba(255, 250, 238, 0.78);
   --glass-border: 1px solid rgba(142, 94, 48, 0.22);
   --glass-shadow: 0 10px 30px rgba(70, 46, 20, 0.14);
+  --reader-background: #F8F2E6;
+  --reader-control-rail: rgba(48, 42, 36, 0.82);
+  --reader-control-rail-edge: rgba(47, 36, 24, 0.34);
+  --reader-control-active: rgba(255, 248, 232, 0.12);
+  --reader-control-ink: rgba(255, 248, 232, 0.72);
+  --reader-marker-ink: rgba(47, 36, 24, 0.4);
+  --reader-progress: linear-gradient(90deg, rgba(51, 153, 255, 0.08), rgba(1, 121, 111, 0.13) 68%, transparent 100%);
+  --reader-progress-section: linear-gradient(90deg, rgba(51, 153, 255, 0.05), rgba(1, 121, 111, 0.09) 68%, transparent 100%);
 }
 
 /* Paper-like contrast remap for common dark utility classes */
@@ -306,6 +325,460 @@ body.theme-ash {
 /* --- COMPONENTS --- */
 
 @layer components {
+  .reader-shell {
+    background: var(--reader-background);
+  }
+
+  .reader-main-stage {
+    isolation: isolate;
+  }
+
+  .reader-toolbar-button {
+    display: inline-flex;
+    width: 2.75rem;
+    height: 2.75rem;
+    flex: 0 0 2.75rem;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.125rem;
+    border: 0;
+    border-radius: 1px;
+    background: transparent;
+    color: var(--reader-control-ink);
+    box-shadow: none;
+    transition: color 160ms ease, background-color 160ms ease;
+  }
+
+  .reader-toolbar-controls {
+    gap: 0;
+    padding: 2px;
+    border: 1px solid var(--reader-control-rail-edge);
+    border-radius: 2px;
+    background: var(--reader-control-rail);
+    box-shadow: 0 18px 42px rgba(0, 0, 0, 0.2), inset 0 1px rgba(255, 255, 255, 0.03);
+    backdrop-filter: blur(18px) saturate(75%);
+    -webkit-backdrop-filter: blur(18px) saturate(75%);
+    transition:
+      background-color 520ms var(--ease-swell),
+      border-color 520ms var(--ease-swell),
+      box-shadow 520ms var(--ease-swell),
+      backdrop-filter 520ms var(--ease-swell);
+  }
+
+  .reader-shell .reader-focus-fade {
+    visibility: visible;
+    opacity: 1;
+    transition:
+      opacity 680ms var(--ease-swell),
+      visibility 0s linear 0s;
+  }
+
+  .reader-shell .reader-toolbar-button.reader-focus-fade {
+    transition:
+      opacity 520ms var(--ease-swell),
+      visibility 0s linear 0s,
+      color 160ms ease,
+      background-color 160ms ease,
+      transform 150ms ease;
+  }
+
+  .reader-shell .reader-context-region.reader-focus-fade {
+    transition:
+      opacity 760ms var(--ease-swell),
+      visibility 0s linear 0s;
+  }
+
+  .reader-shell--focus .reader-focus-fade {
+    visibility: hidden;
+    opacity: 0 !important;
+    pointer-events: none !important;
+    transition:
+      opacity 520ms var(--ease-swell),
+      visibility 0s linear 520ms;
+  }
+
+  .reader-shell--focus .reader-context-region {
+    transition:
+      opacity 760ms var(--ease-swell),
+      visibility 0s linear 760ms;
+  }
+
+  .reader-shell--focus .reader-speed-dock {
+    transition-delay: 70ms, 590ms;
+  }
+
+  .reader-shell--focus .reader-toolbar-controls .reader-toolbar-button.reader-focus-fade {
+    transition:
+      opacity 520ms var(--ease-swell) 140ms,
+      visibility 0s linear 660ms,
+      color 160ms ease,
+      background-color 160ms ease,
+      transform 150ms ease;
+  }
+
+  .reader-shell--focus .reader-toolbar-controls {
+    border-color: transparent;
+    background: transparent;
+    box-shadow: none;
+    backdrop-filter: blur(0) saturate(100%);
+    -webkit-backdrop-filter: blur(0) saturate(100%);
+    transition-delay: 170ms;
+  }
+
+  .reader-focus-toggle {
+    position: relative;
+    z-index: 1;
+    transition:
+      color 280ms var(--ease-swell),
+      background-color 280ms var(--ease-swell);
+  }
+
+  .reader-shell--focus .reader-focus-toggle {
+    background: transparent;
+    color: var(--reader-accent-green);
+  }
+
+  .reader-toolbar-button:hover:not(:disabled),
+  .reader-toolbar-button:focus-visible,
+  .reader-toolbar-button--active {
+    background: var(--reader-control-active);
+    color: var(--reader-accent-green);
+  }
+
+  .reader-toolbar-button:disabled {
+    cursor: not-allowed;
+    opacity: 0.32;
+  }
+
+  .reader-toolbar-icon {
+    width: 1.125rem;
+    height: 1.125rem;
+    stroke-width: 1.75;
+  }
+
+  .reader-toolbar-label {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 0.42rem;
+    font-weight: 700;
+    line-height: 1;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  @media (max-width: 359px) {
+    .reader-toolbar {
+      padding-inline: 0.375rem;
+    }
+
+    .reader-toolbar [data-testid="reader-toolbar-controls"] {
+      gap: 0;
+    }
+
+    .reader-toolbar-button {
+      width: 2.5rem;
+      height: 2.5rem;
+      flex-basis: 2.5rem;
+    }
+  }
+
+  @media (min-width: 768px) {
+    .reader-toolbar-button {
+      width: 3.5rem;
+      height: 3rem;
+      flex-basis: 3.5rem;
+    }
+
+  }
+
+  .reader-reading-plane {
+    max-width: 52rem;
+  }
+
+  .reader-book-progress {
+    position: absolute;
+    inset: 0 0 auto;
+    z-index: 95;
+    height: 1px;
+    background: rgba(99, 179, 237, 0.08);
+    pointer-events: none;
+  }
+
+  .reader-book-progress > span {
+    display: block;
+    height: 100%;
+    background: linear-gradient(90deg, var(--reader-accent-blue), var(--reader-accent-green));
+    opacity: 0.72;
+    transition: width 500ms var(--ease-swell);
+  }
+
+  .reader-progress-reminder {
+    position: absolute;
+    top: 4.75rem;
+    left: 50%;
+    z-index: 65;
+    color: var(--reader-marker-ink);
+    font-family: 'Roboto Mono', monospace;
+    font-size: 0.6rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    transform: translateX(-50%);
+    animation: readerProgressReminder 3500ms var(--ease-swell) both;
+    pointer-events: none;
+  }
+
+  .reader-river-marker {
+    position: absolute;
+    left: clamp(1rem, 4vw, 3.5rem);
+    z-index: 20;
+    display: flex;
+    max-width: min(58vw, 24rem);
+    align-items: center;
+    gap: 0.65rem;
+    color: rgba(99, 179, 237, 0.55);
+    font-family: 'Roboto Mono', monospace;
+    font-size: 0.55rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    line-height: 1;
+    text-transform: uppercase;
+    pointer-events: none;
+  }
+
+  .reader-river-marker::before {
+    width: 2.5rem;
+    height: 1px;
+    flex: 0 0 auto;
+    background: linear-gradient(90deg, var(--reader-accent-blue), var(--reader-accent-green));
+    content: '';
+    opacity: 0.52;
+  }
+
+  .reader-river-marker--chapter {
+    bottom: 0.65rem;
+  }
+
+  .reader-river-marker--progress {
+    top: 0.65rem;
+    color: rgba(94, 234, 212, 0.52);
+  }
+
+  .reader-river-marker__detail {
+    overflow: hidden;
+    color: var(--reader-marker-ink);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .reader-context-region--top {
+    mask-image: linear-gradient(to bottom, transparent 0%, black 18%, black 100%);
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 18%, black 100%);
+  }
+
+  .reader-context-region--bottom {
+    mask-image: linear-gradient(to bottom, black 0%, black 82%, transparent 100%);
+    -webkit-mask-image: linear-gradient(to bottom, black 0%, black 82%, transparent 100%);
+  }
+
+  .reader-focus-region {
+    background: transparent;
+  }
+
+  .reader-focus-lane {
+    background: transparent;
+  }
+
+  .reader-scroll-surface {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  .reader-scroll-surface::-webkit-scrollbar {
+    display: none;
+    width: 0;
+    height: 0;
+  }
+
+  .reader-contents-panel {
+    background: var(--reader-background);
+    transition: transform 500ms var(--ease-swell);
+  }
+
+  .reader-contents {
+    padding-top: 3.75rem;
+    padding-bottom: 3.5rem;
+  }
+
+  @media (min-width: 768px) {
+    .reader-contents {
+      padding-top: 5rem;
+    }
+  }
+
+  .reader-contents-header {
+    background: transparent;
+  }
+
+  .reader-contents-progress {
+    color: rgba(255, 255, 255, 0.42);
+  }
+
+  .reader-chapter-row {
+    background: transparent;
+  }
+
+  .reader-section-row {
+    background: transparent;
+  }
+
+  .reader-progress-track {
+    position: relative;
+    width: 100%;
+    height: 3px;
+    overflow: hidden;
+    background: rgba(148, 163, 184, 0.16);
+  }
+
+  .reader-progress-track > span {
+    display: block;
+    height: 100%;
+    background: linear-gradient(90deg, var(--reader-accent-blue), var(--reader-accent-green));
+    transition: width 420ms var(--ease-swell);
+  }
+
+  .reader-progress-track--idle {
+    opacity: 0.34;
+  }
+
+  .reader-progress-value {
+    color: var(--reader-accent-green);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .reader-speed-dock {
+    background: transparent;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .reader-focus-fade,
+    .reader-toolbar-controls,
+    .reader-focus-toggle {
+      transition-duration: 0.01ms !important;
+      transition-delay: 0s !important;
+    }
+
+    .reader-shell--focus .reader-focus-fade {
+      transition-delay: 0s !important;
+    }
+
+  }
+
+  .reader-speed-button {
+    min-width: 2.75rem;
+    min-height: 2.75rem;
+    border-radius: 999px;
+    background: transparent;
+  }
+
+  .reader-speed-button:hover {
+    background: transparent;
+  }
+
+  .reader-speed-readout {
+    background: transparent;
+  }
+
+  .reader-transition-label {
+    max-width: min(82vw, 34rem);
+    overflow: hidden;
+    color: rgba(99, 179, 237, 0.78);
+    letter-spacing: 0.08em;
+    text-align: center;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .reader-transition-count {
+    color: var(--reader-accent-green);
+  }
+
+  .reader-reading-plane::after {
+    position: absolute;
+    inset: 0;
+    z-index: 25;
+    background: linear-gradient(
+      to bottom,
+      transparent 20%,
+      rgba(5, 6, 6, 0.72) 44%,
+      rgba(5, 6, 6, 0.72) 56%,
+      transparent 80%
+    );
+    content: '';
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 720ms var(--ease-swell);
+  }
+
+  .reader-reading-plane .reader-focus-lane,
+  .reader-reading-plane .reader-context-region {
+    transition:
+      opacity 720ms var(--ease-swell),
+      transform 1100ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .reader-reading-plane--braking .reader-focus-lane {
+    opacity: 0;
+    transform: scale(0.985);
+  }
+
+  .reader-reading-plane--braking .reader-context-region,
+  .reader-reading-plane--crossing .reader-context-region {
+    opacity: 0;
+  }
+
+  .reader-reading-plane--crossing::after {
+    opacity: 0.72;
+  }
+
+  .reader-reading-plane--crossing .reader-focus-lane {
+    opacity: 0;
+    transform: scale(0.975);
+  }
+
+  .reader-reading-plane--launching .reader-focus-lane {
+    opacity: 1;
+    transform: scale(1);
+    transition:
+      opacity 1100ms cubic-bezier(0.22, 1, 0.36, 1),
+      transform 1100ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .reader-reading-plane.reader-reading-plane--launching .reader-context-region {
+    opacity: 1;
+    transform: translateY(0);
+    transition:
+      opacity 1100ms var(--ease-swell),
+      transform 1100ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .reader-reading-plane--launching .reader-context-region.reader-context-region--bottom {
+    transition-delay: 180ms;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .reader-reading-plane::after,
+    .reader-reading-plane .reader-focus-lane,
+    .reader-reading-plane .reader-context-region {
+      transition-duration: 0.01ms !important;
+      transition-delay: 0s !important;
+    }
+  }
+
+  .reader-reading-plane--chapter-arrival .reader-river-marker::before {
+    animation: readerChapterArrival 1400ms var(--ease-swell) both;
+  }
+
   .calima-glass {
     background: var(--glass-tint);
     backdrop-filter: blur(var(--glass-blur));
@@ -363,6 +836,38 @@ body.theme-ash {
 }
 
 /* --- ANIMATIONS --- */
+
+@keyframes readerChapterArrival {
+  0% {
+    opacity: 0.22;
+    transform: scaleX(0.35);
+    transform-origin: left;
+  }
+
+  42% {
+    opacity: 0.95;
+    transform: scaleX(1.3);
+    transform-origin: left;
+  }
+
+  100% {
+    opacity: 0.52;
+    transform: scaleX(1);
+    transform-origin: left;
+  }
+}
+
+@keyframes readerProgressReminder {
+  0%, 100% {
+    opacity: 0;
+    transform: translate(-50%, -0.3rem);
+  }
+
+  16%, 78% {
+    opacity: 0.72;
+    transform: translate(-50%, 0);
+  }
+}
 
 @keyframes alisiosWind {
   0% {

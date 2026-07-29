@@ -1,8 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react';
 import type { MyDatabase } from '../../core/sync/db';
 import { Reader } from './Reader';
 import * as dbModule from '../../core/sync/db';
+import { useSettingsStore } from '../../core/store/settings';
+import { useAIStore } from '../../core/store/ai';
 
 const mockSetSchedulerCursor = vi.hoisted(() => vi.fn());
 
@@ -33,6 +35,10 @@ describe('Reader Component', () => {
         title: 'Chapter 1',
         status: 'ready',
         content: ['Hello', 'world', 'this', 'is', 'a', 'test'],
+        subchapters: [
+            { title: 'Part 1', summary: '', startWordIndex: 0, endWordIndex: 3 },
+            { title: 'Part 2', summary: '', startWordIndex: 3, endWordIndex: 6 },
+        ],
         toJSON: function () { return this; }
     };
 
@@ -90,6 +96,18 @@ describe('Reader Component', () => {
 
     beforeEach(() => {
         vi.clearAllMocks();
+        useSettingsStore.persist.setOptions({
+            storage: {
+                getItem: vi.fn(() => null),
+                setItem: vi.fn(),
+                removeItem: vi.fn(),
+            },
+        });
+        useSettingsStore.getState().aiEnabled = true;
+        useSettingsStore.getState().focusModeEnabled = false;
+        useSettingsStore.getState().riverTopEnabled = true;
+        useSettingsStore.getState().riverBottomEnabled = true;
+        useAIStore.getState().isLoading = false;
         // Reset the reading_states.findOne mock to return default state (chapter-1, word 0)
         mockDb.reading_states.findOne.mockReturnValue({
             exec: vi.fn().mockResolvedValue(mockReadingState)
@@ -99,14 +117,23 @@ describe('Reader Component', () => {
 
     it('should render loading state initially', () => {
         render(<Reader book={mockBook} />);
-        expect(screen.getByText('INITIALIZING COCKPIT...')).toBeInTheDocument();
+        expect(screen.getByRole('status')).toHaveTextContent('Loading book...');
+    });
+
+    it('should let the user return to the library while loading', () => {
+        const onBack = vi.fn();
+        render(<Reader book={mockBook} onBack={onBack} />);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Back to library' }));
+
+        expect(onBack).toHaveBeenCalledOnce();
     });
 
     it('should load and display the first word', async () => {
         render(<Reader book={mockBook} />);
 
         await waitFor(() => {
-            expect(screen.queryByText('INITIALIZING COCKPIT...')).not.toBeInTheDocument();
+            expect(screen.queryByText('Loading book...')).not.toBeInTheDocument();
         });
 
         // The word "Hello" should be split.
@@ -180,6 +207,7 @@ describe('Reader Component', () => {
             const sidebar = screen.getByTestId('sidebar-container');
             expect(sidebar).toHaveClass('translate-x-0');
             expect(sidebar).not.toHaveClass('translate-x-full');
+            expect(screen.getByTestId('speed-controls')).toHaveClass('md:mr-80');
         });
     });
 
@@ -267,7 +295,21 @@ describe('Reader Component', () => {
         expect(screen.queryByTestId('play-overlay')).not.toBeInTheDocument();
     });
 
-    it('should navigate to next chapter', async () => {
+    it('should keep river typography stable on hover', async () => {
+        const { container } = render(<Reader book={mockBook} />);
+
+        await waitFor(() => {
+            expect(container.querySelector('.word-span')).toBeInTheDocument();
+        });
+
+        const riverWord = container.querySelector('.word-span');
+        expect(riverWord).not.toHaveClass('group', 'transition-all', 'hover:text-white');
+        riverWord?.querySelectorAll('span').forEach((letter) => {
+            expect(letter.className).not.toContain('group-hover:opacity-100');
+        });
+    });
+
+    it('should brake, cross, and launch when navigating to the next chapter', async () => {
         render(<Reader book={mockBook} />);
         await waitFor(() => {
             const elements = screen.getAllByText('Chapter 1');
@@ -275,26 +317,108 @@ describe('Reader Component', () => {
         });
 
         // Open Sidebar
-        const chaptersBtn = screen.getByTitle('Chapters');
-        fireEvent.click(chaptersBtn);
+        const chaptersBtn = screen.getByTestId('toggle-chapters');
+        if (chaptersBtn.getAttribute('aria-expanded') === 'false') {
+            fireEvent.click(chaptersBtn);
+        }
 
         // Click Chapter 2 in sidebar
         // The sidebar renders buttons for chapters. We can find it by text.
         // Note: The sidebar might be rendering "Chapter 2" inside a button.
         const chapter2Btn = screen.getByText('Chapter 2').closest('button');
         expect(chapter2Btn).toBeInTheDocument();
-        fireEvent.click(chapter2Btn!);
+        const rsvpContainer = screen.getByTestId('rsvp-container');
+        fireEvent.click(rsvpContainer);
+        await waitFor(() => expect(rsvpContainer).toHaveAttribute('aria-pressed', 'true'));
 
-        await waitFor(() => {
-            // Check if content updated to "Second"
-            const rsvpContainer = screen.getByTestId('rsvp-container');
+        vi.useFakeTimers();
+        try {
+            fireEvent.click(chapter2Btn!);
+
+            expect(screen.getByRole('status')).toHaveTextContent('Next chapter / Chapter 2');
+            expect(screen.getByRole('status')).not.toHaveTextContent('3');
+            expect(rsvpContainer).toHaveTextContent('Hello');
+            expect(screen.getByTestId('sidebar-container')).toHaveClass('translate-x-full');
+            fireEvent.click(rsvpContainer);
+            expect(rsvpContainer).toHaveAttribute('aria-pressed', 'true');
+
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(760);
+            });
+
             expect(rsvpContainer).toHaveTextContent('Second');
-        });
+            expect(rsvpContainer).toHaveAttribute('aria-pressed', 'false');
+            expect(screen.getByTestId('reader-context-top')).toBeEmptyDOMElement();
 
-        await waitFor(() => {
-            const sidebar = screen.getByTestId('sidebar-container');
-            expect(sidebar).toHaveClass('translate-x-full');
-        });
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(1200);
+            });
+            expect(screen.queryByRole('status')).not.toBeInTheDocument();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('should advance destination words after navigating while playing', async () => {
+        render(<Reader book={mockBook} />);
+        const rsvpContainer = await screen.findByTestId('rsvp-container');
+        fireEvent.click(rsvpContainer);
+        await waitFor(() => expect(rsvpContainer).toHaveAttribute('aria-pressed', 'true'));
+
+        const chaptersBtn = screen.getByTestId('toggle-chapters');
+        if (chaptersBtn.getAttribute('aria-expanded') === 'false') {
+            fireEvent.click(chaptersBtn);
+        }
+        const chapter2Btn = screen.getByText('Chapter 2').closest('button');
+        expect(chapter2Btn).toBeInTheDocument();
+
+        vi.useFakeTimers();
+        try {
+            fireEvent.click(chapter2Btn!);
+
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(760);
+            });
+            expect(rsvpContainer).toHaveTextContent('Second');
+            expect(rsvpContainer).toHaveAttribute('aria-pressed', 'true');
+
+            const focusLane = rsvpContainer.querySelector('.reader-focus-lane');
+            expect(focusLane).toBeInTheDocument();
+            let destinationAdvanced = false;
+            for (let attempt = 0; attempt < 10 && !destinationAdvanced; attempt += 1) {
+                await act(async () => {
+                    await vi.advanceTimersByTimeAsync(200);
+                });
+                destinationAdvanced = focusLane?.textContent?.trim() !== 'Second';
+            }
+
+            expect(destinationAdvanced).toBe(true);
+            expect(rsvpContainer).not.toHaveTextContent('Second');
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('should seek within the current chapter without reloading it', async () => {
+        render(<Reader book={mockBook} />);
+        const rsvpContainer = await screen.findByTestId('rsvp-container');
+        await waitFor(() => expect(rsvpContainer).toHaveTextContent('Hello'));
+        const chapterLookupsBeforeSeek = mockDb.chapters.findOne.mock.calls.length;
+
+        vi.useFakeTimers();
+        try {
+            fireEvent.click(screen.getByTestId('subchapter-btn-1'));
+
+            expect(screen.getByRole('status')).toHaveTextContent('Chapter 1 / Part 2');
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(760);
+            });
+
+            expect(rsvpContainer).toHaveTextContent('is');
+            expect(mockDb.chapters.findOne).toHaveBeenCalledTimes(chapterLookupsBeforeSeek);
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it('should close the chapter drawer on swipe-right gesture', async () => {
@@ -316,6 +440,7 @@ describe('Reader Component', () => {
 
         await waitFor(() => {
             expect(sidebar).toHaveClass('translate-x-full');
+            expect(screen.getByTestId('speed-controls')).toHaveClass('md:mr-0');
         });
     });
 
@@ -353,6 +478,96 @@ describe('Reader Component', () => {
         });
 
         expect(rsvpContainer).toHaveTextContent('this');
+        expect(screen.getByText('20% through book')).toBeInTheDocument();
+    });
+
+    it('should cross forward into the next chapter without a mechanical count-in', async () => {
+        render(<Reader book={mockBook} />);
+        const rsvpContainer = await screen.findByTestId('rsvp-container');
+        await waitFor(() => expect(rsvpContainer).toHaveTextContent('Hello'));
+
+        vi.useFakeTimers();
+        try {
+            fireEvent.wheel(rsvpContainer.firstElementChild as HTMLElement, { deltaY: 300 });
+
+            expect(screen.getByRole('status')).toHaveTextContent('Next chapter / Chapter 2');
+            expect(screen.getByRole('status')).not.toHaveTextContent('3');
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(760);
+            });
+
+            expect(rsvpContainer).toHaveTextContent('Second');
+            expect(screen.getByTestId('reader-context-top')).toBeEmptyDOMElement();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('should cross backward into the previous chapter without a mechanical count-in', async () => {
+        const savedState = {
+            ...mockReadingState,
+            currentChapterId: 'chapter-2',
+            currentWordIndex: 0,
+            toJSON: function () { return this; },
+        };
+        mockDb.reading_states.findOne.mockReturnValue({
+            exec: vi.fn().mockResolvedValue(savedState),
+        });
+
+        render(<Reader book={mockBook} />);
+        const rsvpContainer = await screen.findByTestId('rsvp-container');
+        await waitFor(() => expect(rsvpContainer).toHaveTextContent('Second'));
+
+        vi.useFakeTimers();
+        try {
+            fireEvent.wheel(rsvpContainer.firstElementChild as HTMLElement, { deltaY: -1000 });
+
+            expect(screen.getByRole('status')).toHaveTextContent('Previous chapter / Chapter 1');
+            expect(screen.getByRole('status')).not.toHaveTextContent('3');
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(760);
+            });
+
+            expect(rsvpContainer).toHaveTextContent('Hello');
+            expect(screen.getByTestId('reader-context-top')).toBeEmptyDOMElement();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('should re-enable adaptive pacing without opening setup when the model is ready', async () => {
+        const settings = useSettingsStore.getState();
+        const originalSetAiEnabled = settings.setAiEnabled;
+        const setAiEnabled = vi.fn((enabled: boolean) => {
+            settings.aiEnabled = enabled;
+        });
+        settings.aiEnabled = false;
+        settings.setAiEnabled = setAiEnabled;
+        useAIStore.setState({ isReady: true, isLoading: false, isSetupOpen: false });
+        render(<Reader book={mockBook} />);
+
+        await waitFor(() => {
+            expect(screen.getByRole('button', { name: 'Enable adaptive pacing' })).toBeInTheDocument();
+        });
+
+        fireEvent.click(screen.getByRole('button', { name: 'Enable adaptive pacing' }));
+
+        expect(setAiEnabled).toHaveBeenCalledWith(true);
+        expect(useAIStore.getState().isSetupOpen).toBe(false);
+        settings.aiEnabled = true;
+        settings.setAiEnabled = originalSetAiEnabled;
+    });
+
+    it('should not open setup from unavailable adaptive pacing control', async () => {
+        useSettingsStore.getState().aiEnabled = false;
+        useAIStore.setState({ isReady: false, isLoading: false, isSetupOpen: false });
+        render(<Reader book={mockBook} />);
+
+        const unavailableButton = await screen.findByRole('button', { name: 'Adaptive pacing unavailable' });
+        expect(unavailableButton).toBeDisabled();
+        fireEvent.click(unavailableButton);
+
+        expect(useAIStore.getState().isSetupOpen).toBe(false);
     });
 
     it('should save progress when pausing', async () => {
@@ -406,6 +621,25 @@ describe('Reader Component', () => {
         });
     });
 
+    it('should expose keyboard playback controls on the reading lane', async () => {
+        render(<Reader book={mockBook} />);
+        const readingLane = await screen.findByRole('button', { name: 'Play reading' });
+
+        fireEvent.keyDown(readingLane, { key: 'Enter', code: 'Enter' });
+
+        await waitFor(() => {
+            expect(readingLane).toHaveAccessibleName('Pause reading');
+            expect(readingLane).toHaveAttribute('aria-pressed', 'true');
+        });
+
+        fireEvent.keyDown(readingLane, { key: ' ', code: 'Space' });
+
+        await waitFor(() => {
+            expect(readingLane).toHaveAccessibleName('Play reading');
+            expect(readingLane).toHaveAttribute('aria-pressed', 'false');
+        });
+    });
+
     it('should resume from saved reading position', async () => {
         // Setup a state that is NOT at the start - user was reading Chapter 2
         const savedState = {
@@ -425,7 +659,7 @@ describe('Reader Component', () => {
         render(<Reader book={mockBook} />);
         
         await waitFor(() => {
-            expect(screen.queryByText('INITIALIZING COCKPIT...')).not.toBeInTheDocument();
+            expect(screen.queryByText('Loading book...')).not.toBeInTheDocument();
         });
 
         // Should resume at Chapter 2, word index 1 ("chapter"), NOT Chapter 1 ("Hello")
@@ -447,7 +681,7 @@ describe('Reader Component', () => {
         
         // Wait for loading to complete
         await waitFor(() => {
-            expect(screen.queryByText('INITIALIZING COCKPIT...')).not.toBeInTheDocument();
+            expect(screen.queryByText('Loading book...')).not.toBeInTheDocument();
         });
 
         // The RSVP display is the div with ref={rsvpRef} inside the rsvp-container
@@ -496,7 +730,7 @@ describe('Reader Component', () => {
         render(<Reader book={mockBook} />);
         
         // Should show loading initially
-        expect(screen.getByText('INITIALIZING COCKPIT...')).toBeInTheDocument();
+        expect(screen.getByText('Loading book...')).toBeInTheDocument();
         
         // Wait a tick for the async loadChapter to set up the subscription
         await waitFor(() => {
@@ -509,7 +743,7 @@ describe('Reader Component', () => {
         
         // Wait for loading to complete
         await waitFor(() => {
-            expect(screen.queryByText('INITIALIZING COCKPIT...')).not.toBeInTheDocument();
+            expect(screen.queryByText('Loading book...')).not.toBeInTheDocument();
         });
 
         // The RSVP container should now show "Hello"
@@ -528,7 +762,7 @@ describe('Reader Component', () => {
         render(<Reader book={mockBook} />);
         
         await waitFor(() => {
-            expect(screen.queryByText('INITIALIZING COCKPIT...')).not.toBeInTheDocument();
+            expect(screen.queryByText('Loading book...')).not.toBeInTheDocument();
         });
 
         const rsvpContainer = screen.getByTestId('rsvp-container');
@@ -545,5 +779,45 @@ describe('Reader Component', () => {
         // The element should not be empty and should contain the first word
         expect(wordDisplayElement?.textContent?.trim()).not.toBe('');
         expect(wordDisplayElement?.textContent).toContain('Hello');
+    });
+
+    it('keeps only the reader and focus exit control accessible in focus mode', async () => {
+        render(<Reader book={mockBook} />);
+
+        await waitFor(() => {
+            expect(screen.queryByText('Loading book...')).not.toBeInTheDocument();
+        });
+
+        const readerShell = screen.getByTestId('reader-shell');
+        const focusButton = screen.getByRole('button', { name: 'Focus Mode' });
+        const speedControls = screen.getByTestId('speed-controls');
+
+        fireEvent.click(focusButton);
+
+        expect(readerShell).toHaveClass('reader-shell--focus');
+        expect(screen.getByRole('button', { name: 'Exit Focus Mode' })).toBeVisible();
+        expect(screen.getByTestId('rsvp-container')).not.toHaveAttribute('aria-hidden');
+        expect(screen.queryByRole('button', { name: /fullscreen/i })).not.toBeInTheDocument();
+        expect(screen.getByTitle('Disable adaptive pacing')).toHaveAttribute('aria-hidden', 'true');
+        expect(screen.getByTitle('Disable adaptive pacing')).toHaveAttribute('tabindex', '-1');
+        expect(screen.getByTestId('toggle-chapters')).toHaveAttribute('aria-hidden', 'true');
+        expect(speedControls).toHaveAttribute('aria-hidden', 'true');
+        expect(speedControls).toHaveAttribute('inert');
+
+        act(() => {
+            useSettingsStore.getState().setRiverTopEnabled(false);
+            useSettingsStore.getState().setRiverBottomEnabled(false);
+        });
+
+        fireEvent.click(screen.getByRole('button', { name: 'Exit Focus Mode' }));
+
+        expect(readerShell).not.toHaveClass('reader-shell--focus');
+        expect(screen.getByRole('button', { name: 'Focus Mode' })).toHaveAttribute('aria-pressed', 'false');
+        expect(screen.getByTitle('Disable adaptive pacing')).toHaveAttribute('aria-hidden', 'false');
+        expect(screen.getByTitle('Disable adaptive pacing')).toHaveProperty('tabIndex', 0);
+        expect(speedControls).toHaveAttribute('aria-hidden', 'false');
+        expect(speedControls).not.toHaveAttribute('inert');
+        expect(useSettingsStore.getState().riverTopEnabled).toBe(true);
+        expect(useSettingsStore.getState().riverBottomEnabled).toBe(true);
     });
 });

@@ -11,6 +11,8 @@ export type ModelLifecycleState =
     | 'crashed'        // Model crashed or encountered error
     | 'unloading';     // Model being unloaded
 
+export type AISetupIntent = 'pacing' | 'summaries';
+
 interface ModelStats {
     /** Model name/tier */
     name: string | null;
@@ -70,6 +72,9 @@ interface AIState {
     } | null;
     /** Summarization timing data for progress interpolation */
     summaryTiming: SummaryTimingData;
+    /** Optional setup is shown only after a user requests an AI feature. */
+    isSetupOpen: boolean;
+    setupIntent: AISetupIntent;
 
     // === Actions ===
     setLoading: (loading: boolean, model?: string) => void;
@@ -95,6 +100,8 @@ interface AIState {
     startSummaryTiming: () => void;
     completeSummaryTiming: () => void;
     getSummaryProgress: () => number | null;
+    requestSetup: (intent: AISetupIntent) => void;
+    closeSetup: () => void;
 }
 
 const initialModelStats: ModelStats = {
@@ -132,6 +139,8 @@ export const useAIStore = create<AIState>((set, get) => ({
     isPanelExpanded: false,
     currentTask: null,
     summaryTiming: { ...initialSummaryTiming },
+    isSetupOpen: false,
+    setupIntent: 'pacing',
 
     // Legacy actions (updated to also set lifecycle state)
     setLoading: (isLoading, model) => set(state => ({ 
@@ -232,6 +241,9 @@ export const useAIStore = create<AIState>((set, get) => ({
             totalWords,
         } : null,
     })),
+
+    requestSetup: (setupIntent) => set({ isSetupOpen: true, setupIntent }),
+    closeSetup: () => set({ isSetupOpen: false }),
 
     // Summary timing for interpolated progress
     startSummaryTiming: () => set(state => ({

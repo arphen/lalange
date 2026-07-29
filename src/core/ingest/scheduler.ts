@@ -44,6 +44,7 @@ export class IngestionScheduler {
     private currentWordIndex: number = 0;
     private currentGlobalWordIndex: number = 0;  // Tracks position across entire book
     private previousAiEnabled: boolean = true;
+    private previousSummariesEnabled: boolean = false;
 
     constructor() {
         // Subscribe to aiEnabled changes to resume processing when re-enabled
@@ -51,15 +52,27 @@ export class IngestionScheduler {
         if (typeof useSettingsStore.subscribe === 'function') {
             // Track previous state to only trigger on false→true transitions
             this.previousAiEnabled = useSettingsStore.getState().aiEnabled ?? true;
+            this.previousSummariesEnabled = useSettingsStore.getState().summariesEnabled ?? false;
             useSettingsStore.subscribe((state) => {
                 const wasDisabled = !this.previousAiEnabled;
                 const isNowEnabled = state.aiEnabled;
+                const summariesWereDisabled = !this.previousSummariesEnabled;
+                const summariesAreNowEnabled = state.summariesEnabled ?? false;
                 this.previousAiEnabled = isNowEnabled;
+                this.previousSummariesEnabled = summariesAreNowEnabled;
                 
                 // Only resume on transition from disabled to enabled
                 if (wasDisabled && isNowEnabled && !this.isRunning) {
                     console.log("[Scheduler] AI re-enabled, resuming task processing.");
                     this.processNext();
+                }
+
+                if (summariesWereDisabled && summariesAreNowEnabled) {
+                    console.log("[Scheduler] Automatic summaries enabled, resuming summary processing.");
+                    this.wakeUpDormantTasks();
+                    this.wakeUpGlobalSummaryTasks();
+                    this.rebalancePriorities();
+                    if (!this.isRunning) this.processNext();
                 }
             });
         }
@@ -146,6 +159,7 @@ export class IngestionScheduler {
         if (!this.currentBookId) return;
         
         const settings = useSettingsStore.getState();
+        if (settings.summariesEnabled === false) return;
         const summaryInterval = settings.summaryChunkSize || 2500;
         
         // Wake up global summaries that are within 2 intervals of current position
@@ -211,6 +225,7 @@ export class IngestionScheduler {
         this.tasks.forEach((task) => {
             if (task.status !== 'dormant') return;
             if (task.bookId !== this.currentBookId) return;
+            if (task.type === 'SUMMARY' && settings.summariesEnabled === false) return;
 
             if (task.chapterId === this.currentChapterId) {
                 const lookaheadWords = task.type === 'DENSITY' ? DENSITY_LOOKAHEAD_WORDS : SUMMARY_LOOKAHEAD_WORDS;
@@ -322,8 +337,13 @@ export class IngestionScheduler {
         }
 
         // Check for pending global summary tasks first (lower priority than density but important)
-        const nextGlobalSummary = this.globalSummaryTasks.find(t => t.status === 'pending');
-        const nextTask = this.tasks.find(t => t.status === 'pending');
+        const summariesEnabled = settings.summariesEnabled !== false;
+        const nextGlobalSummary = !summariesEnabled
+            ? undefined
+            : this.globalSummaryTasks.find(t => t.status === 'pending');
+        const nextTask = this.tasks.find(t =>
+            t.status === 'pending' && (summariesEnabled || t.type !== 'SUMMARY')
+        );
         
         // Prioritize density tasks over global summaries, but run global summaries when no density pending
         const hasPendingDensity = this.tasks.some(t => t.status === 'pending' && t.type === 'DENSITY');
