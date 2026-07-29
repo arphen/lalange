@@ -17,6 +17,7 @@ import {
     type TTSAudioResult,
 } from '../../core/tts';
 import { ttsPlayer } from '../../core/tts/player';
+import { persistListeningHandoff } from '../../core/exchange/handoff';
 
 // Configuration
 const DEFAULT_BUFFER_AHEAD = 5;
@@ -91,10 +92,11 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
         volume,
         speed,
         voice,
-        quantization,
         backendPreference,
         bufferAhead,
         currentWordIndex: ttsWordIndex,
+        currentSentence,
+        currentTime,
         setVolume,
         setSpeed,
         setVoice,
@@ -118,6 +120,7 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
     const wordsRef = useRef<string[]>(words);
     const startSentenceIndexRef = useRef<number>(0);
     const hasStartedPlaybackRef = useRef(false); // Track if we've started with a valid position
+    const lastHandoffPersistedAtRef = useRef(0);
     const bookIdRef = useRef<string | undefined>(bookId);
     const chapterIdRef = useRef<string | undefined>(chapterId);
 
@@ -140,12 +143,37 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
         ttsPlayer.clearQueue();
     }, [effectiveVoice, setVoice, voice]);
     
-    // Sync TTS word position to reader - only after playback has properly started
     useEffect(() => {
-        if ((playbackState === 'playing' || playbackState === 'generating') && onPositionChange && hasStartedPlaybackRef.current) {
-            onPositionChange(ttsWordIndex);
-        }
-    }, [ttsWordIndex, playbackState, onPositionChange]);
+        if (!bookId || !chapterId || !hasStartedPlaybackRef.current) return;
+        if (playbackState !== 'playing' && playbackState !== 'generating' && playbackState !== 'paused') return;
+
+        const now = Date.now();
+        const shouldPersist = playbackState === 'paused' || now - lastHandoffPersistedAtRef.current >= 2000;
+        if (!shouldPersist) return;
+        lastHandoffPersistedAtRef.current = now;
+
+        const position = {
+            bookId,
+            chapterId,
+            sentenceIndex: currentSentence,
+            wordIndex: ttsWordIndex,
+            audioTime: currentTime,
+            timestamp: now,
+        };
+        useTTSStore.getState().updatePosition(position);
+        void persistListeningHandoff({ position, voice: effectiveVoice, speed }).catch((error) => {
+            console.error('[TTS UI] Failed to persist handoff position:', error);
+        });
+    }, [
+        bookId,
+        chapterId,
+        currentSentence,
+        currentTime,
+        effectiveVoice,
+        playbackState,
+        speed,
+        ttsWordIndex,
+    ]);
     
     // Full reset when book or chapter changes - this MUST come before words effect
     useEffect(() => {
@@ -214,13 +242,13 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
     // Initialize TTS engine
     const handleInit = useCallback(async () => {
         try {
-            await initTTS(quantization, selectedDevice, (progress, status) => {
+            await initTTS(selectedDevice, (progress, status) => {
                 console.log(`[TTS UI] ${status} (${Math.round(progress * 100)}%)`);
             });
         } catch (err) {
             console.error('[TTS UI] Init failed:', err);
         }
-    }, [quantization, selectedDevice]);
+    }, [selectedDevice]);
     
     // Cleanup on unmount
     useEffect(() => {
@@ -292,9 +320,10 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
         ttsPlayer.setOptions({
             onSentenceChange: (sentenceIndex) => {
                 const sentence = sentences[sentenceIndex];
-                if (sentence && onPositionChange) {
-                    onPositionChange(sentence.startWordIndex);
-                }
+                if (sentence) console.log(`[TTS UI] Playing sentence ${sentenceIndex}`);
+            },
+            onWordChange: (wordIndex) => {
+                if (onPositionChange && hasStartedPlaybackRef.current) onPositionChange(wordIndex);
             },
             onBufferLow: (currentSentenceIndex) => {
                 if (isGeneratingRef.current || currentSentenceIndex >= sentences.length) return;

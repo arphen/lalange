@@ -280,30 +280,19 @@ describe('Voice utilities', () => {
 });
 
 describe('resolveTTSRuntimeConfig', () => {
-    it('falls back to wasm for auto-selected webgpu + q8', () => {
-        const runtime = resolveTTSRuntimeConfig('q8', undefined, 'webgpu');
+    it('uses fp32 with an auto-selected WebGPU backend', () => {
+        const runtime = resolveTTSRuntimeConfig(undefined, 'webgpu');
         expect(runtime).toEqual({
-            dtype: 'q8',
-            device: 'wasm',
-            compatibilityMode: true,
-        });
-    });
-
-    it('keeps explicit device requests unchanged', () => {
-        const runtime = resolveTTSRuntimeConfig('q8', 'webgpu', 'webgpu');
-        expect(runtime).toEqual({
-            dtype: 'q8',
+            dtype: 'fp32',
             device: 'webgpu',
-            compatibilityMode: false,
         });
     });
 
-    it('keeps auto-selected wasm unchanged', () => {
-        const runtime = resolveTTSRuntimeConfig('q8', undefined, 'wasm');
+    it('keeps explicit backend requests while forcing fp32', () => {
+        const runtime = resolveTTSRuntimeConfig('wasm', 'webgpu');
         expect(runtime).toEqual({
-            dtype: 'q8',
+            dtype: 'fp32',
             device: 'wasm',
-            compatibilityMode: false,
         });
     });
 });

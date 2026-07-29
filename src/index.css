@@ -87,6 +87,728 @@ html {
   }
 }
 
+/* --- DEVICE EXCHANGE --- */
+
+.exchange-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 180;
+  display: flex;
+  justify-content: flex-end;
+  background: rgba(3, 4, 4, 0.72);
+  backdrop-filter: blur(12px);
+  animation: exchange-fade-in 180ms ease-out both;
+}
+
+.exchange-sheet {
+  width: min(35rem, 100vw);
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  color: #f7f3e9;
+  background-color: #111412;
+  background-image:
+    linear-gradient(rgba(224, 208, 88, 0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(51, 153, 255, 0.02) 1px, transparent 1px);
+  background-size: 28px 28px;
+  border-left: 1px solid rgba(224, 208, 88, 0.28);
+  box-shadow: -24px 0 70px rgba(0, 0, 0, 0.5);
+  animation: exchange-slide-in 280ms var(--ease-swell) both;
+}
+
+.exchange-sheet__header,
+.exchange-sheet__footer {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.15rem 1.25rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.exchange-sheet__footer {
+  justify-content: flex-end;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  border-bottom: 0;
+}
+
+.exchange-sheet__footer:empty {
+  display: none;
+}
+
+.exchange-sheet__header h2,
+.exchange-stage-title,
+.exchange-pairing h3,
+.exchange-status-screen h3 {
+  margin: 0.2rem 0 0;
+  font-size: 1.1rem;
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: 0;
+}
+
+.exchange-kicker,
+.exchange-step {
+  margin: 0;
+  color: #e0d058;
+  font-family: 'Roboto Mono', monospace;
+  font-size: 0.66rem;
+  line-height: 1.3;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.exchange-icon-button {
+  width: 2.5rem;
+  height: 2.5rem;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 4px;
+  color: rgba(255, 255, 255, 0.68);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.exchange-icon-button svg {
+  width: 1.15rem;
+  height: 1.15rem;
+}
+
+.exchange-icon-button:hover,
+.exchange-icon-button:focus-visible {
+  color: #fff;
+  border-color: rgba(224, 208, 88, 0.5);
+}
+
+.exchange-sheet__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 1.25rem;
+}
+
+.exchange-modes {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.exchange-modes button {
+  min-width: 0;
+  min-height: 4.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.55rem;
+  padding: 0.7rem 0.4rem;
+  color: rgba(255, 255, 255, 0.56);
+  background: rgba(255, 255, 255, 0.025);
+  border-right: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.exchange-modes button:last-child {
+  border-right: 0;
+}
+
+.exchange-modes button.is-active {
+  color: #fff;
+  background: rgba(1, 121, 111, 0.22);
+  box-shadow: inset 0 -2px #5eead4;
+}
+
+.exchange-modes button > span {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: 0;
+}
+
+.exchange-modes small,
+.exchange-book-list small,
+.exchange-invitation-list small,
+.exchange-resolution small {
+  color: rgba(255, 255, 255, 0.42);
+  font-size: 0.62rem;
+  font-weight: 400;
+  line-height: 1.35;
+  letter-spacing: 0;
+}
+
+.exchange-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 1.5rem 0 0.65rem;
+  color: rgba(255, 255, 255, 0.46);
+  font-family: 'Roboto Mono', monospace;
+  font-size: 0.66rem;
+  text-transform: uppercase;
+}
+
+.exchange-section-heading button {
+  color: #63b3ed;
+}
+
+.exchange-book-list {
+  display: grid;
+  gap: 0.35rem;
+  max-height: 16rem;
+  overflow-y: auto;
+}
+
+.exchange-book-list > button {
+  width: 100%;
+  min-height: 3.7rem;
+  display: grid;
+  grid-template-columns: 2rem minmax(0, 1fr) 1.5rem;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.45rem 0.6rem;
+  text-align: left;
+  color: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.14);
+}
+
+.exchange-book-list > button.is-selected {
+  color: #fff;
+  border-color: rgba(94, 234, 212, 0.38);
+  background: rgba(1, 121, 111, 0.12);
+}
+
+.exchange-book-list__cover {
+  width: 2rem;
+  height: 2.75rem;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  color: #111;
+  background: #e0d058;
+  font-weight: 800;
+}
+
+.exchange-book-list__cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.exchange-book-list__text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.exchange-book-list__text strong {
+  overflow: hidden;
+  font-size: 0.78rem;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.exchange-book-list__check {
+  width: 1.25rem;
+  height: 1.25rem;
+  display: grid;
+  place-items: center;
+  color: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 2px;
+}
+
+.exchange-book-list > button.is-selected .exchange-book-list__check {
+  color: #04110f;
+  border-color: #5eead4;
+  background: #5eead4;
+}
+
+.exchange-toggles {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.4rem;
+}
+
+.exchange-toggles label {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.7rem;
+  padding: 0.7rem;
+  color: rgba(255, 255, 255, 0.68);
+  font-size: 0.72rem;
+  line-height: 1.3;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+}
+
+.exchange-toggles input {
+  width: 1rem;
+  height: 1rem;
+  flex: none;
+  accent-color: #01796f;
+}
+
+.exchange-primary {
+  min-height: 2.8rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.65rem;
+  padding: 0.7rem 1rem;
+  color: #07110f;
+  background: #5eead4;
+  border: 1px solid #5eead4;
+  border-radius: 4px;
+  font-family: 'Roboto Mono', monospace;
+  font-size: 0.74rem;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.exchange-primary:hover,
+.exchange-primary:focus-visible {
+  color: #000;
+  background: #e0d058;
+  border-color: #e0d058;
+}
+
+.exchange-primary:disabled {
+  opacity: 0.34;
+  cursor: not-allowed;
+}
+
+.exchange-pairing,
+.exchange-status-screen {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  text-align: center;
+}
+
+.exchange-pairing > p:not(.exchange-step),
+.exchange-status-screen p,
+.exchange-receiver p {
+  max-width: 34rem;
+  color: rgba(255, 255, 255, 0.54);
+  font-size: 0.78rem;
+  line-height: 1.6;
+  letter-spacing: 0;
+}
+
+.exchange-qr {
+  width: min(17rem, 72vw);
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  margin-bottom: 1rem;
+  padding: 0.55rem;
+  background: #fff;
+  border: 5px solid #e0d058;
+  border-radius: 5px;
+}
+
+.exchange-qr svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+.exchange-pair-code {
+  min-width: 10rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.8rem;
+  margin: 1rem 0;
+  padding: 0.55rem 0.75rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.14);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.exchange-pair-code span {
+  color: rgba(255, 255, 255, 0.42);
+  font-size: 0.63rem;
+  text-transform: uppercase;
+}
+
+.exchange-pair-code strong {
+  color: #e0d058;
+  font-family: 'Roboto Mono', monospace;
+  font-size: 1.05rem;
+  letter-spacing: 0.12em;
+}
+
+.exchange-status-screen__icon {
+  width: 4.5rem;
+  height: 4.5rem;
+  display: grid;
+  place-items: center;
+  margin-bottom: 1rem;
+  color: #5eead4;
+  border: 1px solid rgba(94, 234, 212, 0.35);
+  border-radius: 50%;
+}
+
+.exchange-status-screen__icon svg {
+  width: 2rem;
+  height: 2rem;
+}
+
+.exchange-status-screen.is-error .exchange-status-screen__icon,
+.exchange-receiver__status.is-error > div:first-child,
+.exchange-error {
+  color: #f28b82;
+  border-color: rgba(242, 139, 130, 0.35);
+}
+
+.exchange-progress {
+  width: min(24rem, 100%);
+  height: 0.28rem;
+  margin-top: 1.25rem;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 2px;
+}
+
+.exchange-progress span {
+  display: block;
+  height: 100%;
+  background: #5eead4;
+  transition: width 160ms linear;
+}
+
+.exchange-scanner {
+  width: 100%;
+  max-width: 30rem;
+  margin: 1rem auto;
+}
+
+.exchange-scanner__viewport {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  overflow: hidden;
+  background: #050606;
+  border: 1px solid rgba(94, 234, 212, 0.35);
+  border-radius: 5px;
+}
+
+.exchange-scanner video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.exchange-scanner__label {
+  position: absolute;
+  left: 0.7rem;
+  bottom: 0.7rem;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.45rem 0.55rem;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.78);
+  border-radius: 3px;
+  font-size: 0.68rem;
+}
+
+.exchange-error {
+  margin: 0.6rem 0;
+  font-size: 0.7rem;
+}
+
+.exchange-paste {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.45rem;
+  margin-top: 0.7rem;
+}
+
+.exchange-paste input,
+.exchange-resolution select {
+  min-width: 0;
+  padding: 0.65rem 0.7rem;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 4px;
+  font-size: 0.72rem;
+}
+
+.exchange-paste button {
+  padding: 0.55rem 0.85rem;
+  color: #06110f;
+  background: #5eead4;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.exchange-receiver {
+  width: 100%;
+  min-height: 100dvh;
+  overflow-y: auto;
+  color: #f7f3e9;
+  background-color: #090b0a;
+  background-image:
+    linear-gradient(120deg, rgba(224, 208, 88, 0.04) 1px, transparent 1px),
+    linear-gradient(30deg, rgba(51, 153, 255, 0.035) 1px, transparent 1px);
+  background-size: 48px 48px;
+}
+
+.exchange-receiver__brand {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  min-height: 3.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1rem;
+  color: rgba(255, 255, 255, 0.5);
+  background: rgba(9, 11, 10, 0.88);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  font-family: 'Roboto Mono', monospace;
+  font-size: 0.66rem;
+  letter-spacing: 0;
+}
+
+.exchange-receiver__brand button {
+  width: 2.2rem;
+  height: 2.2rem;
+  display: grid;
+  place-items: center;
+}
+
+.exchange-receiver__brand svg {
+  width: 1.1rem;
+}
+
+.exchange-receiver__stage,
+.exchange-review {
+  width: min(42rem, 100%);
+  min-height: calc(100dvh - 3.5rem);
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: clamp(1.25rem, 5vw, 3rem);
+  animation: exchange-rise-in 320ms var(--ease-swell) both;
+}
+
+.exchange-receiver__stage--center {
+  align-items: center;
+  text-align: center;
+}
+
+.exchange-receiver h1,
+.exchange-review h1 {
+  max-width: 38rem;
+  margin: 0.55rem 0 0.2rem;
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: clamp(1.7rem, 6vw, 3.2rem);
+  font-weight: 400;
+  line-height: 1.05;
+  letter-spacing: 0;
+}
+
+.exchange-invitation-list {
+  display: grid;
+  gap: 0.5rem;
+  margin: 1.5rem 0;
+}
+
+.exchange-invitation-list > div {
+  display: grid;
+  grid-template-columns: 1.5rem minmax(0, 1fr);
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.exchange-invitation-list > div > span {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.exchange-invitation-list strong {
+  overflow-wrap: anywhere;
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+
+.exchange-receiver__status {
+  min-height: calc(100dvh - 3.5rem);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  text-align: center;
+}
+
+.exchange-receiver__status > div:first-child {
+  width: 5rem;
+  height: 5rem;
+  display: grid;
+  place-items: center;
+  margin-bottom: 1rem;
+  color: #5eead4;
+  border: 1px solid rgba(94, 234, 212, 0.35);
+  border-radius: 50%;
+}
+
+.exchange-receiver__status > div:first-child svg {
+  width: 2rem;
+  height: 2rem;
+}
+
+.exchange-receiver__status .exchange-primary {
+  margin-top: 1.5rem;
+}
+
+.exchange-review {
+  justify-content: flex-start;
+}
+
+.exchange-review__books {
+  display: grid;
+  gap: 0.75rem;
+  margin: 1.2rem 0;
+}
+
+.exchange-return-review__intro,
+.exchange-return-review__empty {
+  margin: 0.65rem 0;
+  color: rgba(255, 255, 255, 0.54);
+  font-size: 0.75rem;
+  line-height: 1.55;
+}
+
+.exchange-return-review__empty {
+  padding: 0.8rem;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+}
+
+.exchange-review__books article {
+  padding: 1rem;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 5px;
+}
+
+.exchange-review__books h2 {
+  margin: 0 0 0.8rem;
+  overflow-wrap: anywhere;
+  font-size: 0.9rem;
+  line-height: 1.3;
+}
+
+.exchange-resolution {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(8rem, 12rem);
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.6rem 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.exchange-resolution > span {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.exchange-resolution strong {
+  font-size: 0.73rem;
+}
+
+@keyframes exchange-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes exchange-slide-in {
+  from { opacity: 0; transform: translateX(2rem); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes exchange-rise-in {
+  from { opacity: 0; transform: translateY(1rem); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (max-width: 640px) {
+  .exchange-sheet {
+    width: 100%;
+    border-left: 0;
+  }
+
+  .exchange-sheet__header,
+  .exchange-sheet__footer,
+  .exchange-sheet__body {
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+
+  .exchange-modes button {
+    min-height: 4rem;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .exchange-modes button > span {
+    align-items: center;
+  }
+
+  .exchange-modes small {
+    display: none;
+  }
+
+  .exchange-toggles {
+    grid-template-columns: 1fr;
+  }
+
+  .exchange-resolution {
+    grid-template-columns: 1fr;
+    gap: 0.4rem;
+  }
+
+  .exchange-resolution select {
+    width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .exchange-overlay,
+  .exchange-sheet,
+  .exchange-receiver__stage,
+  .exchange-review {
+    animation: none;
+  }
+}
+
 .overflow-y-auto {
   -webkit-overflow-scrolling: touch;
   touch-action: pan-y;

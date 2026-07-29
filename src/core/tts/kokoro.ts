@@ -6,7 +6,7 @@
  * 
  * Model: onnx-community/Kokoro-82M-v1.0-ONNX
  * - 82M parameters, frontier quality for size
- * - q8 quantization: ~92MB download
+ * - fp32 weights: ~326MB download
  * - 24kHz mono audio output
  * - Generation speed depends on model, backend, browser, and hardware
  */
@@ -35,7 +35,7 @@ let TextSplitterStream: typeof import('kokoro-js').TextSplitterStream | null = n
 
 // Singleton instance
 let ttsInstance: InstanceType<typeof import('kokoro-js').KokoroTTS> | null = null;
-let currentLoadedConfig: { dtype: TTSQuantization; device: TTSDevice } | null = null;
+let currentLoadedConfig: { dtype: 'fp32'; device: TTSDevice } | null = null;
 let ttsInitPromise: Promise<void> | null = null;
 let ttsInitConfigKey: string | null = null;
 let ttsLifecycleGeneration = 0;
@@ -43,37 +43,14 @@ let ttsLifecycleGeneration = 0;
 // Model configuration
 export const TTS_MODEL_ID = 'onnx-community/Kokoro-82M-v1.0-ONNX';
 
-export type TTSQuantization = 'fp32' | 'fp16' | 'q8' | 'q4' | 'q4f16';
 export type TTSDevice = 'wasm' | 'webgpu';
 
 export interface TTSRuntimeConfig {
-    dtype: TTSQuantization;
+    dtype: 'fp32';
     device: TTSDevice;
-    compatibilityMode: boolean;
 }
 
-export interface TTSModelInfo {
-    quantization: TTSQuantization;
-    sizeBytes: number;
-    quality: 'best' | 'great' | 'good' | 'acceptable';
-    recommended: boolean;
-}
-
-export const TTS_MODEL_OPTIONS: Record<TTSQuantization, TTSModelInfo> = {
-    fp32: { quantization: 'fp32', sizeBytes: 326_000_000, quality: 'best', recommended: true },
-    fp16: { quantization: 'fp16', sizeBytes: 163_000_000, quality: 'best', recommended: false },
-    q8: { quantization: 'q8', sizeBytes: 92_400_000, quality: 'great', recommended: false },
-    q4f16: { quantization: 'q4f16', sizeBytes: 154_000_000, quality: 'great', recommended: false },
-    q4: { quantization: 'q4', sizeBytes: 305_000_000, quality: 'good', recommended: false },
-};
-
-const TTS_MODEL_FILENAMES: Record<TTSQuantization, string> = {
-    fp32: 'model.onnx',
-    fp16: 'model_fp16.onnx',
-    q8: 'model_quantized.onnx',
-    q4: 'model_q4.onnx',
-    q4f16: 'model_q4f16.onnx',
-};
+const TTS_MODEL_FILENAME = 'model.onnx';
 
 // Voice definitions with metadata
 export interface VoiceInfo {
@@ -134,37 +111,15 @@ export async function getOptimalDevice(): Promise<TTSDevice> {
 }
 
 /**
- * Resolve runtime config used for model initialization.
- *
- * Kokoro's q8 + WebGPU path can be unstable on some browser/GPU combinations,
- * often producing unnatural or garbled speech. When device selection is
- * automatic, prefer q8 on WASM for stability.
+ * Resolve the backend while keeping fp32 as the only supported model format.
  */
 export function resolveTTSRuntimeConfig(
-    quantization: TTSQuantization,
     requestedDevice: TTSDevice | undefined,
     detectedDevice: TTSDevice,
 ): TTSRuntimeConfig {
-    if (requestedDevice) {
-        return {
-            dtype: quantization,
-            device: requestedDevice,
-            compatibilityMode: false,
-        };
-    }
-
-    if (detectedDevice === 'webgpu' && quantization === 'q8') {
-        return {
-            dtype: quantization,
-            device: 'wasm',
-            compatibilityMode: true,
-        };
-    }
-
     return {
-        dtype: quantization,
-        device: detectedDevice,
-        compatibilityMode: false,
+        dtype: 'fp32',
+        device: requestedDevice ?? detectedDevice,
     };
 }
 
@@ -195,7 +150,6 @@ async function loadKokoroLibrary(): Promise<void> {
  * Initialize the TTS engine
  */
 export async function initTTS(
-    quantization: TTSQuantization = 'q8',
     device?: TTSDevice,
     onProgress?: (progress: number, status: string) => void
 ): Promise<void> {
@@ -205,7 +159,7 @@ export async function initTTS(
     
     // Determine runtime config before deciding whether we can reuse the model.
     const detectedDevice = device ?? await getOptimalDevice();
-    const runtimeConfig = resolveTTSRuntimeConfig(quantization, device, detectedDevice);
+    const runtimeConfig = resolveTTSRuntimeConfig(device, detectedDevice);
     const configKey = `${runtimeConfig.dtype}:${runtimeConfig.device}`;
 
     // Check if already loaded with same effective config.
@@ -223,7 +177,7 @@ export async function initTTS(
     // Serialize config changes so two large model instances are never built at once.
     if (ttsInitPromise) {
         await ttsInitPromise;
-        return initTTS(quantization, device, onProgress);
+        return initTTS(device, onProgress);
     }
 
     const lifecycleGeneration = ttsLifecycleGeneration;
@@ -240,21 +194,9 @@ export async function initTTS(
                 throw new Error('Failed to load Kokoro library');
             }
 
-            if (runtimeConfig.compatibilityMode) {
-                const compatibilityStatus = 'Using compatibility mode (q8 on WASM) for stable speech output';
-                onProgress?.(0.08, compatibilityStatus);
-                store.setProgress(0.08, compatibilityStatus);
-                console.warn('[TTS] Auto-switched q8 from WebGPU to WASM for output stability.');
-            }
-
             const initializingStatus = `Loading model (${runtimeConfig.dtype}, ${runtimeConfig.device})`;
             onProgress?.(0.1, initializingStatus);
             store.setProgress(0.1, initializingStatus);
-
-            // For explicit WebGPU + q8 requests, keep behavior but warn.
-            if (runtimeConfig.device === 'webgpu' && runtimeConfig.dtype === 'q8') {
-                console.warn('[TTS] Using q8 quantization on WebGPU. This may be slower; consider using fp32 for best performance.');
-            }
 
             const loadedInstance = await KokoroTTS.from_pretrained(TTS_MODEL_ID, {
                 dtype: runtimeConfig.dtype,
@@ -279,7 +221,7 @@ export async function initTTS(
             }
 
             ttsInstance = loadedInstance;
-            currentLoadedConfig = { dtype: runtimeConfig.dtype, device: runtimeConfig.device };
+            currentLoadedConfig = { dtype: 'fp32', device: runtimeConfig.device };
             const readyStatus = `Ready · ${runtimeConfig.dtype.toUpperCase()} / ${runtimeConfig.device.toUpperCase()}`;
             store.setReady(true);
             store.setProgress(1, readyStatus);
@@ -319,9 +261,8 @@ export async function unloadTTS(): Promise<void> {
  * Check whether the selected model weights are present in browser Cache Storage.
  * This is distinct from `isTTSReady()`, which only describes the in-memory model.
  */
-export async function isTTSModelCached(quantization: TTSQuantization): Promise<boolean> {
-    const modelFilename = TTS_MODEL_FILENAMES[quantization];
-    const modelUrl = `https://huggingface.co/${TTS_MODEL_ID}/resolve/main/onnx/${modelFilename}`;
+export async function isTTSModelCached(): Promise<boolean> {
+    const modelUrl = `https://huggingface.co/${TTS_MODEL_ID}/resolve/main/onnx/${TTS_MODEL_FILENAME}`;
     return isTransformersFileCached(modelUrl);
 }
 
@@ -428,16 +369,16 @@ async function generateValidatedAudio(
             ? `${currentLoadedConfig.dtype}/${currentLoadedConfig.device}`
             : 'unknown runtime';
 
-        if (currentLoadedConfig?.dtype === 'q8' && currentLoadedConfig.device === 'wasm') {
-            throw new Error(`TTS generated invalid audio on stable fallback: ${validationError}`);
+        if (currentLoadedConfig?.device === 'wasm') {
+            throw new Error(`TTS generated invalid fp32 audio on WASM: ${validationError}`);
         }
 
-        console.error(`[TTS] Rejected invalid ${failedConfig} output: ${validationError}. Retrying with q8/WASM.`);
+        console.error(`[TTS] Rejected invalid ${failedConfig} output: ${validationError}. Retrying fp32 on WASM.`);
         const useTTSStore = await getTTSStore();
         const store = useTTSStore.getState();
-        store.setProgress(0, `Invalid ${failedConfig} audio · switching to q8/WASM`);
+        store.setProgress(0, `Invalid ${failedConfig} audio · retrying FP32 / WASM`);
 
-        await initTTS('q8', 'wasm');
+        await initTTS('wasm');
 
         if (!ttsInstance) throw new Error('TTS fallback failed to initialize');
 
@@ -451,9 +392,8 @@ async function generateValidatedAudio(
         }
 
         const fallbackStore = useTTSStore.getState();
-        fallbackStore.setQuantization('q8');
         fallbackStore.setBackendPreference('wasm');
-        fallbackStore.setProgress(1, 'Ready · Q8 / WASM · stable fallback');
+        fallbackStore.setProgress(1, 'Ready · FP32 / WASM · stable fallback');
     }
 
     // phonemes may exist on result depending on kokoro-js version.

@@ -8,9 +8,9 @@ describe('shouldUseLargeModelCache', () => {
         )).toBe(true);
     });
 
-    it('keeps quantized weights in the normal browser cache', () => {
+    it('keeps small model metadata in the normal browser cache', () => {
         expect(shouldUseLargeModelCache(
-            'https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/onnx/model_quantized.onnx',
+            'https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/config.json',
         )).toBe(false);
     });
 });

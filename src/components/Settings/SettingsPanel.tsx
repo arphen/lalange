@@ -6,7 +6,7 @@ import { useTTSStore, type TTSBackendPreference } from '../../core/store/tts';
 import { getEngine, MODEL_INFO, type ModelTier, isModelCached, deleteModel } from '../../core/ai/webllm';
 import { getAvailableStrategies, type DurationStrategyId } from '../../core/rsvp/duration';
 import { getAllDisplayPlugins, type DisplayPluginId } from '../../core/rsvp/display';
-import { VOICES, TTS_MODEL_OPTIONS, initTTS, clearTTSCache, isTTSModelCached, type TTSQuantization } from '../../core/tts';
+import { VOICES, initTTS, clearTTSCache, isTTSModelCached } from '../../core/tts';
 import { clsx } from 'clsx';
 import { BrandName } from '../BrandName';
 import { SeoHead } from '../SeoHead';
@@ -665,8 +665,6 @@ const TTSSettings: React.FC = () => {
     const {
         voice,
         setVoice,
-        quantization,
-        setQuantization,
         backendPreference,
         setBackendPreference,
         bufferAhead,
@@ -690,16 +688,16 @@ const TTSSettings: React.FC = () => {
     const refreshCacheStatus = React.useCallback(async () => {
         setIsCheckingCache(true);
         try {
-            setIsModelCached(await isTTSModelCached(quantization));
+            setIsModelCached(await isTTSModelCached());
         } finally {
             setIsCheckingCache(false);
         }
-    }, [quantization]);
+    }, []);
 
     useEffect(() => {
         let cancelled = false;
 
-        void isTTSModelCached(quantization)
+        void isTTSModelCached()
             .then((cached) => {
                 if (!cancelled) setIsModelCached(cached);
             })
@@ -710,12 +708,12 @@ const TTSSettings: React.FC = () => {
         return () => {
             cancelled = true;
         };
-    }, [quantization]);
+    }, []);
     
     const handleDownloadModel = async () => {
         setIsDownloading(true);
         try {
-            await initTTS(quantization, selectedDevice);
+            await initTTS(selectedDevice);
             await refreshCacheStatus();
         } catch (e) {
             console.error('Failed to download TTS model:', e);
@@ -761,7 +759,7 @@ const TTSSettings: React.FC = () => {
                 </p>
                 <ul className="space-y-2 text-xs text-gray-500 font-mono border-l-2 border-purple-500/30 pl-4 py-2">
                     <li>
-                        <strong className="text-gray-300">Model Size:</strong> ~92 MB (q8 quantized)
+                        <strong className="text-gray-300">Model:</strong> FP32 · ~326 MB
                     </li>
                     <li>
                         <strong className="text-gray-300">Works on iPhone:</strong> Yes, iOS 17+ Safari with WebGPU
@@ -779,14 +777,14 @@ const TTSSettings: React.FC = () => {
                         <h4 className="text-xs text-purple-400 uppercase tracking-widest font-bold">TTS Model Status</h4>
                         <p className="text-sm text-gray-400 mt-1">
                             {isReady
-                                ? `Loaded in memory · ${loadStatus || quantization.toUpperCase()}`
+                                ? `Loaded in memory · ${loadStatus || 'FP32'}`
                                 : isLoading
                                     ? 'Loading model into memory...'
                                     : isCheckingCache
                                         ? 'Checking browser cache...'
                                         : isModelCached
-                                            ? `${quantization.toUpperCase()} model cached locally · not loaded in memory`
-                                            : `${quantization.toUpperCase()} model not cached · first load requires download`}
+                                            ? 'FP32 model cached locally · not loaded in memory'
+                                            : 'FP32 model not cached · first load requires download'}
                         </p>
                     </div>
                     <div className="flex gap-2">
@@ -939,7 +937,7 @@ const TTSSettings: React.FC = () => {
                             ))}
                         </div>
                         <p className="text-xs text-gray-500 italic">
-                            Use fp32 with WebGPU for realtime generation. Use q8 with WASM as the stable fallback.
+                            FP32 is always used. WebGPU is fastest; WASM is the compatibility backend.
                         </p>
                     </div>
 
@@ -964,42 +962,6 @@ const TTSSettings: React.FC = () => {
                 </div>
             </div>
 
-            {/* Model Quality Selection */}
-            <div className="bg-white/5 rounded-lg p-6 border border-white/10 space-y-4">
-                <label className="block text-xs text-purple-400 uppercase tracking-widest font-bold">Model Quality</label>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                    {(Object.keys(TTS_MODEL_OPTIONS) as TTSQuantization[]).filter(q => ['q8', 'fp32'].includes(q)).map(q => {
-                        const info = TTS_MODEL_OPTIONS[q];
-                        return (
-                            <button
-                                key={q}
-                                onClick={() => {
-                                    setIsCheckingCache(true);
-                                    setQuantization(q);
-                                }}
-                                className={clsx(
-                                    "p-4 rounded border text-left transition-all",
-                                    quantization === q
-                                        ? "bg-purple-600 text-white border-purple-400"
-                                        : "bg-black/20 border-white/10 text-gray-400 hover:border-purple-400/50 hover:text-white"
-                                )}
-                            >
-                                <div className="font-bold text-sm uppercase">{q}</div>
-                                <div className="text-[10px] opacity-70 mt-1">
-                                    {Math.round(info.sizeBytes / 1_000_000)} MB
-                                </div>
-                                <div className="text-[10px] opacity-50 mt-0.5">
-                                    {info.quality} quality
-                                    {info.recommended && ' ⭐'}
-                                </div>
-                            </button>
-                        );
-                    })}
-                </div>
-                <p className="text-xs text-gray-500 italic">
-                    q8 recommended: Best balance of quality and size. fp32/fp16 for maximum quality.
-                </p>
-            </div>
         </div>
     );
 };

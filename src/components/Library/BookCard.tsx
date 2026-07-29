@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { Share2 } from 'lucide-react';
 import { initDB, type BookDocType, type ChapterDocType } from '../../core/sync/db';
 import { formatReadingTime } from '../../hooks/useReadingTimeEstimate';
 
@@ -8,10 +9,10 @@ interface BookCardProps {
     onDelete: (e: React.MouseEvent) => void;
     onStop?: (e: React.MouseEvent) => void;
     onEstimateDensity?: (e: React.MouseEvent) => void;
-    onSync?: (e: React.MouseEvent) => void;
+    onShare?: (e: React.MouseEvent) => void;
 }
 
-export const BookCard: React.FC<BookCardProps> = ({ book, onOpen, onDelete, onStop, onEstimateDensity, onSync }) => {
+export const BookCard: React.FC<BookCardProps> = ({ book, onOpen, onDelete, onStop, onEstimateDensity, onShare }) => {
     const [chapters, setChapters] = useState<ChapterDocType[]>([]);
     const [readingTime, setReadingTime] = useState<string>('');
     const [processingStatus, setProcessingStatus] = useState<string>('');
@@ -127,28 +128,14 @@ export const BookCard: React.FC<BookCardProps> = ({ book, onOpen, onDelete, onSt
                         </svg>
                     </button>
                 )}
-                {onSync && isReady && (
+                {onShare && isReady && (
                     <button
-                        onClick={onSync}
+                        onClick={onShare}
                         className="archive-card-action text-dune-gold"
-                        title="Sync to Phone"
+                        title="Share book"
+                        aria-label={`Share ${book.title}`}
                     >
-                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            {/* Phone outline */}
-                            <path
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                                strokeWidth={1.5}
-                                d="M9.75 2.25h4.5A2.25 2.25 0 0116.5 4.5v15a2.25 2.25 0 01-2.25 2.25h-4.5A2.25 2.25 0 017.5 19.5v-15A2.25 2.25 0 019.75 2.25z"
-                            />
-                            {/* Sync/download arrow inside the phone */}
-                            <path
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                                strokeWidth={1.5}
-                                d="M12 7.5v6m0 0l-2.25-2.25M12 13.5l2.25-2.25"
-                            />
-                        </svg>
+                        <Share2 className="h-5 w-5" strokeWidth={1.5} />
                     </button>
                 )}
                 <button
