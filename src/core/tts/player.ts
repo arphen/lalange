@@ -38,6 +38,7 @@ class TTSAudioPlayer {
     private isPlaying = false;
     private currentSentenceIndex = 0;
     private waitingForSentenceIndex: number | null = null; // Track which sentence we're waiting for
+    private startupBufferTarget = 1;
     private options: AudioPlayerOptions = {};
     
     // For word tracking within a sentence
@@ -48,7 +49,9 @@ class TTSAudioPlayer {
     
     private async ensureContext(): Promise<AudioContext> {
         if (!this.audioContext) {
-            this.audioContext = new AudioContext({ sampleRate: 24000 });
+            // Keep the output graph at the device's native rate. AudioBuffer keeps
+            // the model's 24 kHz source rate and Web Audio resamples it cleanly.
+            this.audioContext = new AudioContext();
             this.gainNode = this.audioContext.createGain();
             this.gainNode.connect(this.audioContext.destination);
         }
@@ -94,10 +97,8 @@ class TTSAudioPlayer {
         // Notify UI
         this.options.onAudioQueued?.(sentence.index, this.audioQueue.size);
         
-        // If we're playing and waiting for this sentence, start it now
-        if (this.isPlaying && sentence.index === this.currentSentenceIndex && !this.currentSource) {
-            console.log(`[TTS Player] Audio arrived for sentence ${sentence.index}, playing now`);
-            this.waitingForSentenceIndex = null;
+        // Re-check the contiguous startup target whenever another sentence arrives.
+        if (this.isPlaying && !this.currentSource && this.waitingForSentenceIndex === this.currentSentenceIndex) {
             this.playCurrentSentence();
         }
         
@@ -132,6 +133,22 @@ class TTSAudioPlayer {
     getQueueSize(): number {
         return this.audioQueue.size;
     }
+
+    getBufferedAheadCount(fromSentenceIndex: number = this.currentSentenceIndex): number {
+        let count = 0;
+        let sentenceIndex = fromSentenceIndex + 1;
+
+        while (this.audioQueue.has(sentenceIndex)) {
+            count += 1;
+            sentenceIndex += 1;
+        }
+
+        return count;
+    }
+
+    checkBuffer(): void {
+        this.options.onBufferLow?.(this.currentSentenceIndex);
+    }
     
     hasAudioForSentence(sentenceIndex: number): boolean {
         return this.audioQueue.has(sentenceIndex);
@@ -140,11 +157,12 @@ class TTSAudioPlayer {
     /**
      * Start playback from a specific sentence index
      */
-    async play(fromSentenceIndex?: number): Promise<void> {
+    async play(fromSentenceIndex?: number, startupBufferTarget: number = 1): Promise<void> {
         await this.ensureContext();
         
         if (fromSentenceIndex !== undefined) {
             this.currentSentenceIndex = fromSentenceIndex;
+            this.startupBufferTarget = Math.max(1, Math.round(startupBufferTarget));
         }
         
         if (this.isPlaying) {
@@ -165,12 +183,13 @@ class TTSAudioPlayer {
         }
         
         const queueItem = this.audioQueue.get(this.currentSentenceIndex);
+        const contiguousBuffered = queueItem ? 1 + this.getBufferedAheadCount() : 0;
         
-        if (!queueItem) {
-            // No audio for this sentence yet - wait for it
-            // Only call onBufferLow if we haven't already requested this sentence
+        if (!queueItem || contiguousBuffered < this.startupBufferTarget) {
+            // Wait until the initial contiguous buffer is ready. After playback
+            // starts, startupBufferTarget resets to one and refill is rolling.
             if (this.waitingForSentenceIndex !== this.currentSentenceIndex) {
-                console.log(`[TTS Player] Waiting for audio for sentence ${this.currentSentenceIndex}...`);
+                console.log(`[TTS Player] Waiting for ${this.startupBufferTarget} contiguous sentence(s) from ${this.currentSentenceIndex}...`);
                 this.waitingForSentenceIndex = this.currentSentenceIndex;
                 useTTSStore.getState().setPlaybackState('generating');
                 
@@ -182,6 +201,7 @@ class TTSAudioPlayer {
         
         // Clear waiting flag since we have audio
         this.waitingForSentenceIndex = null;
+        this.startupBufferTarget = 1;
         
         const { buffer, sentence, duration } = queueItem;
         
@@ -221,11 +241,9 @@ class TTSAudioPlayer {
         this.options.onSentenceChange?.(sentence.index);
         
         // Check if buffer is running low
-        const aheadCount = this.countSentencesAhead();
-        if (aheadCount < 3) {
-            console.log(`[TTS Player] Buffer low: ${aheadCount} ahead`);
-            this.options.onBufferLow?.(this.currentSentenceIndex);
-        }
+        const aheadCount = this.getBufferedAheadCount();
+        console.log(`[TTS Player] Contiguous buffer: ${aheadCount} ahead`);
+        this.options.onBufferLow?.(this.currentSentenceIndex);
         
         const sentenceIndex = sentence.index;
         source.onended = () => {
@@ -252,16 +270,6 @@ class TTSAudioPlayer {
             console.error('[TTS Player] Failed to start:', error);
             this.options.onError?.(error as Error);
         }
-    }
-    
-    private countSentencesAhead(): number {
-        let count = 0;
-        for (const [idx] of this.audioQueue) {
-            if (idx > this.currentSentenceIndex) {
-                count++;
-            }
-        }
-        return count;
     }
     
     private startWordTracking(): void {
@@ -346,6 +354,7 @@ class TTSAudioPlayer {
         this.currentSentenceIndex = 0;
         this.currentSentence = null;
         this.waitingForSentenceIndex = null;
+        this.startupBufferTarget = 1;
         useTTSStore.getState().setPlaybackState('idle');
         useTTSStore.getState().setCurrentWordIndex(0);
     }

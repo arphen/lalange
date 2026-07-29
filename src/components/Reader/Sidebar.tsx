@@ -18,6 +18,11 @@ interface SidebarProps {
     globalSummaries?: GlobalSummaryType[];
     onPlayGlobalSummary?: (summary: GlobalSummaryType) => void;
     onClose?: () => void;
+    chapterHandoffSelection?: {
+        chapterId: string;
+        startWordIndex: number | null;
+    } | null;
+    chapterHandoffActive?: boolean;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -31,7 +36,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
     activeSummaryId,
     globalSummaries = [],
     onPlayGlobalSummary,
-    onClose
+    onClose,
+    chapterHandoffSelection = null,
+    chapterHandoffActive = false,
 }) => {
     // Filter out image chapters
     const displayChapters = chapters.filter(isReadingChapter);
@@ -163,6 +170,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         ? Math.min(1, Math.max(0, (currentWordIndex || 0) / wordCount))
                         : 0;
                     const chapterProgressPercent = Math.round(chapterProgress * 100);
+                    const chapterIsHandoffTarget = chapterHandoffActive && chapterHandoffSelection?.chapterId === chapter.id;
 
                     return (
                         <div key={chapter.id} className="relative group flex flex-col">
@@ -178,7 +186,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                     className={clsx(
                                         "reader-chapter-row flex-1 relative overflow-hidden text-left p-3 transition-colors",
                                         isCurrent ? "reader-chapter-row--active text-white" : "text-gray-400",
-                                        (!isReady && (!chapter.content || chapter.content.length === 0)) && "opacity-50 cursor-not-allowed"
+                                        (!isReady && (!chapter.content || chapter.content.length === 0)) && "opacity-50 cursor-not-allowed",
+                                        chapterHandoffActive && !chapterIsHandoffTarget && "opacity-35",
+                                        chapterHandoffActive && chapterIsHandoffTarget && "opacity-95"
                                     )}
                                 >
                                     <div className="relative z-10">
@@ -237,6 +247,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                         const sectionProgress = isCurrent && currentWordIndex !== undefined
                                             ? Math.min(1, Math.max(0, (currentWordIndex - sub.startWordIndex) / sectionLength))
                                             : 0;
+                                        const isHandoffSelection = chapterHandoffActive
+                                            && chapterHandoffSelection?.chapterId === chapter.id
+                                            && chapterHandoffSelection.startWordIndex === sub.startWordIndex;
 
                                         return (
                                             <div key={idx} className="relative">
@@ -245,7 +258,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                                     className={clsx(
                                                         "reader-section-row w-full min-h-11 relative overflow-hidden flex items-center gap-2 px-3 py-2 text-left transition-colors",
                                                         isActive ? "reader-section-row--active text-white" : "text-white/60 hover:text-white",
-                                                        !hasStarted && "opacity-40 cursor-not-allowed"
+                                                        !hasStarted && "opacity-40 cursor-not-allowed",
+                                                        chapterHandoffActive && !isHandoffSelection && "opacity-25",
+                                                        chapterHandoffActive && isHandoffSelection && "opacity-100 ring-1 ring-emerald-300/40"
                                                     )}
                                                     onClick={() => {
                                                         if (hasStarted) onLoadChapter(chapter.id, sub.startWordIndex);

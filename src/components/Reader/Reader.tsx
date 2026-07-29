@@ -27,6 +27,11 @@ interface ReaderProps {
     onBack?: () => void;
 }
 
+interface ChapterHandoffSelection {
+    chapterId: string;
+    startWordIndex: number | null;
+}
+
 const getDensityColor = (score: number) => {
     if (score === 0) return 'text-gray-700 opacity-50'; // Pending
     if (score <= 0.6) return 'text-sky-500'; // Fast
@@ -48,9 +53,10 @@ const CHAPTER_DRAWER_SWIPE_CLOSE_DISTANCE_PX = 72;
 const CHAPTER_DRAWER_SWIPE_MAX_VERTICAL_PX = 56;
 const CHAPTER_BRAKE_DURATION_MS = 720;
 const CHAPTER_PAUSED_CROSSING_DELAY_MS = 720;
-const CHAPTER_LAUNCH_DURATION_MS = 1100;
+const CHAPTER_LAUNCH_DURATION_MS = 760;
 const CHAPTER_BRAKE_SPEED = 0.06;
-const CHAPTER_LAUNCH_SPEED = 0.34;
+const CHAPTER_LAUNCH_SPEED = 0.14;
+const CHAPTER_CHOOSER_HIDE_AFTER_PLAYBACK_MS = 320;
 
 type ChapterTransitionPhase = 'braking' | 'crossing' | 'launching';
 
@@ -94,6 +100,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
     const setAiEnabled = useSettingsStore((s) => s.setAiEnabled);
     const aiIsReady = useAIStore((s) => s.isReady);
     const aiIsLoading = useAIStore((s) => s.isLoading);
+    const requestAiSetup = useAIStore((s) => s.requestSetup);
     
     // Get the active display plugin
     const displayPlugin = useMemo(() => getDisplayPlugin(displayPluginId), [displayPluginId]);
@@ -127,6 +134,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
     const [showChapters, setShowChapters] = useState(() => (
         typeof window === 'undefined' || window.innerWidth >= 768
     ));
+    const [chapterHandoffSelection, setChapterHandoffSelection] = useState<ChapterHandoffSelection | null>(null);
     const [inspectingChapterId, setInspectingChapterId] = useState<string | null>(null);
     const inspectingChapter = chapters.find(c => c.id === inspectingChapterId);
     const [now, setNow] = useState(Date.now()); // Force re-render for live time updates
@@ -198,6 +206,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
     const momentumAnimationFrameRef = useRef<number | null>(null);
     const momentumCompletionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const chapterTransitionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const chapterChooserHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const chapterTransitionActiveRef = useRef(false);
     const pauseAfterChapterTransitionRef = useRef(false);
     const playbackMomentumRef = useRef(1);
@@ -494,11 +503,18 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
         setShowChapters(false);
     }, [focusModeEnabled]);
 
+    useEffect(() => {
+        if (!showChapters && chapterHandoffSelection) {
+            setChapterHandoffSelection(null);
+        }
+    }, [showChapters, chapterHandoffSelection]);
+
     const animatePlaybackMomentum = useCallback((
         from: number,
         to: number,
         durationMs: number,
         onComplete: () => void,
+        easing: 'easeOut' | 'easeIn' = 'easeOut',
     ) => {
         if (momentumAnimationFrameRef.current) cancelAnimationFrame(momentumAnimationFrameRef.current);
         if (momentumCompletionTimerRef.current) clearTimeout(momentumCompletionTimerRef.current);
@@ -522,7 +538,9 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
             if (startedAt === null) startedAt = timestamp;
             const elapsedMs = timestamp - startedAt;
             const progress = Math.min(1, elapsedMs / durationMs);
-            const easedProgress = 1 - Math.pow(1 - progress, 3);
+            const easedProgress = easing === 'easeIn'
+                ? Math.pow(progress, 3)
+                : 1 - Math.pow(1 - progress, 3);
             playbackMomentumRef.current = from + ((to - from) * easedProgress);
 
             if (progress >= 1) finish();
@@ -554,8 +572,17 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
             chapterTransitionActiveRef.current = true;
             pauseAfterChapterTransitionRef.current = false;
             const wasPlaying = isPlayingRef.current;
+            const shouldLingerContents = closeContents && showChapters;
 
-            if (closeContents) setShowChapters(false);
+            if (chapterChooserHideTimerRef.current) {
+                clearTimeout(chapterChooserHideTimerRef.current);
+                chapterChooserHideTimerRef.current = null;
+            }
+
+            if (closeContents && !shouldLingerContents) {
+                setShowChapters(false);
+                setChapterHandoffSelection(null);
+            }
             setTransitionLabel(label);
             setTransitionKind(kind);
             setChapterTransitionPhase(wasPlaying ? 'braking' : 'crossing');
@@ -583,6 +610,19 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                         setIsPlaying(shouldPlay);
                         if (shouldPlay) setPlaybackSession((session) => session + 1);
 
+                        if (closeContents) {
+                            if (shouldPlay && shouldLingerContents) {
+                                chapterChooserHideTimerRef.current = setTimeout(() => {
+                                    setShowChapters(false);
+                                    setChapterHandoffSelection(null);
+                                    chapterChooserHideTimerRef.current = null;
+                                }, CHAPTER_CHOOSER_HIDE_AFTER_PLAYBACK_MS);
+                            } else {
+                                setShowChapters(false);
+                                setChapterHandoffSelection(null);
+                            }
+                        }
+
                         animatePlaybackMomentum(
                             CHAPTER_LAUNCH_SPEED,
                             1,
@@ -593,12 +633,17 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                                 setTransitionLabel(null);
                                 setTransitionKind(null);
                             },
+                            'easeIn',
                         );
                     })
                     .catch((error) => {
                         console.error('Reader transition failed', error);
                         playbackMomentumRef.current = 1;
                         chapterTransitionActiveRef.current = false;
+                        if (closeContents) {
+                            setShowChapters(false);
+                            setChapterHandoffSelection(null);
+                        }
                         setChapterTransitionPhase(null);
                         setTransitionLabel(null);
                         setTransitionKind(null);
@@ -620,7 +665,10 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
         setIsPlaying(false);
         isPlayingRef.current = false;
 
-        if (closeContents) setShowChapters(false);
+        if (closeContents) {
+            setShowChapters(false);
+            setChapterHandoffSelection(null);
+        }
         else if (kind === 'summary') setShowChapters(true);
 
         // Clear RSVP display
@@ -657,7 +705,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                     });
             }
         }, 1000);
-    }, [animatePlaybackMomentum, setIsPlaying, setCountdown, setTransitionLabel, setShowChapters]);
+    }, [animatePlaybackMomentum, setIsPlaying, setCountdown, setTransitionLabel, setShowChapters, showChapters]);
 
     const handleSkipSummary = useCallback(() => {
         // Clear countdown if running
@@ -812,8 +860,16 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
         });
     }, [renderWord, book.id, resetDisplaySegments, updateProgressMilestone]);
 
-    const beginChapterTransition = useCallback((chapterId: string, initialIndex: number = 0) => {
+    const beginChapterTransition = useCallback((
+        chapterId: string,
+        initialIndex: number = 0,
+        selectionStartWordIndex?: number | null,
+    ) => {
         if (countdownIntervalRef.current || chapterTransitionActiveRef.current) return;
+
+        setChapterHandoffSelection(selectionStartWordIndex === undefined
+            ? null
+            : { chapterId, startWordIndex: selectionStartWordIndex });
 
         const targetChapter = chaptersRef.current.find((chapter) => chapter.id === chapterId);
         if (!targetChapter || !isReadableChapter(targetChapter)) return;
@@ -1432,6 +1488,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
             if (momentumAnimationFrameRef.current) cancelAnimationFrame(momentumAnimationFrameRef.current);
             if (momentumCompletionTimerRef.current) clearTimeout(momentumCompletionTimerRef.current);
             if (chapterTransitionTimerRef.current) clearTimeout(chapterTransitionTimerRef.current);
+            if (chapterChooserHideTimerRef.current) clearTimeout(chapterChooserHideTimerRef.current);
             if (chapterPulseTimerRef.current) clearTimeout(chapterPulseTimerRef.current);
             if (progressReminderTimerRef.current) clearTimeout(progressReminderTimerRef.current);
             void saveProgressRef.current();
@@ -1776,16 +1833,24 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                     {/* AI Toggle Button */}
                     <button
                         onClick={() => {
-                            if (aiEnabled) setAiEnabled(false);
-                            else if (aiIsReady && !aiIsLoading) setAiEnabled(true);
+                            if (aiEnabled) {
+                                setAiEnabled(false);
+                                return;
+                            }
+                            if (aiIsLoading) return;
+                            if (aiIsReady) {
+                                setAiEnabled(true);
+                                return;
+                            }
+                            requestAiSetup('pacing');
                         }}
                         className={clsx('reader-toolbar-button reader-focus-fade', aiEnabled && 'reader-toolbar-button--active')}
-                        title={aiEnabled ? 'Disable adaptive pacing' : aiIsLoading ? 'Adaptive pacing is loading' : aiIsReady ? 'Enable adaptive pacing' : 'Adaptive pacing is not configured'}
-                        aria-label={aiEnabled ? 'Disable adaptive pacing' : aiIsLoading ? 'Adaptive pacing is loading' : aiIsReady ? 'Enable adaptive pacing' : 'Adaptive pacing unavailable'}
+                        title={aiEnabled ? 'Disable adaptive pacing' : aiIsLoading ? 'Adaptive pacing is loading' : aiIsReady ? 'Enable adaptive pacing' : 'Set up adaptive pacing'}
+                        aria-label={aiEnabled ? 'Disable adaptive pacing' : aiIsLoading ? 'Adaptive pacing is loading' : aiIsReady ? 'Enable adaptive pacing' : 'Set up adaptive pacing'}
                         aria-pressed={aiEnabled}
                         aria-hidden={focusModeEnabled}
                         tabIndex={focusModeEnabled ? -1 : undefined}
-                        disabled={!aiEnabled && (!aiIsReady || aiIsLoading)}
+                        disabled={aiIsLoading}
                     >
                         <Gauge className="reader-toolbar-icon" />
                         <span className="reader-toolbar-label">Pacing</span>
@@ -1849,7 +1914,9 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
             <div
                 className={clsx(
                     'fixed inset-0 bg-black/60 backdrop-blur-xs z-[75] md:hidden transition-opacity duration-500',
-                    showChapters ? 'opacity-100' : 'opacity-0 pointer-events-none',
+                    showChapters
+                        ? (transitionKind === 'chapter' ? 'opacity-100 pointer-events-none' : 'opacity-100')
+                        : 'opacity-0 pointer-events-none',
                 )}
                 onClick={() => setShowChapters(false)}
                 aria-hidden="true"
@@ -1862,6 +1929,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                 className={clsx(
                     'reader-contents-panel fixed inset-y-0 right-0 z-[80] w-[min(84vw,20rem)] transform',
                     showChapters ? 'translate-x-0' : 'translate-x-full pointer-events-none',
+                    transitionKind === 'chapter' && chapterTransitionPhase !== null && 'pointer-events-none',
                 )}
                 aria-hidden={!showChapters}
                 inert={!showChapters}
@@ -1875,7 +1943,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                     chapters={chapters}
                     currentChapter={currentChapter}
                     onLoadChapter={(id, index) => {
-                        beginChapterTransition(id, index || 0);
+                        beginChapterTransition(id, index ?? 0, index ?? null);
                     }}
                     wpm={wpm}
                     currentWordIndex={currentWordIndex}
@@ -1883,6 +1951,8 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                     activeSummaryId={activeSummaryId}
                     globalSummaries={globalSummaries}
                     onPlayGlobalSummary={handlePlayGlobalSummary}
+                    chapterHandoffSelection={chapterHandoffSelection}
+                    chapterHandoffActive={transitionKind === 'chapter' && chapterTransitionPhase !== null}
                 />
             </div>
 
@@ -2197,6 +2267,10 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                         bookId={book.id}
                         chapterId={currentChapter.id}
                         compact={false}
+                        dockClassName={clsx(
+                            showChapters && 'md:right-[21rem]',
+                            showChapters && 'opacity-0 pointer-events-none md:opacity-100 md:pointer-events-auto',
+                        )}
                     />
                 </div>
             )}

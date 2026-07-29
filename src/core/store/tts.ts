@@ -8,6 +8,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
 export type TTSPlaybackState = 'idle' | 'loading' | 'preparing' | 'playing' | 'paused' | 'generating';
+export type TTSBackendPreference = 'auto' | 'wasm' | 'webgpu';
 
 export interface TTSPosition {
     bookId: string;
@@ -39,6 +40,8 @@ interface TTSState {
     // Settings (persisted)
     voice: string;
     quantization: 'fp32' | 'fp16' | 'q8' | 'q4' | 'q4f16';
+    backendPreference: TTSBackendPreference;
+    bufferAhead: number;
     autoPlay: boolean;
     
     // Position tracking for sync
@@ -63,6 +66,8 @@ interface TTSState {
     // Actions - Settings
     setVoice: (voice: string) => void;
     setQuantization: (quantization: 'fp32' | 'fp16' | 'q8' | 'q4' | 'q4f16') => void;
+    setBackendPreference: (backendPreference: TTSBackendPreference) => void;
+    setBufferAhead: (bufferAhead: number) => void;
     setAutoPlay: (autoPlay: boolean) => void;
     
     // Actions - Position
@@ -72,7 +77,7 @@ interface TTSState {
 
 export const useTTSStore = create<TTSState>()(
     persist(
-        (set, get) => ({
+        (set) => ({
             // Engine State - Initial
             isReady: false,
             isLoading: false,
@@ -93,6 +98,8 @@ export const useTTSStore = create<TTSState>()(
             // Settings - Initial (persisted)
             voice: 'af_heart',
             quantization: 'q8',
+            backendPreference: 'auto',
+            bufferAhead: 5,
             autoPlay: false,
             
             // Position - Initial
@@ -101,10 +108,7 @@ export const useTTSStore = create<TTSState>()(
             // Actions - Engine
             setReady: (ready) => set({ isReady: ready }),
             setLoading: (loading) => set({ isLoading: loading }),
-            setGenerating: (generating) => set({ 
-                isGenerating: generating,
-                playbackState: generating ? 'generating' : get().playbackState === 'generating' ? 'idle' : get().playbackState
-            }),
+            setGenerating: (generating) => set({ isGenerating: generating }),
             setError: (error) => set({ error }),
             setProgress: (progress, status) => set({ loadProgress: progress, loadStatus: status }),
             
@@ -120,6 +124,8 @@ export const useTTSStore = create<TTSState>()(
             // Actions - Settings
             setVoice: (voice) => set({ voice }),
             setQuantization: (quantization) => set({ quantization }),
+            setBackendPreference: (backendPreference) => set({ backendPreference }),
+            setBufferAhead: (bufferAhead) => set({ bufferAhead: Math.max(3, Math.min(12, Math.round(bufferAhead))) }),
             setAutoPlay: (autoPlay) => set({ autoPlay }),
             
             // Actions - Position
@@ -138,6 +144,8 @@ export const useTTSStore = create<TTSState>()(
             partialize: (state) => ({
                 voice: state.voice,
                 quantization: state.quantization,
+                backendPreference: state.backendPreference,
+                bufferAhead: state.bufferAhead,
                 autoPlay: state.autoPlay,
                 volume: state.volume,
                 speed: state.speed,

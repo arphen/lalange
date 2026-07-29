@@ -2,11 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { useParams, Navigate } from 'react-router-dom';
 import { useSettingsStore, type PromptFragment } from '../../core/store/settings';
 import { useAIStore } from '../../core/store/ai';
-import { useTTSStore } from '../../core/store/tts';
+import { useTTSStore, type TTSBackendPreference } from '../../core/store/tts';
 import { getEngine, MODEL_INFO, type ModelTier, isModelCached, deleteModel } from '../../core/ai/webllm';
 import { getAvailableStrategies, type DurationStrategyId } from '../../core/rsvp/duration';
 import { getAllDisplayPlugins, type DisplayPluginId } from '../../core/rsvp/display';
-import { VOICES, TTS_MODEL_OPTIONS, initTTS, clearTTSCache, type TTSQuantization } from '../../core/tts';
+import { VOICES, TTS_MODEL_OPTIONS, initTTS, clearTTSCache, isTTSModelCached, type TTSQuantization } from '../../core/tts';
 import { clsx } from 'clsx';
 import { BrandName } from '../BrandName';
 import { SeoHead } from '../SeoHead';
@@ -667,6 +667,10 @@ const TTSSettings: React.FC = () => {
         setVoice,
         quantization,
         setQuantization,
+        backendPreference,
+        setBackendPreference,
+        bufferAhead,
+        setBufferAhead,
         speed,
         setSpeed,
         volume,
@@ -679,11 +683,40 @@ const TTSSettings: React.FC = () => {
     
     const [isDownloading, setIsDownloading] = useState(false);
     const [isClearingCache, setIsClearingCache] = useState(false);
+    const [isModelCached, setIsModelCached] = useState(false);
+    const [isCheckingCache, setIsCheckingCache] = useState(true);
+    const selectedDevice = backendPreference === 'auto' ? undefined : backendPreference;
+
+    const refreshCacheStatus = React.useCallback(async () => {
+        setIsCheckingCache(true);
+        try {
+            setIsModelCached(await isTTSModelCached(quantization));
+        } finally {
+            setIsCheckingCache(false);
+        }
+    }, [quantization]);
+
+    useEffect(() => {
+        let cancelled = false;
+
+        void isTTSModelCached(quantization)
+            .then((cached) => {
+                if (!cancelled) setIsModelCached(cached);
+            })
+            .finally(() => {
+                if (!cancelled) setIsCheckingCache(false);
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [quantization]);
     
     const handleDownloadModel = async () => {
         setIsDownloading(true);
         try {
-            await initTTS(quantization);
+            await initTTS(quantization, selectedDevice);
+            await refreshCacheStatus();
         } catch (e) {
             console.error('Failed to download TTS model:', e);
         } finally {
@@ -695,6 +728,7 @@ const TTSSettings: React.FC = () => {
         setIsClearingCache(true);
         try {
             await clearTTSCache();
+            setIsModelCached(false);
         } catch (e) {
             console.error('Failed to clear TTS cache:', e);
         } finally {
@@ -733,7 +767,7 @@ const TTSSettings: React.FC = () => {
                         <strong className="text-gray-300">Works on iPhone:</strong> Yes, iOS 17+ Safari with WebGPU
                     </li>
                     <li>
-                        <strong className="text-gray-300">Generation Speed:</strong> ~10x realtime
+                        <strong className="text-gray-300">Generation:</strong> Runs locally; speed varies by browser, backend, and hardware
                     </li>
                 </ul>
             </div>
@@ -744,7 +778,15 @@ const TTSSettings: React.FC = () => {
                     <div>
                         <h4 className="text-xs text-purple-400 uppercase tracking-widest font-bold">TTS Model Status</h4>
                         <p className="text-sm text-gray-400 mt-1">
-                            {isReady ? '✓ Model loaded and ready' : isLoading ? 'Loading...' : 'Model not loaded'}
+                            {isReady
+                                ? `Loaded in memory · ${loadStatus || quantization.toUpperCase()}`
+                                : isLoading
+                                    ? 'Loading model into memory...'
+                                    : isCheckingCache
+                                        ? 'Checking browser cache...'
+                                        : isModelCached
+                                            ? `${quantization.toUpperCase()} model cached locally · not loaded in memory`
+                                            : `${quantization.toUpperCase()} model not cached · first load requires download`}
                         </p>
                     </div>
                     <div className="flex gap-2">
@@ -774,7 +816,13 @@ const TTSSettings: React.FC = () => {
                                         : "bg-purple-600 hover:bg-purple-500 text-white"
                                 )}
                             >
-                                {isLoading ? 'LOADING...' : 'DOWNLOAD MODEL'}
+                                {isLoading
+                                    ? 'LOADING...'
+                                    : isCheckingCache
+                                        ? 'CHECKING CACHE...'
+                                        : isModelCached
+                                            ? 'LOAD CACHED MODEL'
+                                            : 'DOWNLOAD & LOAD MODEL'}
                             </button>
                         )}
                     </div>
@@ -864,16 +912,71 @@ const TTSSettings: React.FC = () => {
                 </div>
             </div>
 
+            {/* Performance Controls */}
+            <div className="bg-white/5 rounded-lg p-6 border border-white/10 space-y-4">
+                <label className="block text-xs text-purple-400 uppercase tracking-widest font-bold">Performance Controls</label>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-3">
+                        <div className="flex justify-between items-center">
+                            <span className="text-xs text-gray-400 uppercase tracking-wider">Backend</span>
+                            <span className="text-xs text-purple-300 uppercase">{backendPreference}</span>
+                        </div>
+                        <div className="grid grid-cols-3 gap-2">
+                            {(['auto', 'wasm', 'webgpu'] as TTSBackendPreference[]).map((mode) => (
+                                <button
+                                    key={mode}
+                                    onClick={() => setBackendPreference(mode)}
+                                    className={clsx(
+                                        'px-3 py-2 rounded text-xs font-bold uppercase transition-all border',
+                                        backendPreference === mode
+                                            ? 'bg-purple-600 text-white border-purple-400'
+                                            : 'bg-black/20 border-white/10 text-gray-400 hover:border-purple-400/50 hover:text-white'
+                                    )}
+                                >
+                                    {mode}
+                                </button>
+                            ))}
+                        </div>
+                        <p className="text-xs text-gray-500 italic">
+                            Use fp32 with WebGPU for realtime generation. Use q8 with WASM as the stable fallback.
+                        </p>
+                    </div>
+
+                    <div className="space-y-3">
+                        <div className="flex justify-between items-center">
+                            <label className="text-xs text-gray-400 uppercase tracking-wider">Buffer Ahead</label>
+                            <span className="text-xs text-purple-300">{bufferAhead} sentences</span>
+                        </div>
+                        <input
+                            type="range"
+                            min="3"
+                            max="12"
+                            step="1"
+                            value={bufferAhead}
+                            onChange={(e) => setBufferAhead(parseInt(e.target.value, 10))}
+                            className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-purple-500"
+                        />
+                        <p className="text-xs text-gray-500 italic">
+                            Playback starts after this many sentences are ready, then maintains the same lead.
+                        </p>
+                    </div>
+                </div>
+            </div>
+
             {/* Model Quality Selection */}
             <div className="bg-white/5 rounded-lg p-6 border border-white/10 space-y-4">
                 <label className="block text-xs text-purple-400 uppercase tracking-widest font-bold">Model Quality</label>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                    {(Object.keys(TTS_MODEL_OPTIONS) as TTSQuantization[]).filter(q => ['q8', 'fp16', 'fp32'].includes(q)).map(q => {
+                    {(Object.keys(TTS_MODEL_OPTIONS) as TTSQuantization[]).filter(q => ['q8', 'fp32'].includes(q)).map(q => {
                         const info = TTS_MODEL_OPTIONS[q];
                         return (
                             <button
                                 key={q}
-                                onClick={() => setQuantization(q)}
+                                onClick={() => {
+                                    setIsCheckingCache(true);
+                                    setQuantization(q);
+                                }}
                                 className={clsx(
                                     "p-4 rounded border text-left transition-all",
                                     quantization === q

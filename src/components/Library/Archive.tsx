@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { initDB, type BookDocType } from '../../core/sync/db';
+import { initDB, type BookDocType, type MyDatabase } from '../../core/sync/db';
 import { initialIngest, processChaptersInBackground, stopProcessing, estimateBookDensity } from '../../core/ingest/pipeline';
 import { useAIStore } from '../../core/store/ai';
 import { useSettingsStore } from '../../core/store/settings';
@@ -10,6 +10,33 @@ import { SeoHead } from '../SeoHead';
 interface ArchiveProps {
     onOpenBook: (book: BookDocType) => void;
 }
+
+const normalizeIdentity = (value?: string) => (value || '').trim().toLowerCase();
+
+const findDuplicateBook = async (
+    db: MyDatabase,
+    existingBooks: BookDocType[],
+    incomingBook: BookDocType,
+    incomingRawData: string
+): Promise<BookDocType | null> => {
+    const incomingTitle = normalizeIdentity(incomingBook.title);
+    const incomingAuthor = normalizeIdentity(incomingBook.author || 'Unknown');
+
+    const candidateBooks = existingBooks.filter((book) => {
+        const title = normalizeIdentity(book.title);
+        const author = normalizeIdentity(book.author || 'Unknown');
+        return title === incomingTitle && author === incomingAuthor;
+    });
+
+    for (const candidate of candidateBooks) {
+        const rawFileDoc = await db.raw_files.findOne(candidate.id).exec();
+        if (rawFileDoc?.data === incomingRawData) {
+            return candidate;
+        }
+    }
+
+    return null;
+};
 
 export const Archive: React.FC<ArchiveProps> = ({ onOpenBook }) => {
     const [books, setBooks] = useState<BookDocType[]>([]);
@@ -43,6 +70,16 @@ export const Archive: React.FC<ArchiveProps> = ({ onOpenBook }) => {
         try {
             const { book, chapters, images, rawFile } = await initialIngest(file, (msg: string) => setStatus(msg));
             const db = await initDB();
+
+            const existingBookDocs = await db.books.find().exec();
+            const existingBooks = existingBookDocs.map((doc) => doc.toJSON() as BookDocType);
+            const duplicateBook = await findDuplicateBook(db, existingBooks, book, rawFile.data);
+            if (duplicateBook) {
+                setStatus('Book already exists in archive. Opening existing copy...');
+                onOpenBook(duplicateBook);
+                return;
+            }
+
             await db.books.insert(book);
             await db.chapters.bulkInsert(chapters);
             if (images.length > 0) {
@@ -73,6 +110,7 @@ export const Archive: React.FC<ArchiveProps> = ({ onOpenBook }) => {
     const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
         if (!e.target.files?.[0]) return;
         await ingestBook(e.target.files[0]);
+        e.target.value = '';
     };
 
     const handleLoadDemo = async () => {
@@ -162,7 +200,7 @@ export const Archive: React.FC<ArchiveProps> = ({ onOpenBook }) => {
 
     return (
         <div
-            className="flex h-screen overflow-hidden bg-basalt text-white"
+            className="archive-shell reader-shell flex h-full w-full overflow-hidden text-white"
             onDragOver={handleDragOver}
             onDrop={handleDrop}
         >
@@ -185,63 +223,71 @@ export const Archive: React.FC<ArchiveProps> = ({ onOpenBook }) => {
                     }
                 }}
             />
-            <div className="flex-1 overflow-y-auto pt-16 px-4 pb-4 md:p-8">
-                <div className="max-w-7xl mx-auto">
-                    <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-12 gap-4 border-b border-white/10 pb-8">
-                        <div>
-                            <h1 className="text-4xl font-mono font-bold text-dune-gold tracking-widest mb-2">ARCHIVE</h1>
-                            <p className="text-gray-500 font-mono text-sm uppercase tracking-wider">
-                                {books.length} TEXTS // {books.reduce((acc, b) => acc + b.totalWords, 0).toLocaleString()} WORDS
-                            </p>
-                        </div>
-
-                        <div className="flex items-center gap-6 w-full md:w-auto">
+            <div className="archive-main reader-scroll-surface flex-1 overflow-y-auto">
+                <div className="mx-auto flex w-full max-w-7xl flex-col gap-8 px-4 pb-8 pt-16 md:px-8 md:pt-20">
+                    <div className="archive-hero calima-glass p-4 md:p-6">
+                        <div className="mb-4 flex items-center justify-between gap-3">
+                            <p className="archive-kicker">ARCHIVE SURFACE</p>
                             {(status || aiIsLoading) && (
-                                <div className="flex items-center gap-2 text-magma-vent font-mono text-xs animate-pulse">
-                                    <span className="w-2 h-2 bg-magma-vent rounded-full"></span>
+                                <div className="archive-status" aria-live="polite">
+                                    <span className="archive-status-dot" aria-hidden="true" />
                                     {aiIsLoading ? (aiProgress || 'Initializing AI...') : status}
                                 </div>
                             )}
-                            <button
-                                onClick={handleLoadDemo}
-                                disabled={loading}
-                                data-testid="archive-load-demo"
-                                className="px-6 py-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded text-sm font-mono text-gray-400 hover:text-white transition-colors disabled:opacity-50"
-                            >
-                                [ LOAD DEMO ]
-                            </button>
-                            <label className="group relative cursor-pointer flex items-center justify-center px-6 py-3 font-mono font-bold text-sm tracking-widest transition-all bg-dune-gold text-black hover:bg-white w-full md:w-auto">
-                                <span className="relative z-10 flex items-center gap-2">
-                                    {loading ? 'INGESTING...' : 'UPLOAD EPUB'}
-                                    {!loading && (
-                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-                                        </svg>
-                                    )}
-                                </span>
-                                <input
-                                    type="file"
-                                    accept=".epub"
-                                    className="hidden"
-                                    onChange={handleFileUpload}
+                        </div>
+
+                        <div className="flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
+                            <div>
+                                <h1 className="text-gradient-gold text-4xl font-mono font-bold tracking-widest md:text-5xl">ARCHIVE</h1>
+                                <div className="mt-3 flex flex-wrap gap-2">
+                                    <span className="archive-kpi-chip">{books.length.toLocaleString()} texts</span>
+                                    <span className="archive-kpi-chip">{books.reduce((acc, b) => acc + b.totalWords, 0).toLocaleString()} words</span>
+                                    <span className="archive-kpi-chip">Drop EPUB anywhere to ingest</span>
+                                </div>
+                            </div>
+
+                            <div className="reader-toolbar-controls archive-action-rail flex items-center">
+                                <button
+                                    onClick={handleLoadDemo}
                                     disabled={loading}
-                                />
-                            </label>
+                                    data-testid="archive-load-demo"
+                                    className="archive-action-btn"
+                                >
+                                    {loading ? 'WORKING' : 'LOAD DEMO'}
+                                </button>
+                                <label className="archive-action-btn archive-action-btn--primary cursor-pointer">
+                                    <span className="flex items-center gap-2">
+                                        {loading ? 'INGESTING...' : 'UPLOAD EPUB'}
+                                        {!loading && (
+                                            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                                            </svg>
+                                        )}
+                                    </span>
+                                    <input
+                                        type="file"
+                                        accept=".epub"
+                                        className="hidden"
+                                        onChange={handleFileUpload}
+                                        disabled={loading}
+                                    />
+                                </label>
+                            </div>
                         </div>
                     </div>
 
                     {books.length === 0 ? (
-                        <div className="flex flex-col items-center justify-center py-32 border border-dashed border-white/10 rounded-lg bg-white/5">
+                        <div className="archive-empty flex flex-col items-center justify-center py-32 text-center">
                             <div className="w-16 h-16 mb-6 text-gray-600">
                                 <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
                                 </svg>
                             </div>
-                            <p className="font-mono text-gray-500 mb-2">ARCHIVE EMPTY</p>
-                            <p className="text-xs text-gray-600 font-mono">UPLOAD EPUB TO BEGIN INGESTION</p>
+                            <p className="mb-2 font-mono text-gray-400">ARCHIVE EMPTY</p>
+                            <p className="font-mono text-xs text-gray-500">UPLOAD EPUB TO BEGIN INGESTION</p>
                         </div>
                     ) : (
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                        <div className="archive-grid grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3">
                             {books.map(book => (
                                 <BookCard
                                     key={book.id}

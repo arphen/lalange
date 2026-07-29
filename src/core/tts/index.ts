@@ -7,8 +7,10 @@ export {
     initTTS,
     unloadTTS,
     clearTTSCache,
+    isTTSModelCached,
     isTTSReady,
     generateSpeech,
+    getTTSAudioValidationError,
     streamSpeech,
     
     // Sentence utilities

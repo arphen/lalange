@@ -5,6 +5,7 @@ import { Reader } from './Reader';
 import * as dbModule from '../../core/sync/db';
 import { useSettingsStore } from '../../core/store/settings';
 import { useAIStore } from '../../core/store/ai';
+import { useTTSStore } from '../../core/store/tts';
 
 const mockSetSchedulerCursor = vi.hoisted(() => vi.fn());
 
@@ -97,6 +98,13 @@ describe('Reader Component', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         useSettingsStore.persist.setOptions({
+            storage: {
+                getItem: vi.fn(() => null),
+                setItem: vi.fn(),
+                removeItem: vi.fn(),
+            },
+        });
+        useTTSStore.persist.setOptions({
             storage: {
                 getItem: vi.fn(() => null),
                 setItem: vi.fn(),
@@ -208,6 +216,27 @@ describe('Reader Component', () => {
             expect(sidebar).toHaveClass('translate-x-0');
             expect(sidebar).not.toHaveClass('translate-x-full');
             expect(screen.getByTestId('speed-controls')).toHaveClass('md:mr-80');
+        });
+    });
+
+    it('harmonizes listen panel placement with the chapter drawer', async () => {
+        render(<Reader book={mockBook} />);
+
+        await waitFor(() => {
+            expect(screen.queryByText('Loading book...')).not.toBeInTheDocument();
+        });
+
+        fireEvent.click(screen.getByRole('button', { name: 'Listen' }));
+
+        const panel = screen.getByTestId('tts-player-panel');
+        expect(panel).toHaveClass('md:right-[21rem]');
+        expect(panel).toHaveClass('opacity-0');
+
+        fireEvent.click(screen.getByTestId('toggle-chapters'));
+
+        await waitFor(() => {
+            expect(panel).not.toHaveClass('md:right-[21rem]');
+            expect(panel).not.toHaveClass('opacity-0');
         });
     });
 
@@ -338,7 +367,7 @@ describe('Reader Component', () => {
             expect(screen.getByRole('status')).toHaveTextContent('Next chapter / Chapter 2');
             expect(screen.getByRole('status')).not.toHaveTextContent('3');
             expect(rsvpContainer).toHaveTextContent('Hello');
-            expect(screen.getByTestId('sidebar-container')).toHaveClass('translate-x-full');
+            expect(screen.getByTestId('sidebar-container')).toHaveClass('translate-x-0');
             fireEvent.click(rsvpContainer);
             expect(rsvpContainer).toHaveAttribute('aria-pressed', 'true');
 
@@ -349,6 +378,7 @@ describe('Reader Component', () => {
             expect(rsvpContainer).toHaveTextContent('Second');
             expect(rsvpContainer).toHaveAttribute('aria-pressed', 'false');
             expect(screen.getByTestId('reader-context-top')).toBeEmptyDOMElement();
+            expect(screen.getByTestId('sidebar-container')).toHaveClass('translate-x-full');
 
             await act(async () => {
                 await vi.advanceTimersByTimeAsync(1200);
@@ -381,6 +411,13 @@ describe('Reader Component', () => {
             });
             expect(rsvpContainer).toHaveTextContent('Second');
             expect(rsvpContainer).toHaveAttribute('aria-pressed', 'true');
+            expect(screen.getByTestId('sidebar-container')).toHaveClass('translate-x-0');
+
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(400);
+            });
+
+            expect(screen.getByTestId('sidebar-container')).toHaveClass('translate-x-full');
 
             const focusLane = rsvpContainer.querySelector('.reader-focus-lane');
             expect(focusLane).toBeInTheDocument();
@@ -558,16 +595,16 @@ describe('Reader Component', () => {
         settings.setAiEnabled = originalSetAiEnabled;
     });
 
-    it('should not open setup from unavailable adaptive pacing control', async () => {
+    it('should open setup from unavailable adaptive pacing control', async () => {
         useSettingsStore.getState().aiEnabled = false;
         useAIStore.setState({ isReady: false, isLoading: false, isSetupOpen: false });
         render(<Reader book={mockBook} />);
 
-        const unavailableButton = await screen.findByRole('button', { name: 'Adaptive pacing unavailable' });
-        expect(unavailableButton).toBeDisabled();
+        const unavailableButton = await screen.findByRole('button', { name: 'Set up adaptive pacing' });
+        expect(unavailableButton).not.toBeDisabled();
         fireEvent.click(unavailableButton);
 
-        expect(useAIStore.getState().isSetupOpen).toBe(false);
+        expect(useAIStore.getState().isSetupOpen).toBe(true);
     });
 
     it('should save progress when pausing', async () => {

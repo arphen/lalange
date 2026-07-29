@@ -9,7 +9,6 @@ import React, { useEffect, useCallback, useMemo, useRef, useState } from 'react'
 import { useTTSStore, useFormattedTime } from '../../core/store/tts';
 import {
     initTTS,
-    isTTSReady,
     streamSpeech,
     splitIntoSentences,
     listVoices,
@@ -20,7 +19,7 @@ import {
 import { ttsPlayer } from '../../core/tts/player';
 
 // Configuration
-const SENTENCES_AHEAD_BUFFER = 5; // Generate this many sentences ahead
+const DEFAULT_BUFFER_AHEAD = 5;
 
 const PlayIcon: React.FC = () => (
     <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
@@ -70,6 +69,8 @@ interface TTSPlayerProps {
     chapterId?: string;
     /** Compact mode for smaller screens */
     compact?: boolean;
+    /** Optional placement overrides from parent layout */
+    dockClassName?: string;
 }
 
 export const TTSPlayer: React.FC<TTSPlayerProps> = ({
@@ -79,11 +80,10 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
     bookId,
     chapterId,
     compact = false,
+    dockClassName = '',
 }) => {
     const {
-        isReady,
         isLoading,
-        isGenerating,
         error,
         playbackState,
         loadProgress,
@@ -91,6 +91,9 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
         volume,
         speed,
         voice,
+        quantization,
+        backendPreference,
+        bufferAhead,
         currentWordIndex: ttsWordIndex,
         setVolume,
         setSpeed,
@@ -104,6 +107,8 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
     const [showSpeedMenu, setShowSpeedMenu] = useState(false);
     const [isExpanded, setIsExpanded] = useState(false);
     const effectiveVoice = resolveVoiceId(voice);
+    const selectedDevice = backendPreference === 'auto' ? undefined : backendPreference;
+    const safeBufferAhead = Math.max(3, Math.min(12, bufferAhead || DEFAULT_BUFFER_AHEAD));
     
     const generatorRef = useRef<AsyncGenerator<{ sentence: SentenceBoundary; audio: TTSAudioResult }> | null>(null);
     const isGeneratingRef = useRef(false);
@@ -163,6 +168,7 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
             generatorRef.current = null;
             hasStartedPlaybackRef.current = false;
             startSentenceIndexRef.current = 0;
+            useTTSStore.getState().setGenerating(false);
             
             // Full player reset - stop, clear queue, reset state
             ttsPlayer.stop();
@@ -195,6 +201,7 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
             isGeneratingRef.current = false;
             generatorRef.current = null;
             hasStartedPlaybackRef.current = false;
+            useTTSStore.getState().setGenerating(false);
             
             // Clear player
             ttsPlayer.clearQueue();
@@ -206,16 +213,14 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
     
     // Initialize TTS engine
     const handleInit = useCallback(async () => {
-        if (isTTSReady()) return;
-        
         try {
-            await initTTS('q8', undefined, (progress, status) => {
+            await initTTS(quantization, selectedDevice, (progress, status) => {
                 console.log(`[TTS UI] ${status} (${Math.round(progress * 100)}%)`);
             });
         } catch (err) {
             console.error('[TTS UI] Init failed:', err);
         }
-    }, []);
+    }, [quantization, selectedDevice]);
     
     // Cleanup on unmount
     useEffect(() => {
@@ -231,9 +236,10 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
     }, []);
     
     // Generate audio starting from a sentence index
-    const generateFrom = useCallback(async (fromSentenceIndex: number) => {
+    const generateFrom = useCallback(async (fromSentenceIndex: number, sentenceCount: number) => {
         if (isGeneratingRef.current || sentences.length === 0) return;
         if (fromSentenceIndex >= sentences.length) return;
+        if (sentenceCount <= 0) return;
         
         const generationId = generationIdRef.current + 1;
         generationIdRef.current = generationId;
@@ -244,8 +250,7 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
         isGeneratingRef.current = true;
         useTTSStore.getState().setGenerating(true);
         
-        // Generate a window of sentences
-        const endIndex = Math.min(fromSentenceIndex + SENTENCES_AHEAD_BUFFER, sentences.length);
+        const endIndex = Math.min(fromSentenceIndex + sentenceCount, sentences.length);
         const sentencesToGenerate = sentences.slice(fromSentenceIndex, endIndex);
         
         console.log(`[TTS UI] Generating sentences ${fromSentenceIndex} to ${endIndex - 1}`);
@@ -257,17 +262,13 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
                 if (signal.aborted) return;
                 console.log(`[TTS] Generating: "${sentence.text.slice(0, 50)}..."`);
             },
-            onSentenceComplete: (sentence, audio) => {
-                if (signal.aborted) return;
-                ttsPlayer.queueAudio(audio, sentence);
-            },
         });
         generatorRef.current = generator;
         
         try {
-            // eslint-disable-next-line @typescript-eslint/no-unused-vars
-            for await (const _ of generator) {
+            for await (const { sentence, audio } of generator) {
                 if (signal.aborted) break;
+                await ttsPlayer.queueAudio(audio, sentence);
             }
         } catch (err) {
             if (!signal.aborted) {
@@ -281,6 +282,7 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
                 if (abortControllerRef.current === abortController) {
                     abortControllerRef.current = null;
                 }
+                ttsPlayer.checkBuffer();
             }
         }
     }, [effectiveVoice, sentences, speed]);
@@ -295,32 +297,34 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
                 }
             },
             onBufferLow: (currentSentenceIndex) => {
-                // Generate more audio - check current sentence first, then ahead
-                if (!isGeneratingRef.current && currentSentenceIndex < sentences.length) {
-                    // Find first sentence without audio (starting from current)
-                    let firstMissing = currentSentenceIndex;
-                    while (firstMissing < sentences.length && ttsPlayer.hasAudioForSentence(firstMissing)) {
-                        firstMissing++;
-                    }
-                    if (firstMissing < sentences.length) {
-                        console.log(`[TTS UI] Buffer low, generating from ${firstMissing}`);
-                        generateFrom(firstMissing);
-                    }
+                if (isGeneratingRef.current || currentSentenceIndex >= sentences.length) return;
+
+                const hasCurrentAudio = ttsPlayer.hasAudioForSentence(currentSentenceIndex);
+                const bufferedAhead = hasCurrentAudio
+                    ? ttsPlayer.getBufferedAheadCount(currentSentenceIndex)
+                    : 0;
+                const firstMissing = hasCurrentAudio
+                    ? currentSentenceIndex + bufferedAhead + 1
+                    : currentSentenceIndex;
+                const finalTargetIndex = Math.min(
+                    currentSentenceIndex + safeBufferAhead,
+                    sentences.length - 1,
+                );
+                const missingCount = finalTargetIndex - firstMissing + 1;
+
+                if (missingCount > 0) {
+                    console.log(`[TTS UI] Buffer ${bufferedAhead}/${safeBufferAhead} ahead, generating ${missingCount} from ${firstMissing}`);
+                    void generateFrom(firstMissing, missingCount);
                 }
             },
             onAudioQueued: (sentenceIndex, queueSize) => {
-                // If this is the first audio and we're waiting to start, play now
-                if (sentenceIndex === startSentenceIndexRef.current && playbackState === 'preparing') {
-                    console.log(`[TTS UI] First audio ready, starting playback`);
-                    ttsPlayer.play(sentenceIndex);
-                }
                 console.log(`[TTS UI] Audio queued: sentence ${sentenceIndex}, queue size: ${queueSize}`);
             },
             onEnded: () => {
                 console.log('[TTS] Playback ended');
             },
         });
-    }, [sentences, onPositionChange, generateFrom, playbackState]);
+    }, [safeBufferAhead, sentences, onPositionChange, generateFrom, playbackState]);
     
     // Handle play/pause toggle - PAUSE MUST BE INSTANT
     const handleToggle = useCallback(async () => {
@@ -330,10 +334,9 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
             return; // Exit immediately, no async operations
         }
         
-        // PLAY PATHS - these can be async
-        if (!isReady) {
-            await handleInit();
-        }
+        // PLAY PATHS - these can be async. Always run init guard so quality/device
+        // changes are applied before speaking.
+        await handleInit();
         
         if (playbackState === 'idle' || playbackState === 'preparing') {
             // Find sentence containing current word
@@ -365,14 +368,15 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
             
             // Show preparing state
             useTTSStore.getState().setPlaybackState('preparing');
-            
-            // Start generating
-            await generateFrom(startIdx);
-            
-            // If audio is already queued, start playing
-            if (ttsPlayer.hasAudioForSentence(startIdx)) {
-                await ttsPlayer.play(startIdx);
-            }
+
+            // Enter wait-and-play mode immediately so playback starts as soon as
+            // first sentence audio arrives.
+            const startupBufferSize = Math.min(
+                safeBufferAhead + 1,
+                sentences.length - startIdx,
+            );
+            await ttsPlayer.play(startIdx, startupBufferSize);
+            void generateFrom(startIdx, startupBufferSize);
         } else if (playbackState === 'paused') {
             // Check if user has read ahead with RSVP - if so, start from their new position
             const currentTTSWordIndex = useTTSStore.getState().currentWordIndex;
@@ -396,11 +400,12 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
                     
                     // Clear old queued audio and regenerate from new position
                     ttsPlayer.clearQueue();
-                    await generateFrom(sentenceIndex);
-                    
-                    if (ttsPlayer.hasAudioForSentence(sentenceIndex)) {
-                        await ttsPlayer.play(sentenceIndex);
-                    }
+                    const startupBufferSize = Math.min(
+                        safeBufferAhead + 1,
+                        sentences.length - sentenceIndex,
+                    );
+                    await ttsPlayer.play(sentenceIndex, startupBufferSize);
+                    void generateFrom(sentenceIndex, startupBufferSize);
                     return;
                 }
             }
@@ -408,7 +413,7 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
             // User didn't read ahead (or read back) - just resume from where we were
             await ttsPlayer.play();
         }
-    }, [isReady, playbackState, sentences, currentWordIndex, handleInit, generateFrom]);
+    }, [playbackState, sentences, currentWordIndex, handleInit, generateFrom, safeBufferAhead]);
     
     // Handle stop - full reset of all TTS resources
     const handleStop = useCallback(() => {
@@ -427,6 +432,7 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
         generatorRef.current = null;
         hasStartedPlaybackRef.current = false;
         startSentenceIndexRef.current = 0;
+        useTTSStore.getState().setGenerating(false);
         
         // Full player reset
         ttsPlayer.stop();
@@ -456,10 +462,7 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
         if (isLoading) return `${loadStatus} (${Math.round(loadProgress * 100)}%)`;
         if (playbackState === 'preparing') return 'Preparing audio...';
         if (playbackState === 'generating') return `${currentTimeStr} / ${durationStr} (buffering...)`;
-        if (playbackState === 'playing') {
-            if (isGenerating) return `${currentTimeStr} / ${durationStr} (buffering...)`;
-            return `${currentTimeStr} / ${durationStr}`;
-        }
+        if (playbackState === 'playing') return `${currentTimeStr} / ${durationStr}`;
         if (playbackState === 'paused') return `Paused at ${currentTimeStr}`;
         if (error) return error;
         return 'Tap to listen';
@@ -469,11 +472,14 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
     const isButtonActive = playbackState === 'playing' || playbackState === 'generating';
     
     // Compact player (minimized)
+    const dockClasses = `fixed bottom-20 right-4 z-50 ${dockClassName}`;
+
     if (compact && !isExpanded) {
         return (
             <button
                 onClick={() => setIsExpanded(true)}
-                className="fixed bottom-20 right-4 z-50 p-3 bg-gradient-to-r from-purple-600 to-indigo-600 rounded-full shadow-lg hover:shadow-xl transition-all duration-300 group"
+                data-testid="tts-player-fab"
+                className={`${dockClasses} p-3 bg-gradient-to-r from-purple-600 to-indigo-600 rounded-full shadow-lg hover:shadow-xl transition-all duration-300 group`}
                 title="Text to Speech"
             >
                 <HeadphonesIcon />
@@ -485,7 +491,10 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
     }
     
     return (
-        <div className={`fixed bottom-20 right-4 z-50 ${compact ? 'w-72' : 'w-80'} bg-black/90 backdrop-blur-xl rounded-2xl border border-white/10 shadow-2xl overflow-hidden transition-all duration-300`}>
+        <div
+            data-testid="tts-player-panel"
+            className={`${dockClasses} ${compact ? 'w-72' : 'w-80'} bg-black/90 backdrop-blur-xl rounded-2xl border border-white/10 shadow-2xl overflow-hidden transition-all duration-300`}
+        >
             {/* Header */}
             <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 bg-gradient-to-r from-purple-900/50 to-indigo-900/50">
                 <div className="flex items-center gap-2">

@@ -3,6 +3,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import type { MyDatabase } from '../../core/sync/db';
 import { Archive } from './Archive';
 import * as dbModule from '../../core/sync/db';
+import * as pipelineModule from '../../core/ingest/pipeline';
 
 const mockRequestSetup = vi.hoisted(() => vi.fn());
 
@@ -35,6 +36,7 @@ vi.mock('../../core/ingest/pipeline', () => ({
 
 describe('Archive', () => {
     const mockOnOpenBook = vi.fn();
+    const mockInsertBook = vi.fn();
     const mockRemoveBook = vi.fn();
     const mockRemoveChapter = vi.fn();
     const mockRemoveImage = vi.fn();
@@ -48,15 +50,21 @@ describe('Archive', () => {
         const mockDB = {
             books: {
                 find: () => ({
+                    exec: async () => ([
+                        {
+                            toJSON: () => ({ id: 'book1', title: 'Test Book', author: 'Unknown', status: 'ready', totalWords: 100 })
+                        }
+                    ]),
                     $: {
                         subscribe: (cb: (docs: unknown[]) => void) => {
                             cb([
                                 {
                                     id: 'book1',
                                     title: 'Test Book',
+                                    author: 'Unknown',
                                     status: 'ready',
                                     totalWords: 100,
-                                    toJSON: () => ({ id: 'book1', title: 'Test Book', status: 'ready', totalWords: 100 }),
+                                    toJSON: () => ({ id: 'book1', title: 'Test Book', author: 'Unknown', status: 'ready', totalWords: 100 }),
                                     remove: mockRemoveBook
                                 }
                             ]);
@@ -64,6 +72,7 @@ describe('Archive', () => {
                         }
                     }
                 }),
+                insert: mockInsertBook,
                 findOne: () => ({
                     remove: mockRemoveBook
                 })
@@ -98,8 +107,13 @@ describe('Archive', () => {
                 bulkInsert: vi.fn()
             },
             raw_files: {
-                findOne: () => ({
-                    exec: async () => ({ remove: mockRemoveRawFile })
+                findOne: (id: string) => ({
+                    exec: async () => {
+                        if (id === 'book1') {
+                            return { data: 'same-raw-data', remove: mockRemoveRawFile };
+                        }
+                        return { remove: mockRemoveRawFile };
+                    }
                 }),
                 insert: vi.fn()
             },
@@ -149,5 +163,48 @@ describe('Archive', () => {
 
         expect(mockRequestSetup).toHaveBeenCalledWith('pacing');
         expect(global.confirm).not.toHaveBeenCalledWith('Start density estimation for this book? This may take a while.');
+    });
+
+    it('reuses existing book when the ingested payload matches an archive entry', async () => {
+        global.fetch = vi.fn().mockResolvedValue({
+            ok: true,
+            blob: async () => new Blob(['demo-epub'], { type: 'application/epub+zip' })
+        } as Response);
+
+        vi.mocked(pipelineModule.initialIngest).mockResolvedValue({
+            book: {
+                id: 'new-book-id',
+                title: 'Test Book',
+                author: 'Unknown',
+                totalWords: 0,
+                chapterIds: ['new-book-id_0']
+            },
+            chapters: [
+                {
+                    id: 'new-book-id_0',
+                    bookId: 'new-book-id',
+                    index: 0,
+                    title: 'Chapter 1',
+                    status: 'pending',
+                    content: []
+                }
+            ],
+            images: [],
+            rawFile: {
+                id: 'new-book-id',
+                data: 'same-raw-data'
+            }
+        });
+
+        render(<Archive onOpenBook={mockOnOpenBook} />);
+
+        fireEvent.click(await screen.findByTestId('archive-load-demo'));
+
+        await waitFor(() => {
+            expect(mockOnOpenBook).toHaveBeenCalledWith(expect.objectContaining({ id: 'book1' }));
+        });
+
+        expect(mockInsertBook).not.toHaveBeenCalled();
+        expect(pipelineModule.processChaptersInBackground).not.toHaveBeenCalled();
     });
 });

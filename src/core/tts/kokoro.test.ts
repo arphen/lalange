@@ -14,6 +14,8 @@ import {
     listVoices,
     getVoice,
     resolveVoiceId,
+    resolveTTSRuntimeConfig,
+    getTTSAudioValidationError,
     VOICES,
     DEFAULT_VOICE,
     type SentenceBoundary,
@@ -274,5 +276,55 @@ describe('Voice utilities', () => {
             expect(Array.isArray(VOICES)).toBe(true);
             expect(VOICES.length).toBeGreaterThan(0);
         });
+    });
+});
+
+describe('resolveTTSRuntimeConfig', () => {
+    it('falls back to wasm for auto-selected webgpu + q8', () => {
+        const runtime = resolveTTSRuntimeConfig('q8', undefined, 'webgpu');
+        expect(runtime).toEqual({
+            dtype: 'q8',
+            device: 'wasm',
+            compatibilityMode: true,
+        });
+    });
+
+    it('keeps explicit device requests unchanged', () => {
+        const runtime = resolveTTSRuntimeConfig('q8', 'webgpu', 'webgpu');
+        expect(runtime).toEqual({
+            dtype: 'q8',
+            device: 'webgpu',
+            compatibilityMode: false,
+        });
+    });
+
+    it('keeps auto-selected wasm unchanged', () => {
+        const runtime = resolveTTSRuntimeConfig('q8', undefined, 'wasm');
+        expect(runtime).toEqual({
+            dtype: 'q8',
+            device: 'wasm',
+            compatibilityMode: false,
+        });
+    });
+});
+
+describe('getTTSAudioValidationError', () => {
+    it('accepts finite audible samples', () => {
+        expect(getTTSAudioValidationError(new Float32Array([0.1, -0.2, 0.3]))).toBeNull();
+    });
+
+    it('rejects non-finite samples from a corrupt backend', () => {
+        expect(getTTSAudioValidationError(new Float32Array([0.1, Number.NaN, -0.1])))
+            .toBe('audio contains non-finite samples');
+    });
+
+    it('rejects effectively silent output', () => {
+        expect(getTTSAudioValidationError(new Float32Array(2400)))
+            .toBe('audio is effectively silent');
+    });
+
+    it('rejects pathological amplitude', () => {
+        expect(getTTSAudioValidationError(new Float32Array([0.1, 2, -0.1])))
+            .toBe('audio peak is out of range (2.00)');
     });
 });

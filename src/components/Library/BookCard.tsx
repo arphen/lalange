@@ -92,18 +92,22 @@ export const BookCard: React.FC<BookCardProps> = ({ book, onOpen, onDelete, onSt
 
     const isReady = chapters.length > 0 && chapters.every(c => c.status === 'ready');
     const isProcessing = chapters.some(c => c.status === 'processing');
+    const readyChapterCount = chapters.filter((chapter) => chapter.status === 'ready').length;
+    const chapterProgressPercent = chapters.length > 0
+        ? Math.round((readyChapterCount / chapters.length) * 100)
+        : 0;
 
     return (
         <div
             onClick={onOpen}
             data-testid="book-card"
-            className="cursor-pointer group relative bg-white/5 border border-white/10 hover:border-dune-gold transition-all duration-300 p-4 flex flex-col h-full"
+            className="archive-card group relative flex h-full cursor-pointer flex-col p-4 transition-all duration-300"
         >
-            <div className="absolute top-2 right-2 z-10 flex gap-2">
+            <div className="absolute right-2 top-2 z-10 flex gap-2">
                 {isProcessing && onStop && (
                     <button
                         onClick={onStop}
-                        className="text-magma-vent hover:text-red-500 opacity-100 transition-opacity animate-pulse"
+                        className="archive-card-action text-magma-vent animate-pulse"
                         title="Stop Processing"
                     >
                         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -115,7 +119,7 @@ export const BookCard: React.FC<BookCardProps> = ({ book, onOpen, onDelete, onSt
                 {onEstimateDensity && isReady && (
                     <button
                         onClick={onEstimateDensity}
-                        className="text-gray-500 hover:text-dune-gold opacity-0 group-hover:opacity-100 transition-opacity"
+                        className="archive-card-action text-gray-500 opacity-0 transition-opacity group-hover:opacity-100"
                         title="Estimate Density"
                     >
                         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -126,7 +130,7 @@ export const BookCard: React.FC<BookCardProps> = ({ book, onOpen, onDelete, onSt
                 {onSync && isReady && (
                     <button
                         onClick={onSync}
-                        className="text-dune-gold hover:text-white transition-opacity"
+                        className="archive-card-action text-dune-gold"
                         title="Sync to Phone"
                     >
                         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -149,7 +153,7 @@ export const BookCard: React.FC<BookCardProps> = ({ book, onOpen, onDelete, onSt
                 )}
                 <button
                     onClick={onDelete}
-                    className={`text-gray-500 hover:text-magma-vent transition-opacity ${isProcessing ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+                    className={`archive-card-action archive-card-action--danger text-gray-500 transition-opacity ${isProcessing ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
                     title="Delete Book"
                 >
                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -158,7 +162,7 @@ export const BookCard: React.FC<BookCardProps> = ({ book, onOpen, onDelete, onSt
                 </button>
             </div>
 
-            <div className="aspect-[2/3] bg-black/20 mb-4 overflow-hidden border border-white/5 relative">
+            <div className="archive-card-cover relative mb-4 aspect-[2/3] overflow-hidden border border-white/5">
                 {book.cover ? (
                     <img src={book.cover} alt={book.title} className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity grayscale group-hover:grayscale-0" />
                 ) : (
@@ -168,29 +172,35 @@ export const BookCard: React.FC<BookCardProps> = ({ book, onOpen, onDelete, onSt
                     </div>
                 )}
 
-                {/* Progress Overlay */}
-                <div className="absolute bottom-0 left-0 right-0 h-1 bg-white/10">
-                    <div className="h-full bg-dune-gold" style={{ width: '0%' }}></div>
+                <div className="reader-progress-track absolute bottom-0 left-0 right-0 h-1">
+                    <span style={{ width: `${chapterProgressPercent}%` }} />
+                </div>
+
+                <div className="archive-card-chip absolute left-3 top-3">
+                    {isReady ? `${chapterProgressPercent}% ready` : isProcessing ? 'Ingesting' : 'Queued'}
                 </div>
             </div>
 
             <div className="flex-1 flex flex-col justify-between gap-2">
                 <div>
-                    <h3 className="font-mono text-sm font-bold text-gray-200 group-hover:text-dune-gold transition-colors line-clamp-2 leading-tight mb-1">
+                    <h3 className="archive-card-title mb-1 line-clamp-2 font-mono text-sm font-bold leading-tight transition-colors">
                         <span data-testid="book-card-title">{book.title}</span>
                     </h3>
-                    <p className="font-mono text-xs text-gray-500 truncate uppercase tracking-wider">
+                    <p className="archive-card-meta truncate font-mono text-xs uppercase tracking-wider">
                         {book.author || 'UNKNOWN AUTHOR'}
                     </p>
                 </div>
 
-                <div className="pt-3 border-t border-white/5 flex justify-between items-center">
-                    <div className="font-mono text-[10px] text-canarian-pine uppercase tracking-wider">
+                <div className="archive-card-footer flex items-center justify-between border-t border-white/5 pt-3">
+                    <div className="font-mono text-[10px] uppercase tracking-wider text-canarian-pine">
                         {readingTime || 'CALCULATING...'}
                     </div>
-                    {processingStatus && (
-                        <div className="w-2 h-2 bg-magma-vent rounded-full animate-pulse" title={processingStatus}></div>
-                    )}
+                    <div className="flex items-center gap-2">
+                        <span className="archive-card-meta font-mono text-[10px]">{readyChapterCount}/{chapters.length || 0}</span>
+                        {processingStatus && (
+                            <div className="w-2 h-2 rounded-full bg-magma-vent animate-pulse" title={processingStatus}></div>
+                        )}
+                    </div>
                 </div>
             </div>
         </div>

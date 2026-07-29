@@ -89,6 +89,7 @@ export function GlobalNavSidebar({ view, currentBook, onNavigate }: GlobalNavSid
               <SettingsSubItem label="Pacing Engine" path="/settings/pacing" />
               <SettingsSubItem label="Summarizer" path="/settings/summarizer" />
               <SettingsSubItem label="Librarian" path="/settings/librarian" />
+              <SettingsSubItem label="Text to Speech" path="/settings/tts" />
           </div>
         )}
       </div>
