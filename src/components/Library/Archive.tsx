@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { ScanLine } from 'lucide-react';
 import { initDB, type BookDocType, type MyDatabase } from '../../core/sync/db';
 import { initialIngest, processChaptersInBackground, stopProcessing, estimateBookDensity } from '../../core/ingest/pipeline';
 import { useAIStore } from '../../core/store/ai';
@@ -9,6 +10,7 @@ import { SeoHead } from '../SeoHead';
 
 interface ArchiveProps {
     onOpenBook: (book: BookDocType) => void;
+    onScanHandoff: () => void;
 }
 
 const normalizeIdentity = (value?: string) => (value || '').trim().toLowerCase();
@@ -38,7 +40,7 @@ const findDuplicateBook = async (
     return null;
 };
 
-export const Archive: React.FC<ArchiveProps> = ({ onOpenBook }) => {
+export const Archive: React.FC<ArchiveProps> = ({ onOpenBook, onScanHandoff }) => {
     const [books, setBooks] = useState<BookDocType[]>([]);
     const [loading, setLoading] = useState(false);
     const [status, setStatus] = useState('');
@@ -249,6 +251,16 @@ export const Archive: React.FC<ArchiveProps> = ({ onOpenBook }) => {
                             </div>
 
                             <div className="reader-toolbar-controls archive-action-rail flex items-center">
+                                <button
+                                    type="button"
+                                    onClick={onScanHandoff}
+                                    className="archive-action-btn"
+                                >
+                                    <span className="flex items-center gap-2">
+                                        <ScanLine className="h-4 w-4" aria-hidden />
+                                        SCAN HANDOFF
+                                    </span>
+                                </button>
                                 <button
                                     type="button"
                                     onClick={() => {

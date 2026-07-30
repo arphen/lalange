@@ -91,6 +91,10 @@ function App() {
             <GlobalNavSidebar
               view={view}
               currentBook={null} // We rely on routing now
+              onScanHandoff={() => {
+                setIsMobileNavOpen(false);
+                navigate('/exchange');
+              }}
               onNavigate={(v) => {
                 setIsMobileNavOpen(false);
                 if (v === 'reader') {
@@ -128,7 +132,12 @@ function App() {
         <AISetupWizard />
 
         <Routes>
-          <Route path="/" element={<Archive onOpenBook={(book) => navigate(`/reader/${book.id}`)} />} />
+          <Route path="/" element={
+            <Archive
+              onOpenBook={(book) => navigate(`/reader/${book.id}`)}
+              onScanHandoff={() => navigate('/exchange')}
+            />
+          } />
           <Route path="/sync" element={<SyncPage />} />
           <Route path="/exchange" element={<ExchangePage />} />
           <Route path="/reader/:bookId" element={<ReaderPage />} />

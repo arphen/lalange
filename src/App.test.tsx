@@ -8,7 +8,9 @@ const mockSetTheme = vi.fn();
 
 // Mock child components to avoid complex setup
 vi.mock('./components/Library/Archive', () => ({
-    Archive: () => <div data-testid="archive">Archive</div>
+    Archive: ({ onScanHandoff }: { onScanHandoff: () => void }) => (
+        <button type="button" data-testid="archive" onClick={onScanHandoff}>Scan handoff from Archive</button>
+    )
 }));
 vi.mock('./components/Library/Librarian', () => ({
     Librarian: () => <div data-testid="librarian">Librarian</div>
@@ -21,6 +23,9 @@ vi.mock('./components/Settings/SettingsPanel', () => ({
 }));
 vi.mock('./components/Manifesto', () => ({
     Manifesto: () => <div data-testid="manifesto">Manifesto</div>
+}));
+vi.mock('./components/Exchange/ExchangePage', () => ({
+    ExchangePage: () => <div data-testid="exchange-scanner">In-app handoff scanner</div>
 }));
 
 // Mock stores
@@ -122,6 +127,18 @@ describe('App Component', () => {
         );
 
         expect(screen.getByRole('button', { name: 'Switch to day theme' })).toBeInTheDocument();
+    });
+
+    it('opens the handoff scanner inside the app', async () => {
+        render(
+            <MemoryRouter>
+                <App />
+            </MemoryRouter>
+        );
+
+        fireEvent.click(screen.getByRole('button', { name: 'Scan handoff from Archive' }));
+
+        expect(await screen.findByTestId('exchange-scanner')).toBeInTheDocument();
     });
 
     it('switches from dark to day when toggle is clicked', () => {

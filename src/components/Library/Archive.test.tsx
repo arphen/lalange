@@ -36,6 +36,7 @@ vi.mock('../../core/ingest/pipeline', () => ({
 
 describe('Archive', () => {
     const mockOnOpenBook = vi.fn();
+    const mockOnScanHandoff = vi.fn();
     const mockInsertBook = vi.fn();
     const mockRemoveBook = vi.fn();
     const mockRemoveChapter = vi.fn();
@@ -132,7 +133,7 @@ describe('Archive', () => {
     });
 
     it('renders books and allows deletion', async () => {
-        render(<Archive onOpenBook={mockOnOpenBook} />);
+        render(<Archive onOpenBook={mockOnOpenBook} onScanHandoff={mockOnScanHandoff} />);
 
         // Check if book is rendered
         expect(await screen.findByText('Test Book')).toBeDefined();
@@ -157,12 +158,20 @@ describe('Archive', () => {
     });
 
     it('offers adaptive pacing setup instead of starting density work while AI is off', async () => {
-        render(<Archive onOpenBook={mockOnOpenBook} />);
+        render(<Archive onOpenBook={mockOnOpenBook} onScanHandoff={mockOnScanHandoff} />);
 
         fireEvent.click(await screen.findByTitle('Estimate Density'));
 
         expect(mockRequestSetup).toHaveBeenCalledWith('pacing');
         expect(global.confirm).not.toHaveBeenCalledWith('Start density estimation for this book? This may take a while.');
+    });
+
+    it('opens the in-app handoff scanner from the Archive actions', async () => {
+        render(<Archive onOpenBook={mockOnOpenBook} onScanHandoff={mockOnScanHandoff} />);
+
+        fireEvent.click(await screen.findByRole('button', { name: 'SCAN HANDOFF' }));
+
+        expect(mockOnScanHandoff).toHaveBeenCalledOnce();
     });
 
     it('reuses existing book when the ingested payload matches an archive entry', async () => {
@@ -196,7 +205,7 @@ describe('Archive', () => {
             }
         });
 
-        render(<Archive onOpenBook={mockOnOpenBook} />);
+        render(<Archive onOpenBook={mockOnOpenBook} onScanHandoff={mockOnScanHandoff} />);
 
         fireEvent.click(await screen.findByTestId('archive-load-demo'));
 

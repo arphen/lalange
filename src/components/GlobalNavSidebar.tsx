@@ -1,4 +1,5 @@
 import { clsx } from 'clsx';
+import { ScanLine } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { BrandName } from './BrandName';
 import { AIStatusPanel } from './AIStatusPanel';
@@ -10,6 +11,7 @@ interface GlobalNavSidebarProps {
   view: ViewState;
   currentBook: BookDocType | null;
   onNavigate: (view: ViewState) => void;
+  onScanHandoff: () => void;
 }
 
 interface NavItemProps {
@@ -57,7 +59,7 @@ const SettingsSubItem = ({ label, path }: { label: string; path: string }) => {
   );
 };
 
-export function GlobalNavSidebar({ view, currentBook, onNavigate }: GlobalNavSidebarProps) {
+export function GlobalNavSidebar({ view, currentBook, onNavigate, onScanHandoff }: GlobalNavSidebarProps) {
   return (
     <div className="h-full w-64 shrink-0 border-r border-white/10 bg-black/20 backdrop-blur-sm flex flex-col">
       <div className="p-4 border-b border-white/10">
@@ -79,6 +81,14 @@ export function GlobalNavSidebar({ view, currentBook, onNavigate }: GlobalNavSid
           onClick={() => onNavigate('reader')}
         />
         <NavItem label="Archive" target="archive" active={view === 'archive'} onClick={() => onNavigate('archive')} />
+        <button
+          type="button"
+          onClick={onScanHandoff}
+          className="flex w-full items-center gap-2 rounded border border-dune-gold/20 bg-dune-gold/5 px-3 py-2 text-left font-mono text-xs uppercase tracking-widest text-dune-gold transition-colors hover:border-dune-gold/40 hover:bg-dune-gold/10"
+        >
+          <ScanLine size={16} aria-hidden />
+          <span>Scan handoff</span>
+        </button>
         <NavItem label="Library" target="library" active={view === 'library'} onClick={() => onNavigate('library')} />
         <NavItem label="Research" target="research" active={view === 'research'} onClick={() => onNavigate('research')} />
         <NavItem label="Manual" target="manual" active={view === 'manual'} onClick={() => onNavigate('manual')} />
