@@ -245,13 +245,19 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
     }, [words]);
     
     // Initialize TTS engine
-    const handleInit = useCallback(async () => {
+    const handleInit = useCallback(async (): Promise<boolean> => {
         try {
             await initTTS(selectedDevice, (progress, status) => {
                 console.log(`[TTS UI] ${status} (${Math.round(progress * 100)}%)`);
             });
+            return true;
         } catch (err) {
             console.error('[TTS UI] Init failed:', err);
+            const message = err instanceof Error ? err.message : 'Failed to initialize audio mode.';
+            const store = useTTSStore.getState();
+            store.setError(message);
+            store.setPlaybackState('idle');
+            return false;
         }
     }, [selectedDevice]);
     
@@ -306,6 +312,10 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
         } catch (err) {
             if (!signal.aborted) {
                 console.error('[TTS] Generation error:', err);
+                const message = err instanceof Error ? err.message : 'Failed to generate audio.';
+                const store = useTTSStore.getState();
+                store.setError(message);
+                ttsPlayer.stop();
             }
         } finally {
             if (generationIdRef.current === generationId) {
@@ -370,7 +380,7 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
         
         // PLAY PATHS - these can be async. Always run init guard so quality/device
         // changes are applied before speaking.
-        await handleInit();
+        if (!await handleInit()) return;
         
         if (playbackState === 'idle' || playbackState === 'preparing') {
             // Find sentence containing current word

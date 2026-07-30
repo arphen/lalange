@@ -17,6 +17,8 @@ vi.mock('../store/tts', () => ({
 
 class FakeAudioContext {
     static current: FakeAudioContext | null = null;
+    static supportsCopyToChannel = true;
+    static channelData = new Float32Array();
 
     currentTime = 0;
     state: AudioContextState = 'running';
@@ -34,7 +36,11 @@ class FakeAudioContext {
     }
 
     createBuffer(): AudioBuffer {
-        return { copyToChannel: vi.fn() } as unknown as AudioBuffer;
+        FakeAudioContext.channelData = new Float32Array(4);
+        return {
+            copyToChannel: FakeAudioContext.supportsCopyToChannel ? vi.fn() : undefined,
+            getChannelData: vi.fn(() => FakeAudioContext.channelData),
+        } as unknown as AudioBuffer;
     }
 
     createBufferSource(): AudioBufferSourceNode {
@@ -69,6 +75,8 @@ describe('TTSAudioPlayer word tracking', () => {
             ttsState.currentWordIndex = wordIndex;
         });
         FakeAudioContext.current = null;
+        FakeAudioContext.supportsCopyToChannel = true;
+        FakeAudioContext.channelData = new Float32Array();
         nextAnimationFrame = null;
         vi.stubGlobal('AudioContext', FakeAudioContext);
         vi.stubGlobal('requestAnimationFrame', vi.fn((callback: FrameRequestCallback) => {
@@ -118,6 +126,30 @@ describe('TTSAudioPlayer word tracking', () => {
         nextAnimationFrame?.(0);
 
         expect(onWordChange).toHaveBeenLastCalledWith(21);
+    });
+
+    it('queues audio when copyToChannel is unavailable', async () => {
+        FakeAudioContext.supportsCopyToChannel = false;
+        const samples = new Float32Array([0.25, -0.5, 0.75, -1]);
+
+        await expect(ttsPlayer.queueAudio(
+            { samples, sampleRate: 24000, duration: 1, text: 'Phone audio.' },
+            { index: 0, text: 'Phone audio.', startWordIndex: 0, endWordIndex: 1 },
+        )).resolves.toBeUndefined();
+
+        expect(Array.from(FakeAudioContext.channelData)).toEqual(Array.from(samples));
+    });
+
+    it('uses the prefixed AudioContext constructor on iOS browsers', async () => {
+        vi.stubGlobal('AudioContext', undefined);
+        vi.stubGlobal('webkitAudioContext', FakeAudioContext);
+
+        await expect(ttsPlayer.queueAudio(
+            { samples: new Float32Array(4), sampleRate: 24000, duration: 1, text: 'Phone audio.' },
+            { index: 0, text: 'Phone audio.', startWordIndex: 0, endWordIndex: 1 },
+        )).resolves.toBeUndefined();
+
+        expect(FakeAudioContext.current).toBeInstanceOf(FakeAudioContext);
     });
 });
 

@@ -11,6 +11,8 @@ const mocks = vi.hoisted(() => ({
     setSpeed: vi.fn(),
     setVoice: vi.fn(),
     setGenerating: vi.fn(),
+    setError: vi.fn(),
+    setPlaybackState: vi.fn(),
     sentences: [{ index: 0, text: 'Hello world.', startWordIndex: 0, endWordIndex: 1 }],
 }));
 
@@ -34,7 +36,14 @@ vi.mock('../../core/store/tts', () => ({
             setSpeed: mocks.setSpeed,
             setVoice: mocks.setVoice,
         }),
-        { getState: () => ({ setGenerating: mocks.setGenerating, setPlaybackState: vi.fn(), setCurrentWordIndex: vi.fn() }) },
+        {
+            getState: () => ({
+                setGenerating: mocks.setGenerating,
+                setError: mocks.setError,
+                setPlaybackState: mocks.setPlaybackState,
+                setCurrentWordIndex: vi.fn(),
+            }),
+        },
     ),
     useFormattedTime: () => ({ current: '0:00', duration: '0:00' }),
 }));
@@ -108,6 +117,38 @@ describe('TTSPlayer voice changes', () => {
         await waitFor(() => {
             expect(ttsPlayer.play).toHaveBeenCalledWith(0, 1);
         });
+    });
+
+    it('stops before playback when TTS initialization fails', async () => {
+        vi.mocked(initTTS).mockRejectedValueOnce(new TypeError('undefined is not a function'));
+
+        const { container } = render(<TTSPlayer words={['Hello', 'world.']} currentWordIndex={0} />);
+        fireEvent.click(container.querySelector('button')!);
+
+        await waitFor(() => {
+            expect(mocks.setError).toHaveBeenCalledWith('undefined is not a function');
+        });
+        expect(mocks.setPlaybackState).toHaveBeenCalledWith('idle');
+        expect(ttsPlayer.play).not.toHaveBeenCalled();
+        expect(streamSpeech).not.toHaveBeenCalled();
+    });
+
+    it('leaves buffering and exposes queue-time audio failures', async () => {
+        vi.mocked(streamSpeech).mockReturnValue((async function* () {
+            yield {
+                sentence: mocks.sentences[0],
+                audio: { samples: new Float32Array(4), sampleRate: 24000, duration: 1, text: 'Hello world.' },
+            };
+        })());
+        vi.mocked(ttsPlayer.queueAudio).mockRejectedValueOnce(new TypeError('undefined is not a function'));
+
+        const { container } = render(<TTSPlayer words={['Hello', 'world.']} currentWordIndex={0} />);
+        fireEvent.click(container.querySelector('button')!);
+
+        await waitFor(() => {
+            expect(mocks.setError).toHaveBeenCalledWith('undefined is not a function');
+        });
+        expect(ttsPlayer.stop).toHaveBeenCalled();
     });
 
     it('buffers the current sentence plus the configured number ahead before playback', async () => {

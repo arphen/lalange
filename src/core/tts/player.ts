@@ -12,6 +12,10 @@ import { useTTSStore } from '../store/tts';
 const MAX_QUEUED_BUFFERS = 10;
 const BUFFER_CLEANUP_BEHIND = 2;
 
+type AudioContextGlobal = typeof globalThis & {
+    webkitAudioContext?: typeof AudioContext;
+};
+
 const clamp = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value));
 
 const estimateTokenWeight = (token: string): number => {
@@ -114,7 +118,12 @@ class TTSAudioPlayer {
         if (!this.audioContext) {
             // Keep the output graph at the device's native rate. AudioBuffer keeps
             // the model's 24 kHz source rate and Web Audio resamples it cleanly.
-            this.audioContext = new AudioContext();
+            const audioGlobal = globalThis as AudioContextGlobal;
+            const AudioContextConstructor = audioGlobal.AudioContext ?? audioGlobal.webkitAudioContext;
+            if (!AudioContextConstructor) {
+                throw new Error('Audio playback is not supported by this browser.');
+            }
+            this.audioContext = new AudioContextConstructor();
             this.gainNode = this.audioContext.createGain();
             this.gainNode.connect(this.audioContext.destination);
         }
@@ -138,7 +147,11 @@ class TTSAudioPlayer {
         const buffer = this.audioContext.createBuffer(1, samples.length, sampleRate);
         const channelData = new Float32Array(samples.length);
         channelData.set(samples);
-        buffer.copyToChannel(channelData, 0);
+        if (typeof buffer.copyToChannel === 'function') {
+            buffer.copyToChannel(channelData, 0);
+        } else {
+            buffer.getChannelData(0).set(channelData);
+        }
         return buffer;
     }
     
