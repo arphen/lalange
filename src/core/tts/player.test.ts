@@ -18,7 +18,10 @@ vi.mock('../store/tts', () => ({
 class FakeAudioContext {
     static current: FakeAudioContext | null = null;
     static supportsCopyToChannel = true;
+    static supportsResume = true;
+    static supportsSourceStart = true;
     static channelData = new Float32Array();
+    static noteOn = vi.fn();
 
     currentTime = 0;
     state: AudioContextState = 'running';
@@ -26,6 +29,9 @@ class FakeAudioContext {
 
     constructor() {
         FakeAudioContext.current = this;
+        if (!FakeAudioContext.supportsResume) {
+            Object.defineProperty(this, 'resume', { value: undefined });
+        }
     }
 
     createGain(): GainNode {
@@ -48,7 +54,8 @@ class FakeAudioContext {
             buffer: null,
             connect: vi.fn(),
             disconnect: vi.fn(),
-            start: vi.fn(),
+            start: FakeAudioContext.supportsSourceStart ? vi.fn() : undefined,
+            noteOn: FakeAudioContext.noteOn,
             stop: vi.fn(),
             onended: null,
         } as unknown as AudioBufferSourceNode;
@@ -76,7 +83,10 @@ describe('TTSAudioPlayer word tracking', () => {
         });
         FakeAudioContext.current = null;
         FakeAudioContext.supportsCopyToChannel = true;
+        FakeAudioContext.supportsResume = true;
+        FakeAudioContext.supportsSourceStart = true;
         FakeAudioContext.channelData = new Float32Array();
+        FakeAudioContext.noteOn.mockReset();
         nextAnimationFrame = null;
         vi.stubGlobal('AudioContext', FakeAudioContext);
         vi.stubGlobal('requestAnimationFrame', vi.fn((callback: FrameRequestCallback) => {
@@ -150,6 +160,27 @@ describe('TTSAudioPlayer word tracking', () => {
         )).resolves.toBeUndefined();
 
         expect(FakeAudioContext.current).toBeInstanceOf(FakeAudioContext);
+    });
+
+    it('does not require resume when a prefixed context omits it', async () => {
+        FakeAudioContext.supportsResume = false;
+
+        await expect(ttsPlayer.queueAudio(
+            { samples: new Float32Array(4), sampleRate: 24000, duration: 1, text: 'Phone audio.' },
+            { index: 0, text: 'Phone audio.', startWordIndex: 0, endWordIndex: 1 },
+        )).resolves.toBeUndefined();
+    });
+
+    it('uses noteOn when a prefixed buffer source omits start', async () => {
+        FakeAudioContext.supportsSourceStart = false;
+
+        await ttsPlayer.queueAudio(
+            { samples: new Float32Array(4), sampleRate: 24000, duration: 1, text: 'Phone audio.' },
+            { index: 0, text: 'Phone audio.', startWordIndex: 0, endWordIndex: 1 },
+        );
+        await ttsPlayer.play(0);
+
+        expect(FakeAudioContext.noteOn).toHaveBeenCalledWith(0);
     });
 });
 

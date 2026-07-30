@@ -16,6 +16,10 @@ type AudioContextGlobal = typeof globalThis & {
     webkitAudioContext?: typeof AudioContext;
 };
 
+type LegacyAudioBufferSourceNode = AudioBufferSourceNode & {
+    noteOn?: (when: number) => void;
+};
+
 const clamp = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value));
 
 const estimateTokenWeight = (token: string): number => {
@@ -128,7 +132,7 @@ class TTSAudioPlayer {
             this.gainNode.connect(this.audioContext.destination);
         }
         
-        if (this.audioContext.state === 'suspended') {
+        if (this.audioContext.state === 'suspended' && typeof this.audioContext.resume === 'function') {
             await this.audioContext.resume();
         }
         
@@ -347,7 +351,15 @@ class TTSAudioPlayer {
         };
         
         try {
-            source.start();
+            if (typeof source.start === 'function') {
+                source.start();
+            } else {
+                const legacySource = source as LegacyAudioBufferSourceNode;
+                if (typeof legacySource.noteOn !== 'function') {
+                    throw new Error('Audio playback cannot start in this browser.');
+                }
+                legacySource.noteOn(0);
+            }
         } catch (error) {
             console.error('[TTS Player] Failed to start:', error);
             this.options.onError?.(error as Error);

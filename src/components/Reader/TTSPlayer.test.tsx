@@ -164,12 +164,29 @@ describe('TTSPlayer voice changes', () => {
         fireEvent.click(container.querySelector('button')!);
 
         await waitFor(() => {
-            expect(ttsPlayer.play).toHaveBeenCalledWith(0, 6);
+            expect(ttsPlayer.play).toHaveBeenCalledWith(0, 1);
             expect(streamSpeech).toHaveBeenCalledWith(
                 mocks.sentences.slice(0, 6),
                 expect.any(Object),
             );
         });
+    });
+
+    it('contains Web Audio startup failures inside the TTS control', async () => {
+        vi.mocked(ttsPlayer.play).mockRejectedValueOnce(
+            new TypeError("undefined is not a function (near '...AudioContext...')"),
+        );
+
+        const { container } = render(<TTSPlayer words={['Hello', 'world.']} currentWordIndex={0} />);
+        fireEvent.click(container.querySelector('button')!);
+
+        await waitFor(() => {
+            expect(mocks.setError).toHaveBeenCalledWith(
+                "undefined is not a function (near '...AudioContext...')",
+            );
+        });
+        expect(ttsPlayer.stop).toHaveBeenCalled();
+        expect(streamSpeech).not.toHaveBeenCalled();
     });
 
     it('forwards interpolated audio words directly to the reader', async () => {

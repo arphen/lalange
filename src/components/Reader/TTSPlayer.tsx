@@ -377,85 +377,93 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
             ttsPlayer.pause();
             return; // Exit immediately, no async operations
         }
-        
-        // PLAY PATHS - these can be async. Always run init guard so quality/device
-        // changes are applied before speaking.
-        if (!await handleInit()) return;
-        
-        if (playbackState === 'idle' || playbackState === 'preparing') {
-            // Find sentence containing current word
-            const sentenceIndex = sentences.findIndex(
-                s => currentWordIndex >= s.startWordIndex && currentWordIndex <= s.endWordIndex
-            );
-            
-            console.log(`[TTS UI] Finding sentence for word ${currentWordIndex}, found: ${sentenceIndex}, sentences count: ${sentences.length}`);
-            
-            if (sentenceIndex === -1 && sentences.length > 0) {
-                // Word index might be beyond sentences - find closest
-                const lastSentence = sentences[sentences.length - 1];
-                if (currentWordIndex > lastSentence.endWordIndex) {
-                    console.log(`[TTS UI] Word ${currentWordIndex} beyond last sentence (ends at ${lastSentence.endWordIndex}), using last sentence`);
-                }
-            }
-            
-            const startIdx = sentenceIndex >= 0 ? sentenceIndex : 0;
-            startSentenceIndexRef.current = startIdx;
-            
-            // Mark that we're starting from a valid position
-            const startSentence = sentences[startIdx];
-            if (startSentence) {
-                console.log(`[TTS UI] Starting from sentence ${startIdx}: word ${startSentence.startWordIndex} to ${startSentence.endWordIndex}`);
-                // Pre-set the word index to avoid jump to 0
-                useTTSStore.getState().setCurrentWordIndex(startSentence.startWordIndex);
-                hasStartedPlaybackRef.current = true;
-            }
-            
-            // Show preparing state
-            useTTSStore.getState().setPlaybackState('preparing');
 
-            // Enter wait-and-play mode immediately so playback starts as soon as
-            // first sentence audio arrives.
-            const startupBufferSize = Math.min(
-                safeBufferAhead + 1,
-                sentences.length - startIdx,
-            );
-            await ttsPlayer.play(startIdx, startupBufferSize);
-            void generateFrom(startIdx, startupBufferSize);
-        } else if (playbackState === 'paused') {
-            // Check if user has read ahead with RSVP - if so, start from their new position
-            const currentTTSWordIndex = useTTSStore.getState().currentWordIndex;
-            
-            if (currentWordIndex > currentTTSWordIndex) {
-                // User read ahead - find the sentence for their current position
+        try {
+            // PLAY PATHS - these can be async. Always run init guard so quality/device
+            // changes are applied before speaking.
+            if (!await handleInit()) return;
+
+            if (playbackState === 'idle' || playbackState === 'preparing') {
+                // Find sentence containing current word
                 const sentenceIndex = sentences.findIndex(
                     s => currentWordIndex >= s.startWordIndex && currentWordIndex <= s.endWordIndex
                 );
-                
-                console.log(`[TTS UI] User read ahead from word ${currentTTSWordIndex} to ${currentWordIndex}, resuming from sentence ${sentenceIndex}`);
-                
-                if (sentenceIndex >= 0) {
-                    const startSentence = sentences[sentenceIndex];
-                    startSentenceIndexRef.current = sentenceIndex;
-                    
-                    // Update position and start fresh from this sentence
-                    useTTSStore.getState().setCurrentWordIndex(startSentence.startWordIndex);
-                    useTTSStore.getState().setPlaybackState('preparing');
-                    hasStartedPlaybackRef.current = true;
-                    
-                    // Clear old queued audio and regenerate from new position
-                    ttsPlayer.clearQueue();
-                    const startupBufferSize = Math.min(
-                        safeBufferAhead + 1,
-                        sentences.length - sentenceIndex,
-                    );
-                    await ttsPlayer.play(sentenceIndex, startupBufferSize);
-                    void generateFrom(sentenceIndex, startupBufferSize);
-                    return;
+
+                console.log(`[TTS UI] Finding sentence for word ${currentWordIndex}, found: ${sentenceIndex}, sentences count: ${sentences.length}`);
+
+                if (sentenceIndex === -1 && sentences.length > 0) {
+                    // Word index might be beyond sentences - find closest
+                    const lastSentence = sentences[sentences.length - 1];
+                    if (currentWordIndex > lastSentence.endWordIndex) {
+                        console.log(`[TTS UI] Word ${currentWordIndex} beyond last sentence (ends at ${lastSentence.endWordIndex}), using last sentence`);
+                    }
                 }
+
+                const startIdx = sentenceIndex >= 0 ? sentenceIndex : 0;
+                startSentenceIndexRef.current = startIdx;
+
+                // Mark that we're starting from a valid position
+                const startSentence = sentences[startIdx];
+                if (startSentence) {
+                    console.log(`[TTS UI] Starting from sentence ${startIdx}: word ${startSentence.startWordIndex} to ${startSentence.endWordIndex}`);
+                    // Pre-set the word index to avoid jump to 0
+                    useTTSStore.getState().setCurrentWordIndex(startSentence.startWordIndex);
+                    hasStartedPlaybackRef.current = true;
+                }
+
+                // Show preparing state
+                useTTSStore.getState().setPlaybackState('preparing');
+
+                // Start after the first sentence while the rest of the look-ahead
+                // buffer continues generating in the background.
+                const startupBufferSize = Math.min(
+                    safeBufferAhead + 1,
+                    sentences.length - startIdx,
+                );
+                await ttsPlayer.play(startIdx, 1);
+                void generateFrom(startIdx, startupBufferSize);
+            } else if (playbackState === 'paused') {
+                // Check if user has read ahead with RSVP - if so, start from their new position
+                const currentTTSWordIndex = useTTSStore.getState().currentWordIndex;
+
+                if (currentWordIndex > currentTTSWordIndex) {
+                    // User read ahead - find the sentence for their current position
+                    const sentenceIndex = sentences.findIndex(
+                        s => currentWordIndex >= s.startWordIndex && currentWordIndex <= s.endWordIndex
+                    );
+
+                    console.log(`[TTS UI] User read ahead from word ${currentTTSWordIndex} to ${currentWordIndex}, resuming from sentence ${sentenceIndex}`);
+
+                    if (sentenceIndex >= 0) {
+                        const startSentence = sentences[sentenceIndex];
+                        startSentenceIndexRef.current = sentenceIndex;
+
+                        // Update position and start fresh from this sentence
+                        useTTSStore.getState().setCurrentWordIndex(startSentence.startWordIndex);
+                        useTTSStore.getState().setPlaybackState('preparing');
+                        hasStartedPlaybackRef.current = true;
+
+                        // Clear old queued audio and regenerate from new position
+                        ttsPlayer.clearQueue();
+                        const startupBufferSize = Math.min(
+                            safeBufferAhead + 1,
+                            sentences.length - sentenceIndex,
+                        );
+                        await ttsPlayer.play(sentenceIndex, 1);
+                        void generateFrom(sentenceIndex, startupBufferSize);
+                        return;
+                    }
+                }
+
+                // User didn't read ahead (or read back) - just resume from where we were
+                await ttsPlayer.play();
             }
-            
-            // User didn't read ahead (or read back) - just resume from where we were
-            await ttsPlayer.play();
+        } catch (err) {
+            console.error('[TTS UI] Playback failed:', err);
+            const message = err instanceof Error ? err.message : 'Audio playback failed.';
+            const store = useTTSStore.getState();
+            store.setError(message);
+            ttsPlayer.stop();
         }
     }, [playbackState, sentences, currentWordIndex, handleInit, generateFrom, safeBufferAhead]);
     
