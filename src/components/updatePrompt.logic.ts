@@ -6,12 +6,21 @@ const SW_UPDATE_CATCH_UP_KEY = 'arphen:sw-update-catch-up-until';
 
 type UpdateStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
 type InstallingWorker = Pick<ServiceWorker, 'state' | 'addEventListener' | 'removeEventListener'>;
+type ExistingRegistration = Pick<ServiceWorkerRegistration, 'active' | 'installing' | 'waiting'>;
 
 const INSTALL_COMPLETE_STATES: ReadonlySet<ServiceWorkerState> = new Set([
     'installed',
     'activated',
     'redundant',
 ]);
+
+export const hasInstalledServiceWorker = (
+    registration: ExistingRegistration | undefined,
+): boolean => Boolean(registration?.active || registration?.waiting);
+
+export const canCheckForServiceWorkerUpdate = (
+    registration: Pick<ServiceWorkerRegistration, 'active' | 'installing'>,
+): boolean => Boolean(registration.active && !registration.installing);
 
 export const beginUpdateCatchUp = (storage: UpdateStorage, now = Date.now()): void => {
     try {

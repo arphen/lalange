@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 import basicSsl from '@vitejs/plugin-basic-ssl'
 import { execSync } from 'child_process'
+import { PWA_MAX_PRECACHE_FILE_BYTES, PWA_PRECACHE_GLOB_IGNORES } from './pwa.config'
 
 // Get commit hash, with fallback for CI environments without git history
 let commitHash = 'unknown';
@@ -26,9 +27,9 @@ export default defineConfig(() => {
         enabled: false,
       },
       workbox: {
-        maximumFileSizeToCacheInBytes: 128 * 1024 * 1024, // 128MB - needed for ONNX WASM runtime and large TTS model files
-        // Don't precache LLM model files - they're managed by web-llm in IndexedDB
-        globIgnores: ['**/local_models/**'],
+        maximumFileSizeToCacheInBytes: PWA_MAX_PRECACHE_FILE_BYTES,
+        // Optional AI and TTS runtimes load on demand and manage their own caches.
+        globIgnores: PWA_PRECACHE_GLOB_IGNORES,
       },
       manifest: {
         name: "XYZ",
@@ -52,6 +53,15 @@ export default defineConfig(() => {
     optimizeDeps: {
       exclude: ['@mlc-ai/web-llm'], // Skip optimizing the package itself
       entries: ['index.html'],      // Only scan the root index.html, ignoring examples in packages/
+    },
+    build: {
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            'web-llm': ['@mlc-ai/web-llm'],
+          },
+        },
+      },
     },
     plugins,
     server: {

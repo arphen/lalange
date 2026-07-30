@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
     beginUpdateCatchUp,
+    canCheckForServiceWorkerUpdate,
     clearUpdateCatchUp,
+    hasInstalledServiceWorker,
     isUpdateCatchUpActive,
     SW_UPDATE_CATCH_UP_TTL_MS,
     SW_UPDATE_CHECK_INTERVAL_MS,
@@ -21,6 +23,36 @@ const createStorage = (): Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> =>
 describe('updatePrompt.logic', () => {
     it('uses a conservative update polling interval', () => {
         expect(SW_UPDATE_CHECK_INTERVAL_MS).toBe(5 * 60 * 1000);
+    });
+
+    it('distinguishes first registration from an existing service worker', () => {
+        expect(hasInstalledServiceWorker(undefined)).toBe(false);
+        expect(hasInstalledServiceWorker({
+            active: null,
+            installing: null,
+            waiting: null,
+        })).toBe(false);
+        expect(hasInstalledServiceWorker({
+            active: null,
+            installing: {} as ServiceWorker,
+            waiting: null,
+        })).toBe(false);
+        expect(hasInstalledServiceWorker({
+            active: {} as ServiceWorker,
+            installing: null,
+            waiting: null,
+        })).toBe(true);
+    });
+
+    it('does not overlap an update check with initial installation', () => {
+        expect(canCheckForServiceWorkerUpdate({
+            active: null,
+            installing: {} as ServiceWorker,
+        })).toBe(false);
+        expect(canCheckForServiceWorkerUpdate({
+            active: {} as ServiceWorker,
+            installing: null,
+        })).toBe(true);
     });
 
     it('keeps update consent active only for the bounded catch-up window', () => {

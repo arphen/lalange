@@ -1,5 +1,14 @@
-import { CreateMLCEngine, MLCEngine, type InitProgressCallback, hasModelInCache, deleteModelAllInfoInCache, type AppConfig } from "@mlc-ai/web-llm";
+import type { AppConfig, InitProgressCallback, MLCEngine } from "@mlc-ai/web-llm";
 import { useAIStore } from "../store/ai";
+
+type WebLLMModule = typeof import("@mlc-ai/web-llm");
+
+let webLLMModulePromise: Promise<WebLLMModule> | null = null;
+
+const loadWebLLM = (): Promise<WebLLMModule> => {
+    webLLMModulePromise ??= import("@mlc-ai/web-llm");
+    return webLLMModulePromise;
+};
 
 export const WEBLLM_ERROR_CODES = {
     STORAGE_QUOTA_EXCEEDED: "BROWSER_STORAGE_QUOTA_EXCEEDED",
@@ -200,6 +209,7 @@ export const downloadModelToCache = async (
     tier: ModelTier,
     onProgress?: (progress: number, text: string) => void
 ): Promise<void> => {
+    const { CreateMLCEngine, hasModelInCache } = await loadWebLLM();
     const modelId = MODEL_MAPPING[tier];
     console.log(`[WebLLM] Downloading model to cache: ${tier} (${modelId})`);
     
@@ -268,6 +278,7 @@ export const downloadModelToCache = async (
 export const getEngine = async (
     tier: ModelTier
 ): Promise<MLCEngine> => {
+    const { CreateMLCEngine, hasModelInCache } = await loadWebLLM();
     if (!MODEL_MAPPING[tier]) {
         throw new Error(`Invalid model tier: ${tier}`);
     }
@@ -495,6 +506,7 @@ export const getPromptLogprobs = async (
 };
 
 export const isModelCached = async (tier: ModelTier): Promise<boolean> => {
+    const { hasModelInCache } = await loadWebLLM();
     const modelId = MODEL_MAPPING[tier];
     return await hasModelInCache(modelId, APP_CONFIG);
 };
@@ -540,6 +552,7 @@ export const getModelShardInfo = async (tier: ModelTier): Promise<{ completed: n
 };
 
 export const deleteModel = async (tier: ModelTier): Promise<void> => {
+    const { deleteModelAllInfoInCache } = await loadWebLLM();
     const modelId = MODEL_MAPPING[tier];
     await deleteModelAllInfoInCache(modelId);
 };

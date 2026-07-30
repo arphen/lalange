@@ -1,7 +1,9 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
     beginUpdateCatchUp,
+    canCheckForServiceWorkerUpdate,
     clearUpdateCatchUp,
+    hasInstalledServiceWorker,
     isUpdateCatchUpActive,
     SW_UPDATE_CHECK_INTERVAL_MS,
     waitForServiceWorkerInstall,
@@ -41,6 +43,9 @@ export const UpdatePrompt: React.FC = () => {
         // This pattern avoids eval-like constructs while still handling test environments
         const loadPWA = async () => {
             try {
+                const existingRegistration = await navigator.serviceWorker.getRegistration();
+                const hadServiceWorkerAtLoad = hasInstalledServiceWorker(existingRegistration);
+
                 // Dynamic import of virtual module - wrapped in try/catch for environments
                 // where the module doesn't exist (tests, non-PWA builds)
                 const pwaModule = await import('virtual:pwa-register');
@@ -50,6 +55,16 @@ export const UpdatePrompt: React.FC = () => {
                     immediate: true, // Check for updates immediately on load
                     onNeedRefresh() {
                         setUpdateFn(() => updateSW);
+
+                        if (!hadServiceWorkerAtLoad) {
+                            console.log('[SW] Completing first installation without an update prompt');
+                            clearUpdateCatchUp(window.localStorage);
+                            setShowPrompt(false);
+                            void updateSW(false).catch((error: unknown) => {
+                                console.error('[SW] First installation activation failed:', error);
+                            });
+                            return;
+                        }
 
                         if (isUpdateCatchUpActive(window.localStorage)) {
                             if (autoActivatingRef.current) return;
@@ -81,18 +96,24 @@ export const UpdatePrompt: React.FC = () => {
 
                             // Poll less aggressively to reduce background churn.
                             intervalRef.current = setInterval(() => {
+                                if (!canCheckForServiceWorkerUpdate(registration)) return;
+
                                 console.log('[SW] Checking for updates...');
                                 registration.update().catch(console.error);
                             }, SW_UPDATE_CHECK_INTERVAL_MS);
-                            
-                            // Also check immediately
-                            registration.update()
-                                .then(() => {
-                                    if (!registration.waiting && !registration.installing) {
-                                        clearUpdateCatchUp(window.localStorage);
-                                    }
-                                })
-                                .catch(console.error);
+
+                            if (
+                                isUpdateCatchUpActive(window.localStorage)
+                                && canCheckForServiceWorkerUpdate(registration)
+                            ) {
+                                registration.update()
+                                    .then(() => {
+                                        if (!registration.waiting && !registration.installing) {
+                                            clearUpdateCatchUp(window.localStorage);
+                                        }
+                                    })
+                                    .catch(console.error);
+                            }
                         }
                     },
                     onRegisterError(error: Error) {
