@@ -3,7 +3,7 @@ import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 import basicSsl from '@vitejs/plugin-basic-ssl'
 import { execSync } from 'child_process'
-import { PWA_MAX_PRECACHE_FILE_BYTES, PWA_PRECACHE_GLOB_IGNORES } from './pwa.config'
+import { PWA_INJECT_REGISTER, PWA_MAX_PRECACHE_FILE_BYTES, PWA_PRECACHE_GLOB_IGNORES } from './pwa.config'
 
 // Get commit hash, with fallback for CI environments without git history
 let commitHash = 'unknown';
@@ -22,6 +22,7 @@ export default defineConfig(() => {
     useHttps && basicSsl(),
     react(),
     VitePWA({
+      injectRegister: PWA_INJECT_REGISTER,
       registerType: 'prompt', // Show update prompt instead of auto-updating
       devOptions: {
         enabled: false,

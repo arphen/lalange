@@ -3,6 +3,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import { ExhibitionRender } from './components/ExhibitionRender.tsx'
+import { pwaUpdateController } from './core/pwa/browserUpdateController'
 
 if (import.meta.env.DEV && 'serviceWorker' in navigator) {
   navigator.serviceWorker.getRegistrations()
@@ -10,6 +11,10 @@ if (import.meta.env.DEV && 'serviceWorker' in navigator) {
     .catch(() => {
       // ignore
     });
+}
+
+if (import.meta.env.PROD) {
+  void pwaUpdateController.start()
 }
 
 const root = createRoot(document.getElementById('root')!)

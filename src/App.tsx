@@ -11,7 +11,7 @@ import { AISetupWizard } from './components/ModelDownloadModal'
 import { AIStatusPanel } from './components/AIStatusPanel'
 import { SyncPage } from './components/Sync/SyncPage'
 import { ExchangePage } from './components/Exchange/ExchangePage'
-import { UpdatePrompt } from './components/UpdatePrompt'
+import { PwaUpdateStatus } from './components/PwaUpdateStatus'
 import { LocalAccessQr } from './components/LocalAccessQr'
 import { useSettingsStore } from './core/store/settings'
 import { useAIStore } from './core/store/ai'
@@ -193,8 +193,7 @@ function App() {
 
       {view !== 'reader' && <LocalAccessQr />}
 
-      {/* PWA Update Prompt */}
-      <UpdatePrompt />
+      <PwaUpdateStatus />
     </div>
   )
 }
