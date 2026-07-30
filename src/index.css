@@ -454,6 +454,45 @@ html {
   letter-spacing: 0.12em;
 }
 
+.exchange-answer-fallback {
+  width: min(28rem, 100%);
+  display: grid;
+  justify-items: center;
+  gap: 0.55rem;
+}
+
+.exchange-answer-fallback .exchange-primary,
+.exchange-answer-fallback details {
+  width: 100%;
+}
+
+.exchange-answer-fallback details {
+  color: rgba(255, 255, 255, 0.62);
+  text-align: left;
+  font-size: 0.7rem;
+}
+
+.exchange-answer-fallback summary {
+  width: fit-content;
+  margin: 0 auto;
+  cursor: pointer;
+}
+
+.exchange-answer-fallback textarea {
+  width: 100%;
+  min-height: 7rem;
+  margin-top: 0.65rem;
+  padding: 0.65rem;
+  resize: vertical;
+  color: rgba(255, 255, 255, 0.8);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 4px;
+  font-family: 'Roboto Mono', monospace;
+  font-size: 0.64rem;
+  letter-spacing: 0;
+}
+
 .exchange-status-screen__icon {
   width: 4.5rem;
   height: 4.5rem;

@@ -67,6 +67,7 @@ interface AIStatusPanelProps {
  * Expandable to show detailed information.
  */
 export const AIStatusPanel: React.FC<AIStatusPanelProps> = ({ 
+    variant = 'sidebar',
     className 
 }) => {
     const {
@@ -87,6 +88,15 @@ export const AIStatusPanel: React.FC<AIStatusPanelProps> = ({
 
     const status = getStatusIndicator(lifecycleState, error);
     const isLoading = lifecycleState === 'downloading' || lifecycleState === 'loading';
+
+    const shouldHideSidebarIdle =
+        variant === 'sidebar' &&
+        lifecycleState === 'idle' &&
+        !error &&
+        !activeModelName &&
+        !activity &&
+        !currentTask &&
+        progressValue <= 0;
     
     // For summary tasks, use interpolated progress that updates in real-time
     const [summaryTick, setSummaryTick] = React.useState(0);
@@ -138,6 +148,10 @@ export const AIStatusPanel: React.FC<AIStatusPanelProps> = ({
     }, [canEstimateLoadingEta, loadStartTime, progressValue]);
 
     const displayedLoadingEta = canEstimateLoadingEta ? loadingEta : null;
+
+    if (shouldHideSidebarIdle) {
+        return null;
+    }
 
     return (
         <div className={clsx('font-mono', className)}>

@@ -1,6 +1,147 @@
 import { CreateMLCEngine, MLCEngine, type InitProgressCallback, hasModelInCache, deleteModelAllInfoInCache, type AppConfig } from "@mlc-ai/web-llm";
 import { useAIStore } from "../store/ai";
 
+export const WEBLLM_ERROR_CODES = {
+    STORAGE_QUOTA_EXCEEDED: "BROWSER_STORAGE_QUOTA_EXCEEDED",
+    WEBGPU_LIMIT_UNSUPPORTED: "WEBGPU_LIMIT_UNSUPPORTED",
+    WEBGPU_UNAVAILABLE: "WEBGPU_UNAVAILABLE",
+} as const;
+
+const REQUIRED_MAX_STORAGE_BUFFERS_PER_SHADER_STAGE = 10;
+
+interface MinimalGPUAdapter {
+    limits: {
+        maxStorageBuffersPerShaderStage?: number;
+    };
+}
+
+interface MinimalGPU {
+    requestAdapter: (options?: { powerPreference?: "low-power" | "high-performance" }) => Promise<MinimalGPUAdapter | null>;
+}
+
+interface NormalizedWebLLMError {
+    userMessage: string;
+    propagatedError: Error;
+}
+
+let cachedCompatibilityError: Error | null | undefined;
+
+const getNavigatorGPU = (): MinimalGPU | undefined => {
+    if (typeof navigator === "undefined") return undefined;
+    return (navigator as Navigator & { gpu?: MinimalGPU }).gpu;
+};
+
+const parseStorageBufferLimitError = (message: string): { requested: number; limit: number } | null => {
+    const explicitCodeMatch = message.match(/^WEBGPU_LIMIT_UNSUPPORTED:requested=(\d+):limit=(\d+)$/);
+    if (explicitCodeMatch) {
+        return {
+            requested: Number(explicitCodeMatch[1]),
+            limit: Number(explicitCodeMatch[2]),
+        };
+    }
+
+    const runtimeMatch = message.match(/maxStorageBuffersPerShaderStage\s+exceeds\s+limit\.\s+requested=(\d+),\s+limit=(\d+)/i);
+    if (runtimeMatch) {
+        return {
+            requested: Number(runtimeMatch[1]),
+            limit: Number(runtimeMatch[2]),
+        };
+    }
+
+    return null;
+};
+
+const normalizeWebLLMError = (error: unknown): NormalizedWebLLMError => {
+    const fallback = {
+        userMessage: "Failed to load AI model.",
+        propagatedError: new Error("Failed to load AI model."),
+    };
+
+    if (!(error instanceof Error)) {
+        return fallback;
+    }
+
+    const message = error.message;
+
+    if (
+        message.includes("NS_ERROR_FILE_NO_DEVICE_SPACE")
+        || message.includes("QuotaExceededError")
+        || message === WEBLLM_ERROR_CODES.STORAGE_QUOTA_EXCEEDED
+    ) {
+        return {
+            userMessage: "Browser storage quota exceeded. Please clear space or delete cached models.",
+            propagatedError: new Error(WEBLLM_ERROR_CODES.STORAGE_QUOTA_EXCEEDED),
+        };
+    }
+
+    const parsedLimit = parseStorageBufferLimitError(message);
+    if (parsedLimit || message === WEBLLM_ERROR_CODES.WEBGPU_LIMIT_UNSUPPORTED) {
+        const requested = parsedLimit?.requested ?? REQUIRED_MAX_STORAGE_BUFFERS_PER_SHADER_STAGE;
+        const limit = parsedLimit?.limit;
+        const limitDetail = typeof limit === "number"
+            ? ` (requested ${requested}, device limit ${limit})`
+            : "";
+
+        return {
+            userMessage: `This browser's current WebGPU adapter exposes too few resources for on-device AI${limitDetail}.`,
+            propagatedError: new Error(WEBLLM_ERROR_CODES.WEBGPU_LIMIT_UNSUPPORTED),
+        };
+    }
+
+    if (
+        message === WEBLLM_ERROR_CODES.WEBGPU_UNAVAILABLE
+        || message.includes("WebGPU is not supported")
+        || message.includes("Cannot find WebGPU in the environment")
+    ) {
+        return {
+            userMessage: "WebGPU is unavailable in this browser/device, so on-device AI cannot start.",
+            propagatedError: new Error(WEBLLM_ERROR_CODES.WEBGPU_UNAVAILABLE),
+        };
+    }
+
+    return {
+        userMessage: message || fallback.userMessage,
+        propagatedError: error,
+    };
+};
+
+const getCompatibilityError = async (): Promise<Error | null> => {
+    if (cachedCompatibilityError !== undefined) {
+        return cachedCompatibilityError;
+    }
+
+    const gpu = getNavigatorGPU();
+    if (!gpu) {
+        cachedCompatibilityError = new Error(WEBLLM_ERROR_CODES.WEBGPU_UNAVAILABLE);
+        return cachedCompatibilityError;
+    }
+
+    try {
+        const adapter = await gpu.requestAdapter({ powerPreference: "high-performance" });
+        if (!adapter) {
+            cachedCompatibilityError = new Error(WEBLLM_ERROR_CODES.WEBGPU_UNAVAILABLE);
+            return cachedCompatibilityError;
+        }
+
+        const maxStorageBuffersPerShaderStage = adapter.limits.maxStorageBuffersPerShaderStage;
+        if (
+            typeof maxStorageBuffersPerShaderStage === "number"
+            && maxStorageBuffersPerShaderStage < REQUIRED_MAX_STORAGE_BUFFERS_PER_SHADER_STAGE
+        ) {
+            cachedCompatibilityError = new Error(
+                `${WEBLLM_ERROR_CODES.WEBGPU_LIMIT_UNSUPPORTED}:requested=${REQUIRED_MAX_STORAGE_BUFFERS_PER_SHADER_STAGE}:limit=${maxStorageBuffersPerShaderStage}`,
+            );
+            return cachedCompatibilityError;
+        }
+
+        cachedCompatibilityError = null;
+        return null;
+    } catch {
+        cachedCompatibilityError = new Error(WEBLLM_ERROR_CODES.WEBGPU_UNAVAILABLE);
+        return cachedCompatibilityError;
+    }
+};
+
 // Custom TinyLlama model with prefill logprobs support
 const TINYLLAMA_LOGPROBS_CONFIG = {
     model: "https://huggingface.co/mlc-ai/TinyLlama-1.1B-Chat-v1.0-q4f16_1-MLC",
@@ -70,6 +211,13 @@ export const downloadModelToCache = async (
         return;
     }
 
+    const compatibilityError = await getCompatibilityError();
+    if (compatibilityError) {
+        const { userMessage, propagatedError } = normalizeWebLLMError(compatibilityError);
+        useAIStore.getState().setError(userMessage);
+        throw propagatedError;
+    }
+
     const { setProgress, setLoading } = useAIStore.getState();
     const startTime = Date.now();
     
@@ -125,10 +273,21 @@ export const getEngine = async (
     }
 
     const modelId = MODEL_MAPPING[tier];
-    console.log(`[WebLLM] Requesting engine for tier: ${tier} (Model ID: ${modelId})`);
-    
+    if (engineInstance && currentLoadedModel === modelId) {
+        return engineInstance;
+    }
+
     const aiStore = useAIStore.getState();
     const { setProgress, setLoading, setReady, setError, setActiveModelName, startModelLoad, completeModelLoad, setLifecycleState } = aiStore;
+
+    const compatibilityError = await getCompatibilityError();
+    if (compatibilityError) {
+        const { userMessage, propagatedError } = normalizeWebLLMError(compatibilityError);
+        setError(userMessage);
+        throw propagatedError;
+    }
+
+    console.log(`[WebLLM] Requesting engine for tier: ${tier} (Model ID: ${modelId})`);
 
     // Check if model is already in cache to determine lifecycle state
     const isCached = await hasModelInCache(modelId, APP_CONFIG);
@@ -156,10 +315,6 @@ export const getEngine = async (
 
         setProgress(`[${info.name}] ${cleanText}`, report.progress);
     };
-
-    if (engineInstance && currentLoadedModel === modelId) {
-        return engineInstance;
-    }
 
     setLoading(true, tier);
     setReady(false);
@@ -201,19 +356,9 @@ export const getEngine = async (
         return engineInstance;
     } catch (error) {
         console.error("Failed to load WebLLM engine:", error);
-        let errorMessage = "Failed to load AI model.";
-        
-        // Check for storage quota error
-        if (error instanceof Error) {
-            if (error.message.includes("NS_ERROR_FILE_NO_DEVICE_SPACE") || error.message.includes("QuotaExceededError")) {
-                errorMessage = "Browser storage quota exceeded. Please clear space or delete cached models.";
-            } else {
-                errorMessage = error.message;
-            }
-        }
-        
-        setError(errorMessage);
-        throw error;
+        const { userMessage, propagatedError } = normalizeWebLLMError(error);
+        setError(userMessage);
+        throw propagatedError;
     } finally {
         setLoading(false);
     }

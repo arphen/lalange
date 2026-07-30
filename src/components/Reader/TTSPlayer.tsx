@@ -21,6 +21,12 @@ import { persistListeningHandoff } from '../../core/exchange/handoff';
 
 // Configuration
 const DEFAULT_BUFFER_AHEAD = 5;
+const SPEED_OPTIONS = [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
+
+const formatSpeedLabel = (value: number): string => {
+    const fixed = value.toFixed(2).replace(/\.00$/, '').replace(/0$/, '');
+    return `${fixed}x`;
+};
 
 const PlayIcon: React.FC = () => (
     <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
@@ -106,7 +112,6 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
     
     const sentences = useMemo(() => splitIntoSentences(words), [words]);
     const [showVoiceMenu, setShowVoiceMenu] = useState(false);
-    const [showSpeedMenu, setShowSpeedMenu] = useState(false);
     const [isExpanded, setIsExpanded] = useState(false);
     const effectiveVoice = resolveVoiceId(voice);
     const selectedDevice = backendPreference === 'auto' ? undefined : backendPreference;
@@ -474,9 +479,6 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
     const voices = listVoices();
     const currentVoice = voices.find(v => v.id === effectiveVoice);
     
-    // Speed presets
-    const speedOptions = [0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
-    
     // Button content
     const getButtonContent = () => {
         if (isLoading) return <LoadingSpinner />;
@@ -508,12 +510,12 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
             <button
                 onClick={() => setIsExpanded(true)}
                 data-testid="tts-player-fab"
-                className={`${dockClasses} p-3 bg-gradient-to-r from-purple-600 to-indigo-600 rounded-full shadow-lg hover:shadow-xl transition-all duration-300 group`}
+                className={`${dockClasses} p-3.5 rounded-2xl bg-cyan-500/90 text-black shadow-[0_14px_40px_-18px_rgba(34,211,238,0.85)] hover:bg-cyan-400 transition-all duration-200 group`}
                 title="Text to Speech"
             >
                 <HeadphonesIcon />
                 {playbackState === 'playing' && (
-                    <span className="absolute -top-1 -right-1 w-3 h-3 bg-green-500 rounded-full animate-pulse" />
+                    <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-emerald-400 rounded-full animate-pulse" />
                 )}
             </button>
         );
@@ -522,18 +524,18 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
     return (
         <div
             data-testid="tts-player-panel"
-            className={`${dockClasses} ${compact ? 'w-72' : 'w-80'} bg-black/90 backdrop-blur-xl rounded-2xl border border-white/10 shadow-2xl overflow-hidden transition-all duration-300`}
+            className={`${dockClasses} ${compact ? 'w-80' : 'w-96 max-w-[calc(100vw-2rem)]'} bg-[#080d14]/95 backdrop-blur-xl rounded-2xl border border-cyan-300/20 shadow-[0_28px_70px_-35px_rgba(14,165,233,0.75)] overflow-visible transition-all duration-300`}
         >
             {/* Header */}
-            <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 bg-gradient-to-r from-purple-900/50 to-indigo-900/50">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-cyan-200/10 bg-gradient-to-r from-cyan-300/10 via-teal-300/5 to-transparent">
                 <div className="flex items-center gap-2">
                     <HeadphonesIcon />
-                    <span className="font-mono text-xs text-white/80 uppercase tracking-wider">Listen Mode</span>
+                    <span className="font-mono text-xs text-cyan-100 uppercase tracking-[0.18em]">Listen Mode</span>
                 </div>
                 {compact && (
                     <button
                         onClick={() => setIsExpanded(false)}
-                        className="text-white/50 hover:text-white transition-colors"
+                        className="text-cyan-100/60 hover:text-cyan-100 transition-colors"
                     >
                         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -549,20 +551,20 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
                     <button
                         onClick={handleToggle}
                         disabled={isLoading}
-                        className={`flex items-center justify-center w-14 h-14 rounded-full transition-all duration-300 ${
+                        className={`flex items-center justify-center w-14 h-14 rounded-2xl transition-all duration-200 ${
                             isButtonActive
-                                ? 'bg-purple-600 hover:bg-purple-500 shadow-lg shadow-purple-500/30'
-                                : 'bg-white/10 hover:bg-white/20'
+                                ? 'bg-cyan-400 text-black shadow-[0_10px_28px_-16px_rgba(34,211,238,0.9)] hover:bg-cyan-300'
+                                : 'bg-white/8 text-cyan-50 hover:bg-white/16'
                         } disabled:opacity-50 disabled:cursor-not-allowed`}
                     >
                         {getButtonContent()}
                     </button>
                     
                     <div className="flex-1 min-w-0">
-                        <p className="text-sm text-white font-medium truncate">
+                        <p className="text-sm text-white font-semibold truncate tracking-wide">
                             {currentVoice?.name ?? 'Select Voice'}
                         </p>
-                        <p className="text-xs text-white/50 truncate">
+                        <p className="text-xs text-cyan-100/65 truncate">
                             {getStatusText()}
                         </p>
                     </div>
@@ -570,7 +572,7 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
                     {playbackState !== 'idle' && (
                         <button
                             onClick={handleStop}
-                            className="p-2 text-white/50 hover:text-white transition-colors"
+                            className="p-2 text-cyan-100/55 hover:text-cyan-50 transition-colors"
                             title="Stop"
                         >
                             <StopIcon />
@@ -579,22 +581,21 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
                 </div>
                 
                 {/* Voice & Speed */}
-                <div className="flex gap-2">
+                <div className="space-y-3">
                     {/* Voice Selector */}
-                    <div className="relative flex-1">
+                    <div className="relative">
                         <button
                             onClick={() => {
                                 setShowVoiceMenu(!showVoiceMenu);
-                                setShowSpeedMenu(false);
                             }}
-                            className="w-full px-3 py-2 bg-white/5 hover:bg-white/10 rounded-lg text-left transition-colors"
+                            className="w-full px-3 py-2.5 bg-white/5 hover:bg-white/10 rounded-lg border border-white/10 text-left transition-colors"
                         >
-                            <span className="text-[10px] text-white/40 uppercase tracking-wider block">Voice</span>
+                            <span className="text-[10px] text-cyan-200/50 uppercase tracking-[0.16em] block">Voice</span>
                             <span className="text-sm text-white">{currentVoice?.name ?? 'Default'}</span>
                         </button>
                         
                         {showVoiceMenu && (
-                            <div className="absolute bottom-full left-0 right-0 mb-2 bg-black/95 border border-white/10 rounded-lg shadow-xl max-h-48 overflow-y-auto">
+                            <div className="absolute bottom-full left-0 right-0 mb-2 bg-[#05080f]/95 border border-cyan-200/15 rounded-lg shadow-2xl max-h-56 overflow-y-auto z-30">
                                 {voices.filter(v => v.quality !== 'D').map(v => (
                                     <button
                                         key={v.id}
@@ -602,8 +603,8 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
                                             setVoice(v.id);
                                             setShowVoiceMenu(false);
                                         }}
-                                        className={`w-full px-3 py-2 text-left text-sm hover:bg-white/10 transition-colors flex items-center justify-between ${
-                                            v.id === effectiveVoice ? 'bg-purple-600/30 text-purple-300' : 'text-white/80'
+                                        className={`w-full px-3 py-2 text-left text-sm hover:bg-cyan-300/10 transition-colors flex items-center justify-between ${
+                                            v.id === effectiveVoice ? 'bg-cyan-300/20 text-cyan-100' : 'text-white/80'
                                         }`}
                                     >
                                         <span>{v.name}</span>
@@ -615,56 +616,52 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
                             </div>
                         )}
                     </div>
-                    
+
                     {/* Speed Selector */}
-                    <div className="relative">
-                        <button
-                            onClick={() => {
-                                setShowSpeedMenu(!showSpeedMenu);
-                                setShowVoiceMenu(false);
-                            }}
-                            className="px-3 py-2 bg-white/5 hover:bg-white/10 rounded-lg text-left transition-colors min-w-[70px]"
-                        >
-                            <span className="text-[10px] text-white/40 uppercase tracking-wider block">Speed</span>
-                            <span className="text-sm text-white">{speed}x</span>
-                        </button>
-                        
-                        {showSpeedMenu && (
-                            <div className="absolute bottom-full right-0 mb-2 bg-black/95 border border-white/10 rounded-lg shadow-xl overflow-hidden">
-                                {speedOptions.map(s => (
-                                    <button
-                                        key={s}
-                                        onClick={() => {
-                                            setSpeed(s);
-                                            setShowSpeedMenu(false);
-                                        }}
-                                        className={`w-full px-4 py-2 text-sm hover:bg-white/10 transition-colors ${
-                                            s === speed ? 'bg-purple-600/30 text-purple-300' : 'text-white/80'
-                                        }`}
-                                    >
-                                        {s}x
-                                    </button>
-                                ))}
-                            </div>
-                        )}
+                    <div className="rounded-lg border border-white/10 bg-white/5 p-2.5 space-y-2">
+                        <div className="flex items-center justify-between px-1">
+                            <span className="text-[10px] text-cyan-200/50 uppercase tracking-[0.16em]">Speed</span>
+                            <span className="text-xs text-cyan-100 font-semibold">{formatSpeedLabel(speed)}</span>
+                        </div>
+                        <div className="grid grid-cols-4 gap-1.5">
+                            {SPEED_OPTIONS.map((option) => (
+                                <button
+                                    key={option}
+                                    onClick={() => setSpeed(option)}
+                                    className={`px-2 py-1.5 rounded-md text-xs font-semibold transition-colors border ${
+                                        Math.abs(option - speed) < 0.001
+                                            ? 'bg-cyan-300/25 border-cyan-200/50 text-cyan-100'
+                                            : 'bg-black/20 border-white/10 text-white/70 hover:bg-cyan-200/10 hover:text-white'
+                                    }`}
+                                >
+                                    {formatSpeedLabel(option)}
+                                </button>
+                            ))}
+                        </div>
                     </div>
-                    
+
                     {/* Volume */}
-                    <div className="flex items-center gap-2 px-2">
-                        <svg className="w-4 h-4 text-white/50" fill="currentColor" viewBox="0 0 24 24">
-                            <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z" />
-                        </svg>
-                        <input
-                            type="range"
-                            min="0"
-                            max="1"
-                            step="0.1"
-                            value={volume}
-                            onChange={(e) => setVolume(parseFloat(e.target.value))}
-                            className="w-16 h-1 bg-white/20 rounded-full appearance-none cursor-pointer
-                                       [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-2 [&::-webkit-slider-thumb]:h-2 
-                                       [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-full"
-                        />
+                    <div className="rounded-lg border border-white/10 bg-white/5 p-2.5 space-y-2">
+                        <div className="flex items-center justify-between px-1">
+                            <span className="text-[10px] text-cyan-200/50 uppercase tracking-[0.16em]">Volume</span>
+                            <span className="text-xs text-cyan-100 font-semibold">{Math.round(volume * 100)}%</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <svg className="w-4 h-4 text-cyan-100/60" fill="currentColor" viewBox="0 0 24 24">
+                                <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z" />
+                            </svg>
+                            <input
+                                type="range"
+                                min="0"
+                                max="1"
+                                step="0.1"
+                                value={volume}
+                                onChange={(e) => setVolume(parseFloat(e.target.value))}
+                                className="w-full h-1.5 bg-white/20 rounded-full appearance-none cursor-pointer
+                                           [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3
+                                           [&::-webkit-slider-thumb]:bg-cyan-100 [&::-webkit-slider-thumb]:rounded-full"
+                            />
+                        </div>
                     </div>
                 </div>
             </div>

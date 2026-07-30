@@ -21,4 +21,8 @@ describe('exchange pairing codes', () => {
     it('rejects unrelated QR data', async () => {
         await expect(decodePairingSignal('https://example.com')).rejects.toThrow('valid device exchange code');
     });
+
+    it('distinguishes the short verification code from an exchange payload', async () => {
+        await expect(decodePairingSignal('FBCA7B')).rejects.toThrow('verification code, not the full device exchange code');
+    });
 });

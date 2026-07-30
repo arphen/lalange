@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
-import { ArrowRight, ArrowRightLeft, BookOpen, Check, Download, ScanLine, X } from 'lucide-react';
+import { ArrowRight, ArrowRightLeft, BookOpen, Check, Copy, Download, ScanLine, X } from 'lucide-react';
 import {
     answerOpticalExchangeOffer,
     applyExchangeBundle,
@@ -36,6 +36,7 @@ export function ExchangePage() {
     const [resolutions, setResolutions] = useState<Record<string, ExchangeBookResolution>>({});
     const [resultBookIds, setResultBookIds] = useState<string[]>([]);
     const [error, setError] = useState<string | null>(null);
+    const [answerCopyState, setAnswerCopyState] = useState<'idle' | 'copied' | 'error'>('idle');
     const peerRef = useRef<OpticalExchangePeer | null>(null);
     const initialOfferRef = useRef(false);
 
@@ -67,6 +68,7 @@ export function ExchangePage() {
     const acceptInvitation = async () => {
         try {
             setPhase('answering');
+            setAnswerCopyState('idle');
             const answer = await answerOpticalExchangeOffer(offerCode);
             peerRef.current = answer.peer;
             setAnswerCode(answer.answerCode);
@@ -88,6 +90,19 @@ export function ExchangePage() {
         } catch (receiveError) {
             setError(receiveError instanceof Error ? receiveError.message : 'The transfer could not be received.');
             setPhase('error');
+        }
+    };
+
+    const copyAnswerCode = async () => {
+        if (!navigator.clipboard?.writeText) {
+            setAnswerCopyState('error');
+            return;
+        }
+        try {
+            await navigator.clipboard.writeText(answerCode);
+            setAnswerCopyState('copied');
+        } catch {
+            setAnswerCopyState('error');
         }
     };
 
@@ -188,7 +203,27 @@ export function ExchangePage() {
                     <p className="exchange-step">2 / 2</p>
                     <div className="exchange-qr"><QRCodeSVG value={answerCode} size={242} level="L" includeMargin /></div>
                     <h1>Scan this back on the sender.</h1>
-                    <div className="exchange-pair-code"><span>Match code</span><strong>{pairingCode}</strong></div>
+                    <div className="exchange-pair-code"><span>Verify only</span><strong>{pairingCode}</strong></div>
+                    <div className="exchange-answer-fallback">
+                        <button type="button" className="exchange-primary" onClick={() => void copyAnswerCode()}>
+                            {answerCopyState === 'copied' ? <Check size={18} /> : <Copy size={18} />}
+                            {answerCopyState === 'copied' ? 'Full answer copied' : 'Copy full answer code'}
+                        </button>
+                        <p role="status">
+                            {answerCopyState === 'error'
+                                ? 'Clipboard access failed. Open the full code below and copy it manually.'
+                                : 'Paste the full code on the sending device when its camera is unavailable.'}
+                        </p>
+                        <details>
+                            <summary>Show full answer code</summary>
+                            <textarea
+                                aria-label="Full answer code"
+                                readOnly
+                                value={answerCode}
+                                onFocus={(event) => event.currentTarget.select()}
+                            />
+                        </details>
+                    </div>
                 </section>
             )}
 

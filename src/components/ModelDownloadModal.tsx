@@ -3,7 +3,7 @@ import { Check, Download, Gauge, Lock, X } from 'lucide-react';
 import { clsx } from 'clsx';
 import { useSettingsStore } from '../core/store/settings';
 import { useAIStore } from '../core/store/ai';
-import { MODEL_INFO, type ModelTier, isModelCached, getEngine } from '../core/ai/webllm';
+import { MODEL_INFO, type ModelTier, isModelCached, getEngine, WEBLLM_ERROR_CODES } from '../core/ai/webllm';
 import { BrandName } from './BrandName';
 
 /**
@@ -59,8 +59,16 @@ export const AISetupWizard: React.FC = () => {
             console.error('AI setup failed', setupError);
             setAiEnabled(false);
             requestSetup(intent);
-            if (setupError instanceof Error && setupError.message === 'BROWSER_STORAGE_QUOTA_EXCEEDED') {
-                setError('Storage quota exceeded. Clear site data or adjust browser storage settings.');
+            if (setupError instanceof Error) {
+                if (setupError.message === WEBLLM_ERROR_CODES.STORAGE_QUOTA_EXCEEDED) {
+                    setError('Storage quota exceeded. Clear site data or adjust browser storage settings.');
+                } else if (setupError.message === WEBLLM_ERROR_CODES.WEBGPU_LIMIT_UNSUPPORTED) {
+                    setError('This browser currently exposes too few WebGPU resources for the local model. Fully restart it or try Chrome or Brave.');
+                } else if (setupError.message === WEBLLM_ERROR_CODES.WEBGPU_UNAVAILABLE) {
+                    setError('WebGPU is unavailable in this browser/device. Enable WebGPU or use a supported browser.');
+                } else {
+                    setError('The model could not be prepared. Check your connection and try again.');
+                }
             } else {
                 setError('The model could not be prepared. Check your connection and try again.');
             }

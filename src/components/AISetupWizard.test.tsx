@@ -38,6 +38,11 @@ vi.mock('../core/store/ai', () => ({
 }));
 
 vi.mock('../core/ai/webllm', () => ({
+    WEBLLM_ERROR_CODES: {
+        STORAGE_QUOTA_EXCEEDED: 'BROWSER_STORAGE_QUOTA_EXCEEDED',
+        WEBGPU_LIMIT_UNSUPPORTED: 'WEBGPU_LIMIT_UNSUPPORTED',
+        WEBGPU_UNAVAILABLE: 'WEBGPU_UNAVAILABLE',
+    },
     MODEL_INFO: { tiny: { name: 'Tiny', size: '700 MB', description: 'Local AI' } },
     isModelCached: vi.fn().mockResolvedValue(false),
     getEngine: vi.fn().mockResolvedValue(undefined),
@@ -99,5 +104,17 @@ describe('AISetupWizard', () => {
 
         await waitFor(() => expect(mocks.setSummariesEnabled).toHaveBeenCalledWith(true));
         expect(mocks.setAiEnabled).toHaveBeenCalledWith(true);
+    });
+
+    it('shows a compatibility message when WebGPU limits are too low', async () => {
+        mocks.isSetupOpen = true;
+        vi.mocked(getEngine).mockRejectedValueOnce(new Error('WEBGPU_LIMIT_UNSUPPORTED'));
+        render(<AISetupWizard />);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Set up in background' }));
+
+        await waitFor(() => expect(mocks.setAiEnabled).toHaveBeenCalledWith(false));
+        expect(mocks.requestSetup).toHaveBeenCalledWith('pacing');
+        expect(screen.getByText(/currently exposes too few WebGPU resources/i)).toBeInTheDocument();
     });
 });

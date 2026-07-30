@@ -135,7 +135,12 @@ export function ExchangeSheet({
 
     const acceptAnswer = async (answer: string) => {
         if (!peerRef.current || !bundleRef.current) return;
+        if (/^[A-Z0-9]{6}$/i.test(answer.trim())) {
+            setError('That is the six-character verification code. Copy and paste the full xchg1... answer code from the other device.');
+            return;
+        }
         try {
+            setError(null);
             setPhase('connecting');
             await peerRef.current.applyAnswerCode(answer);
             await peerRef.current.waitForConnection();
@@ -310,9 +315,17 @@ export function ExchangeSheet({
                         <h3 className="exchange-stage-title">Scan the answer shown there</h3>
                         <QrCameraScanner label="Point at the answer QR" onScan={(value) => void acceptAnswer(value)} />
                         <div className="exchange-paste">
-                            <input value={pastedAnswer} onChange={(event) => setPastedAnswer(event.target.value)} placeholder="Or paste answer code" />
+                            <input
+                                value={pastedAnswer}
+                                onChange={(event) => {
+                                    setPastedAnswer(event.target.value);
+                                    setError(null);
+                                }}
+                                placeholder="Or paste full xchg1... answer code"
+                            />
                             <button type="button" onClick={() => void acceptAnswer(pastedAnswer)} disabled={!pastedAnswer.trim()}>Connect</button>
                         </div>
+                        {error && <p className="exchange-error">{error}</p>}
                     </div>
                 )}
 

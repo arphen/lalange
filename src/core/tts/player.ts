@@ -12,6 +12,67 @@ import { useTTSStore } from '../store/tts';
 const MAX_QUEUED_BUFFERS = 10;
 const BUFFER_CLEANUP_BEHIND = 2;
 
+const clamp = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value));
+
+const estimateTokenWeight = (token: string): number => {
+    const normalized = token.trim();
+    if (!normalized) return 1;
+
+    const alphaNumeric = normalized.replace(/^[^a-z0-9]+|[^a-z0-9]+$/gi, '');
+    const lengthBasis = Math.max(alphaNumeric.length, normalized.length * 0.7);
+
+    let weight = 0.65 + Math.min(1.75, lengthBasis / 6);
+
+    if (/[,:;)]$/.test(normalized)) weight += 0.22;
+    if (/[.!?]["'\])}]*$/.test(normalized)) weight += 0.62;
+    if (/[-–—]$/.test(normalized)) weight += 0.18;
+    if (/^[A-Z]{2,}$/.test(alphaNumeric)) weight += 0.14;
+    if (/^\d/.test(alphaNumeric)) weight += 0.12;
+
+    return clamp(weight, 0.45, 3.25);
+};
+
+export const buildWordProgressBoundaries = (sentenceText: string, wordCount: number): number[] => {
+    if (wordCount <= 0) return [];
+
+    const tokens = sentenceText.trim().split(/\s+/).filter(Boolean);
+    const weights: number[] = [];
+
+    for (let index = 0; index < wordCount; index++) {
+        const tokenIndex = tokens.length > 0
+            ? Math.min(tokens.length - 1, Math.floor((index * tokens.length) / wordCount))
+            : -1;
+        const token = tokenIndex >= 0 ? tokens[tokenIndex] : '';
+        weights.push(estimateTokenWeight(token));
+    }
+
+    const totalWeight = weights.reduce((sum, value) => sum + value, 0);
+    if (totalWeight <= 0) {
+        return Array.from({ length: wordCount }, (_, index) => (index + 1) / wordCount);
+    }
+
+    let cumulative = 0;
+    const boundaries = weights.map((weight) => {
+        cumulative += weight / totalWeight;
+        return clamp(cumulative, 0, 1);
+    });
+
+    boundaries[boundaries.length - 1] = 1;
+    return boundaries;
+};
+
+const getWordOffsetForProgress = (progress: number, boundaries: number[]): number => {
+    if (boundaries.length === 0) return 0;
+
+    for (let index = 0; index < boundaries.length; index++) {
+        if (progress <= boundaries[index]) {
+            return index;
+        }
+    }
+
+    return boundaries.length - 1;
+};
+
 export interface AudioPlayerOptions {
     onSentenceChange?: (sentenceIndex: number) => void;
     onWordChange?: (wordIndex: number) => void;
@@ -46,6 +107,7 @@ class TTSAudioPlayer {
     private sentenceStartTime = 0;
     private currentSentenceDuration = 0;
     private currentSentence: SentenceBoundary | null = null;
+    private currentWordProgressBoundaries: number[] = [];
     private rafId: number | null = null;
     
     private async ensureContext(): Promise<AudioContext> {
@@ -228,6 +290,10 @@ class TTSAudioPlayer {
         this.sentenceStartTime = this.audioContext.currentTime;
         this.currentSentenceDuration = duration;
         this.currentSentence = sentence;
+        this.currentWordProgressBoundaries = buildWordProgressBoundaries(
+            sentence.text,
+            sentence.endWordIndex - sentence.startWordIndex + 1,
+        );
         
         // Update store
         useTTSStore.getState().setCurrentTime(0);
@@ -255,6 +321,7 @@ class TTSAudioPlayer {
             
             this.stopWordTracking();
             this.currentSource = null;
+            this.currentWordProgressBoundaries = [];
             
             // Move to next sentence
             this.currentSentenceIndex = sentenceIndex + 1;
@@ -284,7 +351,8 @@ class TTSAudioPlayer {
             }
             
             const elapsed = this.audioContext.currentTime - this.sentenceStartTime;
-            const progress = Math.min(1, elapsed / this.currentSentenceDuration);
+            const safeDuration = this.currentSentenceDuration > 0 ? this.currentSentenceDuration : 0.001;
+            const progress = Math.min(1, elapsed / safeDuration);
             
             // Update time display
             useTTSStore.getState().setCurrentTime(elapsed);
@@ -292,8 +360,12 @@ class TTSAudioPlayer {
             // Calculate current word within sentence
             const sentence = this.currentSentence;
             const wordCount = sentence.endWordIndex - sentence.startWordIndex + 1;
-            const wordOffset = Math.floor(progress * wordCount);
-            const currentWord = sentence.startWordIndex + Math.min(wordOffset, wordCount - 1);
+            const weightedOffset = getWordOffsetForProgress(progress, this.currentWordProgressBoundaries);
+            const fallbackOffset = Math.min(Math.floor(progress * Math.max(wordCount, 1)), Math.max(wordCount - 1, 0));
+            const wordOffset = this.currentWordProgressBoundaries.length === wordCount
+                ? weightedOffset
+                : fallbackOffset;
+            const currentWord = sentence.startWordIndex + wordOffset;
             
             const store = useTTSStore.getState();
             if (store.currentWordIndex !== currentWord) {
@@ -339,6 +411,8 @@ class TTSAudioPlayer {
             }
             this.currentSource = null;
         }
+
+        this.currentWordProgressBoundaries = [];
         
         useTTSStore.getState().setPlaybackState('paused');
     }
@@ -356,6 +430,7 @@ class TTSAudioPlayer {
         this.pause();
         this.currentSentenceIndex = 0;
         this.currentSentence = null;
+        this.currentWordProgressBoundaries = [];
         this.waitingForSentenceIndex = null;
         this.startupBufferTarget = 1;
         useTTSStore.getState().setPlaybackState('idle');

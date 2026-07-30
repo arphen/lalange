@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
     voice: 'af_heart',
     backendPreference: 'auto' as 'auto' | 'wasm' | 'webgpu',
     bufferAhead: 5,
+    setSpeed: vi.fn(),
     setVoice: vi.fn(),
     setGenerating: vi.fn(),
     sentences: [{ index: 0, text: 'Hello world.', startWordIndex: 0, endWordIndex: 1 }],
@@ -30,7 +31,7 @@ vi.mock('../../core/store/tts', () => ({
             bufferAhead: mocks.bufferAhead,
             currentWordIndex: 0,
             setVolume: vi.fn(),
-            setSpeed: vi.fn(),
+            setSpeed: mocks.setSpeed,
             setVoice: mocks.setVoice,
         }),
         { getState: () => ({ setGenerating: mocks.setGenerating, setPlaybackState: vi.fn(), setCurrentWordIndex: vi.fn() }) },
@@ -71,6 +72,7 @@ describe('TTSPlayer voice changes', () => {
         mocks.backendPreference = 'auto';
         mocks.bufferAhead = 5;
         mocks.sentences = [{ index: 0, text: 'Hello world.', startWordIndex: 0, endWordIndex: 1 }];
+        mocks.setSpeed.mockReset();
         vi.clearAllMocks();
     });
 
@@ -147,6 +149,14 @@ describe('TTSPlayer voice changes', () => {
         act(() => options?.onWordChange?.(1));
 
         expect(onPositionChange).toHaveBeenCalledWith(1);
+    });
+
+    it('exposes and applies the full speed range including 0.5x', () => {
+        const { getByText } = render(<TTSPlayer words={['Hello', 'world.']} currentWordIndex={0} />);
+
+        fireEvent.click(getByText('0.5x'));
+
+        expect(mocks.setSpeed).toHaveBeenCalledWith(0.5);
     });
 
     it('repairs a legacy foreign voice and clears its queued audio', async () => {

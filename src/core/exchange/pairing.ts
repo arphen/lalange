@@ -118,7 +118,11 @@ export async function encodePairingSignal(signal: PairingSignal): Promise<string
 }
 
 export async function decodePairingSignal(code: string): Promise<PairingSignal> {
-    const match = code.trim().match(/^xchg1\.(g|j)\.([A-Za-z0-9_-]+)$/);
+    const normalizedCode = code.trim();
+    if (/^[A-Z0-9]{6}$/i.test(normalizedCode)) {
+        throw new Error('This is the verification code, not the full device exchange code. Copy the full answer code from the other device.');
+    }
+    const match = normalizedCode.match(/^xchg1\.(g|j)\.([A-Za-z0-9_-]+)$/);
     if (!match) throw new Error('This is not a valid device exchange code.');
     const json = await decompress(base64UrlToBytes(match[2]), match[1] === 'g');
     const signal = JSON.parse(new TextDecoder().decode(json)) as PairingSignal;

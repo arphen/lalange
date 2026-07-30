@@ -8,6 +8,7 @@ import { useSettingsStore } from '../store/settings';
 import { generateUUID } from '../../utils/uuid';
 import { scheduler } from './scheduler';
 import { analyzeDensityRange, chunkText } from './analysis';
+import { buildEpubStructurePlan, loadPlannedChapterSources } from './structure';
 
 // Job control
 const activeJobs = new Set<string>();
@@ -40,33 +41,13 @@ export const initialIngest = async (file: File, onProgress?: (msg: string) => vo
     // 1. (Skipped) Health Check - We don't block ingestion on AI readiness anymore.
     // The AI is only needed for background processing (summaries/density).
     
-    // 2. Find OPF to get metadata and spine
-    const opfFile = Object.keys(zip.files).find(path => path.endsWith('.opf'));
-    if (!opfFile) throw new Error('Invalid EPUB: No OPF file found');
-    console.log(`[Pipeline] Found OPF file: ${opfFile}`);
-
-    const opfContent = await zip.file(opfFile)!.async('string');
-    const $opf = cheerio.load(opfContent, { xmlMode: true });
-
-    // Metadata
-    const title = $opf('dc\\:title').text() || file.name.replace('.epub', '');
-    const author = $opf('dc\\:creator').text() || 'Unknown';
+    // 2. Resolve metadata + normalized chapter structure
+    const structure = await buildEpubStructurePlan(zip);
+    const title = structure.title || file.name.replace('.epub', '');
+    const author = structure.author || 'Unknown';
     console.log(`[Pipeline] Metadata parsed: Title="${title}", Author="${author}"`);
-
-    // Spine
-    const spineIds: string[] = [];
-    $opf('itemref').each((_, el) => {
-        spineIds.push($opf(el).attr('idref')!);
-    });
-    console.log(`[Pipeline] Spine contains ${spineIds.length} items.`);
-
-    // Manifest (ID -> Href)
-    const manifest: Record<string, string> = {};
-    $opf('item').each((_, el) => {
-        const id = $opf(el).attr('id')!;
-        const href = $opf(el).attr('href')!;
-        manifest[id] = href;
-    });
+    console.log(`[Pipeline] Spine contains ${structure.spine.length} linear items.`);
+    console.log(`[Pipeline] Planned chapter count: ${structure.chapters.length}`);
 
     // 3. Extract Images
     onProgress?.('Extracting images...');
@@ -91,9 +72,10 @@ export const initialIngest = async (file: File, onProgress?: (msg: string) => vo
 
     // Cover
     let coverBase64 = '';
-    const coverMeta = $opf('meta[name="cover"]').attr('content');
-    if (coverMeta && manifest[coverMeta]) {
-        const coverHref = manifest[coverMeta];
+    const coverHref = structure.coverManifestId
+        ? structure.manifest[structure.coverManifestId]?.href
+        : undefined;
+    if (coverHref) {
         const coverFilename = coverHref.split('/').pop();
         const coverImg = images.find(img => img.filename === coverFilename);
         if (coverImg) {
@@ -103,21 +85,15 @@ export const initialIngest = async (file: File, onProgress?: (msg: string) => vo
 
     // 4. Create Placeholder Chapters
     const chapters: ChapterDocType[] = [];
-    let chapterIndex = 0;
-
-    for (const idref of spineIds) {
-        const href = manifest[idref];
-        if (!href) continue;
-
+    for (const [chapterIndex, plannedChapter] of structure.chapters.entries()) {
         chapters.push({
             id: `${bookId}_${chapterIndex}`,
             bookId,
             index: chapterIndex,
-            title: `Chapter ${chapterIndex + 1}`,
+            title: plannedChapter.title,
             status: 'pending',
             content: []
         });
-        chapterIndex++;
     }
 
     // 5. Prepare Raw File
@@ -171,33 +147,10 @@ export const processChaptersInBackground = async (bookId: string) => {
 
         const zip = await JSZip.loadAsync(uint8Array);
 
-        // Re-parse OPF to get spine/manifest
-        const opfFile = Object.keys(zip.files).find(path => path.endsWith('.opf'));
-        if (!opfFile) return;
-
-        const opfContent = await zip.file(opfFile)!.async('string');
-        const $opf = cheerio.load(opfContent, { xmlMode: true });
-
-        const spineIds: string[] = [];
-        $opf('itemref').each((_, el) => {
-            spineIds.push($opf(el).attr('idref')!);
-        });
-
-        const manifest: Record<string, string> = {};
-        $opf('item').each((_, el) => {
-            const id = $opf(el).attr('id')!;
-            const href = $opf(el).attr('href')!;
-            manifest[id] = href;
-        });
-
-        const opfDir = opfFile.includes('/') ? opfFile.substring(0, opfFile.lastIndexOf('/') + 1) : '';
+        const structure = await buildEpubStructurePlan(zip);
 
         let firstContentChapterFound = false;
-        let chapterIndex = 0;
-        for (const idref of spineIds) {
-            const href = manifest[idref];
-            if (!href) continue;
-
+        for (const [chapterIndex, plannedChapter] of structure.chapters.entries()) {
             const chapterId = `${bookId}_${chapterIndex}`;
             const chapterDoc = await db.chapters.findOne(chapterId).exec();
 
@@ -209,47 +162,42 @@ export const processChaptersInBackground = async (bookId: string) => {
 
             // Resume if pending, processing (crashed), or error
             if (chapterDoc && (chapterDoc.status === 'pending' || chapterDoc.status === 'processing' || chapterDoc.status === 'error')) {
-                console.log(`[Pipeline] Processing chapter ${chapterIndex + 1}/${spineIds.length}: ${chapterId}`);
+                console.log(`[Pipeline] Processing chapter ${chapterIndex + 1}/${structure.chapters.length}: ${chapterId}`);
                 // Capture the updated document instance to avoid conflict
                 const currentDoc = await chapterDoc.patch({ status: 'processing', progress: 0 });
 
                 try {
-                    const fullPath = opfDir + href;
-                    let fileInZip = zip.file(fullPath);
-                    if (!fileInZip) {
-                        const filename = href.split('/').pop();
-                        const foundPath = Object.keys(zip.files).find(p => p.endsWith(filename!));
-                        if (foundPath) fileInZip = zip.file(foundPath);
-                    }
+                    const chapterSources = await loadPlannedChapterSources(zip, plannedChapter.slices);
 
-                    if (fileInZip) {
-                        const htmlContent = await fileInZip.async('string');
+                    if (chapterSources.length > 0) {
                         const settings = useSettingsStore.getState();
                         const referenceHandling = settings.footnoteSuppressor ? 'suppress' : 'compact';
-                        
-                        // Step 1: Clean HTML at DOM level (remove boilerplate elements, page numbers)
-                        const cleanedHtml = cleanHtmlBeforeExtraction(htmlContent, { referenceHandling });
-                        const $ = cheerio.load(cleanedHtml);
 
-                        // Extract Title if possible (h1)
-                        const extractedTitle = $('h1').first().text().trim();
-                        if (extractedTitle) {
-                            console.log(`[Pipeline] Extracted title: "${extractedTitle}"`);
+                        const htmlContent = chapterSources
+                            .map(source => source.html)
+                            .filter(html => html.trim().length > 0)
+                            .join('\n\n');
+
+                        let extractedTitle = plannedChapter.title;
+                        if (htmlContent.trim()) {
+                            const cleanedHtml = cleanHtmlBeforeExtraction(htmlContent, { referenceHandling });
+                            const $cleaned = cheerio.load(cleanedHtml);
+                            const headingTitle = $cleaned('h1, h2').first().text().trim();
+                            if (headingTitle) {
+                                extractedTitle = headingTitle;
+                                console.log(`[Pipeline] Extracted title: "${headingTitle}"`);
+                            }
                         }
 
-                        // Remove images to avoid artifacts
-                        $('img').remove();
-
-                        let rawText = '';
-                        $('p, h1, h2, h3, h4, h5, h6, div, li, blockquote').each((_, el) => {
-                            rawText += $(el).text().trim() + '\n\n';
-                        });
-                        if (!rawText.trim()) rawText = $('body').text();
+                        let rawText = chapterSources
+                            .map(source => source.text)
+                            .filter(text => text.trim().length > 0)
+                            .join('\n\n');
 
                         // Step 2: Classify chapter (license, TOC, cover, content, etc.)
                         const classification = classifyChapter(
                             rawText,
-                            htmlContent,
+                            htmlContent || undefined,
                             extractedTitle,
                             chapterIndex
                         );
@@ -265,7 +213,7 @@ export const processChaptersInBackground = async (bookId: string) => {
                                 await latestDoc.incrementalPatch({
                                     status: 'ready',
                                     content: [], // Empty content = skipped
-                                    title: extractedTitle || `${classification.type.charAt(0).toUpperCase() + classification.type.slice(1)}`,
+                                    title: extractedTitle || plannedChapter.title || `${classification.type.charAt(0).toUpperCase() + classification.type.slice(1)}`,
                                     progress: 100,
                                     // Store classification metadata for potential UI display
                                     metadata: {
@@ -276,7 +224,6 @@ export const processChaptersInBackground = async (bookId: string) => {
                                     }
                                 });
                             }
-                            chapterIndex++;
                             continue;
                         }
 
@@ -411,7 +358,7 @@ export const processChaptersInBackground = async (bookId: string) => {
                                 content: [...allWords],
                                 densities: [...allDensities],
                                 subchapters,
-                                title: extractedTitle || finalDoc.title,
+                                title: extractedTitle || plannedChapter.title || finalDoc.title,
                                 progress: 100
                             });
                         }
@@ -433,7 +380,6 @@ export const processChaptersInBackground = async (bookId: string) => {
                     if (latestDoc) await latestDoc.incrementalPatch({ status: 'error' });
                 }
             }
-            chapterIndex++;
         }
         
         // Schedule global summaries for the entire book
