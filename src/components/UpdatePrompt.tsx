@@ -1,5 +1,11 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { SW_UPDATE_CHECK_INTERVAL_MS } from './updatePrompt.logic';
+import {
+    beginUpdateCatchUp,
+    clearUpdateCatchUp,
+    isUpdateCatchUpActive,
+    SW_UPDATE_CHECK_INTERVAL_MS,
+    waitForServiceWorkerInstall,
+} from './updatePrompt.logic';
 
 // Type for the registerSW function from vite-plugin-pwa
 type RegisterSWOptions = {
@@ -24,6 +30,8 @@ export const UpdatePrompt: React.FC = () => {
     const [updateFn, setUpdateFn] = useState<((reload?: boolean) => Promise<void>) | null>(null);
     const [isUpdating, setIsUpdating] = useState(false);
     const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const autoActivatingRef = useRef(false);
+    const registrationRef = useRef<ServiceWorkerRegistration | null>(null);
     
     useEffect(() => {
         // Only run in production (PWA is disabled in dev - see vite.config.ts)
@@ -41,10 +49,27 @@ export const UpdatePrompt: React.FC = () => {
                 const updateSW = registerSW({
                     immediate: true, // Check for updates immediately on load
                     onNeedRefresh() {
-                        // New content available, show the prompt
+                        setUpdateFn(() => updateSW);
+
+                        if (isUpdateCatchUpActive(window.localStorage)) {
+                            if (autoActivatingRef.current) return;
+
+                            autoActivatingRef.current = true;
+                            setShowPrompt(false);
+                            setIsUpdating(true);
+                            console.log('[SW] Activating queued update from prior user consent...');
+                            void updateSW(true).catch((error: unknown) => {
+                                console.error('[SW] Queued update failed:', error);
+                                clearUpdateCatchUp(window.localStorage);
+                                autoActivatingRef.current = false;
+                                setIsUpdating(false);
+                                setShowPrompt(true);
+                            });
+                            return;
+                        }
+
                         console.log('[SW] New content available, showing update prompt');
                         setShowPrompt(true);
-                        setUpdateFn(() => updateSW);
                     },
                     onOfflineReady() {
                         console.log('[SW] App ready for offline use');
@@ -52,6 +77,8 @@ export const UpdatePrompt: React.FC = () => {
                     onRegisteredSW(swUrl: string, registration: ServiceWorkerRegistration | undefined) {
                         console.log('[SW] Registered:', swUrl);
                         if (registration) {
+                            registrationRef.current = registration;
+
                             // Poll less aggressively to reduce background churn.
                             intervalRef.current = setInterval(() => {
                                 console.log('[SW] Checking for updates...');
@@ -59,7 +86,13 @@ export const UpdatePrompt: React.FC = () => {
                             }, SW_UPDATE_CHECK_INTERVAL_MS);
                             
                             // Also check immediately
-                            registration.update().catch(console.error);
+                            registration.update()
+                                .then(() => {
+                                    if (!registration.waiting && !registration.installing) {
+                                        clearUpdateCatchUp(window.localStorage);
+                                    }
+                                })
+                                .catch(console.error);
                         }
                     },
                     onRegisterError(error: Error) {
@@ -85,9 +118,21 @@ export const UpdatePrompt: React.FC = () => {
 
     const handleUpdate = useCallback(async () => {
         setIsUpdating(true);
+        setShowPrompt(false);
+        autoActivatingRef.current = true;
+        beginUpdateCatchUp(window.localStorage);
         
         try {
             if (updateFn) {
+                const registration = registrationRef.current;
+                if (registration) {
+                    console.log('[SW] Checking for a newer queued worker...');
+                    await registration.update();
+                    if (registration.installing) {
+                        await waitForServiceWorkerInstall(registration.installing);
+                    }
+                }
+
                 console.log('[SW] Activating update and reloading...');
                 await updateFn(true);
             } else {
@@ -97,8 +142,9 @@ export const UpdatePrompt: React.FC = () => {
             }
         } catch (error) {
             console.error('[SW] Update failed:', error);
-            // Fallback: reload anyway
-            window.location.reload();
+            clearUpdateCatchUp(window.localStorage);
+            autoActivatingRef.current = false;
+            setShowPrompt(true);
         } finally {
             // Reset state in case the browser blocks the reload.
             setIsUpdating(false);
