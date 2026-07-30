@@ -7,8 +7,15 @@
   X-Frame-Options: DENY
   Permissions-Policy: accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()
 
-# Cache static assets aggressively
-/*.js
+# The service worker URL is stable and must be revalidated on every update check.
+/sw.js
+  Cache-Control: no-cache, no-store, must-revalidate
+
+# Cache hashed static assets aggressively
+/assets/*.js
+  Cache-Control: public, max-age=31536000, immutable
+
+/workbox-*.js
   Cache-Control: public, max-age=31536000, immutable
 
 /*.css
