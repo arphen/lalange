@@ -10,8 +10,7 @@ describe('Cloudflare Pages headers', () => {
         expect(headers).not.toMatch(/^\/\*\.js$/m);
     });
 
-    it('keeps content-hashed JavaScript immutable', () => {
-        expect(headers).toMatch(/\/assets\/\*\.js\n\s+Cache-Control: public, max-age=31536000, immutable/);
-        expect(headers).toMatch(/\/workbox-\*\.js\n\s+Cache-Control: public, max-age=31536000, immutable/);
+    it('does not pin SPA fallbacks under asset URLs', () => {
+        expect(headers).not.toMatch(/^\s+Cache-Control:.*\bimmutable\b/m);
     });
 });
