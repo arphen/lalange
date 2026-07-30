@@ -4,6 +4,7 @@ import {
     canCheckForServiceWorkerUpdate,
     clearUpdateCatchUp,
     hasInstalledServiceWorker,
+    hasWaitingServiceWorker,
     isUpdateCatchUpActive,
     SW_UPDATE_CATCH_UP_TTL_MS,
     SW_UPDATE_CHECK_INTERVAL_MS,
@@ -53,6 +54,12 @@ describe('updatePrompt.logic', () => {
             active: {} as ServiceWorker,
             installing: null,
         })).toBe(true);
+    });
+
+    it('requires a waiting worker before treating a refresh signal as actionable', () => {
+        expect(hasWaitingServiceWorker(undefined)).toBe(false);
+        expect(hasWaitingServiceWorker({ waiting: null })).toBe(false);
+        expect(hasWaitingServiceWorker({ waiting: {} as ServiceWorker })).toBe(true);
     });
 
     it('keeps update consent active only for the bounded catch-up window', () => {

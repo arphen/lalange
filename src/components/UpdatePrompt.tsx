@@ -4,6 +4,7 @@ import {
     canCheckForServiceWorkerUpdate,
     clearUpdateCatchUp,
     hasInstalledServiceWorker,
+    hasWaitingServiceWorker,
     isUpdateCatchUpActive,
     SW_UPDATE_CHECK_INTERVAL_MS,
     waitForServiceWorkerInstall,
@@ -56,35 +57,51 @@ export const UpdatePrompt: React.FC = () => {
                     onNeedRefresh() {
                         setUpdateFn(() => updateSW);
 
-                        if (!hadServiceWorkerAtLoad) {
-                            console.log('[SW] Completing first installation without an update prompt');
-                            clearUpdateCatchUp(window.localStorage);
-                            setShowPrompt(false);
-                            void updateSW(false).catch((error: unknown) => {
-                                console.error('[SW] First installation activation failed:', error);
-                            });
-                            return;
-                        }
+                        void (async () => {
+                            const registration = registrationRef.current
+                                ?? await navigator.serviceWorker.getRegistration();
 
-                        if (isUpdateCatchUpActive(window.localStorage)) {
-                            if (autoActivatingRef.current) return;
-
-                            autoActivatingRef.current = true;
-                            setShowPrompt(false);
-                            setIsUpdating(true);
-                            console.log('[SW] Activating queued update from prior user consent...');
-                            void updateSW(true).catch((error: unknown) => {
-                                console.error('[SW] Queued update failed:', error);
+                            if (!hasWaitingServiceWorker(registration)) {
+                                console.log('[SW] Ignoring refresh signal without a waiting worker');
                                 clearUpdateCatchUp(window.localStorage);
                                 autoActivatingRef.current = false;
                                 setIsUpdating(false);
-                                setShowPrompt(true);
-                            });
-                            return;
-                        }
+                                setShowPrompt(false);
+                                return;
+                            }
 
-                        console.log('[SW] New content available, showing update prompt');
-                        setShowPrompt(true);
+                            if (!hadServiceWorkerAtLoad) {
+                                console.log('[SW] Completing first installation without an update prompt');
+                                clearUpdateCatchUp(window.localStorage);
+                                setShowPrompt(false);
+                                await updateSW(false);
+                                return;
+                            }
+
+                            if (isUpdateCatchUpActive(window.localStorage)) {
+                                if (autoActivatingRef.current) return;
+
+                                autoActivatingRef.current = true;
+                                setShowPrompt(false);
+                                setIsUpdating(true);
+                                console.log('[SW] Activating queued update from prior user consent...');
+                                try {
+                                    await updateSW(true);
+                                } catch (error) {
+                                    console.error('[SW] Queued update failed:', error);
+                                    clearUpdateCatchUp(window.localStorage);
+                                    autoActivatingRef.current = false;
+                                    setIsUpdating(false);
+                                    setShowPrompt(true);
+                                }
+                                return;
+                            }
+
+                            console.log('[SW] New content available, showing update prompt');
+                            setShowPrompt(true);
+                        })().catch((error: unknown) => {
+                            console.error('[SW] Refresh signal handling failed:', error);
+                        });
                     },
                     onOfflineReady() {
                         console.log('[SW] App ready for offline use');

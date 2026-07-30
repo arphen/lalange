@@ -18,6 +18,10 @@ export const hasInstalledServiceWorker = (
     registration: ExistingRegistration | undefined,
 ): boolean => Boolean(registration?.active || registration?.waiting);
 
+export const hasWaitingServiceWorker = (
+    registration: Pick<ServiceWorkerRegistration, 'waiting'> | undefined,
+): boolean => Boolean(registration?.waiting);
+
 export const canCheckForServiceWorkerUpdate = (
     registration: Pick<ServiceWorkerRegistration, 'active' | 'installing'>,
 ): boolean => Boolean(registration.active && !registration.installing);
