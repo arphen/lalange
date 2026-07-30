@@ -14,6 +14,7 @@ import {
     listVoices,
     getVoice,
     resolveVoiceId,
+    isIOSRuntime,
     resolveTTSRuntimeConfig,
     getTTSAudioValidationError,
     VOICES,
@@ -281,7 +282,7 @@ describe('Voice utilities', () => {
 
 describe('resolveTTSRuntimeConfig', () => {
     it('uses fp32 with an auto-selected WebGPU backend', () => {
-        const runtime = resolveTTSRuntimeConfig(undefined, 'webgpu');
+        const runtime = resolveTTSRuntimeConfig(undefined, 'webgpu', false);
         expect(runtime).toEqual({
             dtype: 'fp32',
             device: 'webgpu',
@@ -289,11 +290,51 @@ describe('resolveTTSRuntimeConfig', () => {
     });
 
     it('keeps explicit backend requests while forcing fp32', () => {
-        const runtime = resolveTTSRuntimeConfig('wasm', 'webgpu');
+        const runtime = resolveTTSRuntimeConfig('wasm', 'webgpu', false);
         expect(runtime).toEqual({
             dtype: 'fp32',
             device: 'wasm',
         });
+    });
+
+    it('uses the lower-memory q8 WASM runtime on iOS', () => {
+        expect(resolveTTSRuntimeConfig(undefined, 'wasm', true)).toEqual({
+            dtype: 'q8',
+            device: 'wasm',
+        });
+    });
+
+    it('does not let an explicit WebGPU preference bypass the iOS memory guard', () => {
+        expect(resolveTTSRuntimeConfig('webgpu', 'webgpu', true)).toEqual({
+            dtype: 'q8',
+            device: 'wasm',
+        });
+    });
+});
+
+describe('isIOSRuntime', () => {
+    it('detects an iPhone user agent', () => {
+        expect(isIOSRuntime(
+            'Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X)',
+            'iPhone',
+            5,
+        )).toBe(true);
+    });
+
+    it('detects iPadOS desktop browsing mode', () => {
+        expect(isIOSRuntime(
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15)',
+            'MacIntel',
+            5,
+        )).toBe(true);
+    });
+
+    it('does not classify a Mac as iOS', () => {
+        expect(isIOSRuntime(
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15)',
+            'MacIntel',
+            0,
+        )).toBe(false);
     });
 });
 

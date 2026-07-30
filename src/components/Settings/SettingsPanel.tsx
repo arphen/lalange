@@ -688,16 +688,16 @@ const TTSSettings: React.FC = () => {
     const refreshCacheStatus = React.useCallback(async () => {
         setIsCheckingCache(true);
         try {
-            setIsModelCached(await isTTSModelCached());
+            setIsModelCached(await isTTSModelCached(selectedDevice));
         } finally {
             setIsCheckingCache(false);
         }
-    }, []);
+    }, [selectedDevice]);
 
     useEffect(() => {
         let cancelled = false;
 
-        void isTTSModelCached()
+        void isTTSModelCached(selectedDevice)
             .then((cached) => {
                 if (!cancelled) setIsModelCached(cached);
             })
@@ -708,7 +708,7 @@ const TTSSettings: React.FC = () => {
         return () => {
             cancelled = true;
         };
-    }, []);
+    }, [selectedDevice]);
     
     const handleDownloadModel = async () => {
         setIsDownloading(true);
@@ -759,10 +759,10 @@ const TTSSettings: React.FC = () => {
                 </p>
                 <ul className="space-y-2 text-xs text-gray-500 font-mono border-l-2 border-purple-500/30 pl-4 py-2">
                     <li>
-                        <strong className="text-gray-300">Model:</strong> FP32 · ~326 MB
+                        <strong className="text-gray-300">Model:</strong> FP32 on desktop · Q8 on iPhone/iPad
                     </li>
                     <li>
-                        <strong className="text-gray-300">Works on iPhone:</strong> Yes, iOS 17+ Safari with WebGPU
+                        <strong className="text-gray-300">Mobile download:</strong> ~92 MB
                     </li>
                     <li>
                         <strong className="text-gray-300">Generation:</strong> Runs locally; speed varies by browser, backend, and hardware
@@ -783,8 +783,8 @@ const TTSSettings: React.FC = () => {
                                     : isCheckingCache
                                         ? 'Checking browser cache...'
                                         : isModelCached
-                                            ? 'FP32 model cached locally · not loaded in memory'
-                                            : 'FP32 model not cached · first load requires download'}
+                                            ? 'Compatible model cached locally · not loaded in memory'
+                                            : 'Compatible model not cached · first load requires download'}
                         </p>
                     </div>
                     <div className="flex gap-2">
@@ -937,7 +937,7 @@ const TTSSettings: React.FC = () => {
                             ))}
                         </div>
                         <p className="text-xs text-gray-500 italic">
-                            FP32 is always used. WebGPU is fastest; WASM is the compatibility backend.
+                            Desktop uses FP32. iPhone and iPad use lower-memory Q8 on WASM.
                         </p>
                     </div>
 

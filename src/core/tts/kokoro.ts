@@ -6,7 +6,8 @@
  * 
  * Model: onnx-community/Kokoro-82M-v1.0-ONNX
  * - 82M parameters, frontier quality for size
- * - fp32 weights: ~326MB download
+ * - fp32 weights on desktop: ~326MB download
+ * - q8 weights on iOS: ~92MB download
  * - 24kHz mono audio output
  * - Generation speed depends on model, backend, browser, and hardware
  */
@@ -35,7 +36,7 @@ let TextSplitterStream: typeof import('kokoro-js').TextSplitterStream | null = n
 
 // Singleton instance
 let ttsInstance: InstanceType<typeof import('kokoro-js').KokoroTTS> | null = null;
-let currentLoadedConfig: { dtype: 'fp32'; device: TTSDevice } | null = null;
+let currentLoadedConfig: TTSRuntimeConfig | null = null;
 let ttsInitPromise: Promise<void> | null = null;
 let ttsInitConfigKey: string | null = null;
 let ttsLifecycleGeneration = 0;
@@ -44,13 +45,17 @@ let ttsLifecycleGeneration = 0;
 export const TTS_MODEL_ID = 'onnx-community/Kokoro-82M-v1.0-ONNX';
 
 export type TTSDevice = 'wasm' | 'webgpu';
+export type TTSDtype = 'fp32' | 'q8';
 
 export interface TTSRuntimeConfig {
-    dtype: 'fp32';
+    dtype: TTSDtype;
     device: TTSDevice;
 }
 
-const TTS_MODEL_FILENAME = 'model.onnx';
+const TTS_MODEL_FILENAMES: Record<TTSDtype, string> = {
+    fp32: 'model.onnx',
+    q8: 'model_quantized.onnx',
+};
 
 // Voice definitions with metadata
 export interface VoiceInfo {
@@ -111,12 +116,33 @@ export async function getOptimalDevice(): Promise<TTSDevice> {
 }
 
 /**
- * Resolve the backend while keeping fp32 as the only supported model format.
+ * Detect Apple mobile runtimes, including iPadOS when it requests desktop sites.
+ */
+export function isIOSRuntime(
+    userAgent = typeof navigator === 'undefined' ? '' : navigator.userAgent,
+    platform = typeof navigator === 'undefined' ? '' : navigator.platform,
+    maxTouchPoints = typeof navigator === 'undefined' ? 0 : navigator.maxTouchPoints,
+): boolean {
+    return /iPad|iPhone|iPod/i.test(userAgent)
+        || (platform === 'MacIntel' && maxTouchPoints > 1);
+}
+
+/**
+ * Keep maximum-quality fp32 on desktop. iOS uses q8 on WASM because creating
+ * the fp32 ONNX session exceeds WebKit's practical process memory limit.
  */
 export function resolveTTSRuntimeConfig(
     requestedDevice: TTSDevice | undefined,
     detectedDevice: TTSDevice,
+    iosRuntime = isIOSRuntime(),
 ): TTSRuntimeConfig {
+    if (iosRuntime) {
+        return {
+            dtype: 'q8',
+            device: 'wasm',
+        };
+    }
+
     return {
         dtype: 'fp32',
         device: requestedDevice ?? detectedDevice,
@@ -221,7 +247,7 @@ export async function initTTS(
             }
 
             ttsInstance = loadedInstance;
-            currentLoadedConfig = { dtype: 'fp32', device: runtimeConfig.device };
+            currentLoadedConfig = runtimeConfig;
             const readyStatus = `Ready · ${runtimeConfig.dtype.toUpperCase()} / ${runtimeConfig.device.toUpperCase()}`;
             store.setReady(true);
             store.setProgress(1, readyStatus);
@@ -261,8 +287,11 @@ export async function unloadTTS(): Promise<void> {
  * Check whether the selected model weights are present in browser Cache Storage.
  * This is distinct from `isTTSReady()`, which only describes the in-memory model.
  */
-export async function isTTSModelCached(): Promise<boolean> {
-    const modelUrl = `https://huggingface.co/${TTS_MODEL_ID}/resolve/main/onnx/${TTS_MODEL_FILENAME}`;
+export async function isTTSModelCached(device?: TTSDevice): Promise<boolean> {
+    const detectedDevice = device ?? await getOptimalDevice();
+    const runtimeConfig = resolveTTSRuntimeConfig(device, detectedDevice);
+    const modelFilename = TTS_MODEL_FILENAMES[runtimeConfig.dtype];
+    const modelUrl = `https://huggingface.co/${TTS_MODEL_ID}/resolve/main/onnx/${modelFilename}`;
     return isTransformersFileCached(modelUrl);
 }
 
@@ -370,7 +399,7 @@ async function generateValidatedAudio(
             : 'unknown runtime';
 
         if (currentLoadedConfig?.device === 'wasm') {
-            throw new Error(`TTS generated invalid fp32 audio on WASM: ${validationError}`);
+            throw new Error(`TTS generated invalid ${currentLoadedConfig.dtype} audio on WASM: ${validationError}`);
         }
 
         console.error(`[TTS] Rejected invalid ${failedConfig} output: ${validationError}. Retrying fp32 on WASM.`);
