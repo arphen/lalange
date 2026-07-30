@@ -11,6 +11,10 @@
 /sw.js
   Cache-Control: no-cache, no-store, must-revalidate
 
+# The update prompt identity must advance with the service worker generation.
+/version.json
+  Cache-Control: no-cache, no-store, must-revalidate
+
 # Do not apply immutable wildcard rules to assets. Cloudflare Pages can serve
 # the SPA fallback for a missing asset during deployment propagation, and that
 # HTML response must never be pinned under a JavaScript or stylesheet URL.
