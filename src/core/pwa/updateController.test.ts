@@ -9,6 +9,8 @@ import {
     type UpdateWorkerContainer,
 } from './updateController';
 
+const LEGACY_UPDATE_STORAGE_KEY = 'arphen:sw-update-catch-up-until';
+
 class FakeWorker extends EventTarget implements UpdateWorker {
     state: ServiceWorkerState;
     readonly messages: unknown[] = [];
@@ -43,12 +45,6 @@ class FakeRegistration extends EventTarget implements UpdateRegistration {
     discover(worker: FakeWorker): void {
         this.installing = worker;
         this.dispatchEvent(new Event('updatefound'));
-    }
-
-    finishInstalling(worker: FakeWorker): void {
-        this.installing = null;
-        this.waiting = worker;
-        worker.transitionTo('installed');
     }
 }
 
@@ -87,7 +83,12 @@ const createStorage = (): UpdateStorage => {
     };
 };
 
-const createHarness = (controlled = true, storage = createStorage()) => {
+const createHarness = (
+    controlled = true,
+    storage = createStorage(),
+    proposedHash = 'abcdef1',
+    getDeploymentMetadata = async () => ({ hash: proposedHash }),
+) => {
     const registration = new FakeRegistration();
     const container = new FakeWorkerContainer(registration);
     if (!controlled) {
@@ -98,6 +99,8 @@ const createHarness = (controlled = true, storage = createStorage()) => {
     const dependencies: UpdateControllerDependencies = {
         serviceWorker: container,
         storage,
+        currentHash: '8f0573a',
+        getDeploymentMetadata,
         now: () => Date.now(),
         reload: () => {
             reloads += 1;
@@ -118,6 +121,23 @@ const createHarness = (controlled = true, storage = createStorage()) => {
     };
 };
 
+const installAndTakeControl = (
+    harness: ReturnType<typeof createHarness>,
+    dispatchControllerChange = true,
+): FakeWorker => {
+    const worker = new FakeWorker('installing');
+    harness.registration.discover(worker);
+    harness.registration.installing = null;
+    harness.registration.waiting = null;
+    harness.registration.active = worker;
+    harness.container.controller = worker;
+    worker.transitionTo('activated');
+    if (dispatchControllerChange) {
+        harness.container.dispatchEvent(new Event('controllerchange'));
+    }
+    return worker;
+};
+
 afterEach(() => {
     vi.useRealTimers();
 });
@@ -134,128 +154,134 @@ describe('ServiceWorkerUpdateController', () => {
         harness.controller.dispose();
     });
 
-    it('offers a real waiting worker without activating it before consent', async () => {
-        const harness = createHarness();
-        const waiting = new FakeWorker('installed');
-        harness.registration.waiting = waiting;
-
-        await harness.controller.start();
-
-        expect(harness.controller.getSnapshot().status).toBe('available');
-        expect(waiting.messages).toEqual([]);
-        harness.controller.dispose();
-    });
-
-    it('checks for the newest worker, activates it, and reloads once control changes', async () => {
-        const harness = createHarness();
-        const waiting = new FakeWorker('installed');
-        harness.registration.waiting = waiting;
-        await harness.controller.start();
-
-        await harness.controller.applyUpdate();
-        harness.container.changeController(waiting);
-        harness.container.changeController(waiting);
-
-        expect(waiting.messages).toEqual([{ type: 'SKIP_WAITING' }]);
-        expect(harness.registration.updateCalls).toBe(2);
-        expect(harness.reloadCount()).toBe(1);
-        harness.controller.dispose();
-    });
-
-    it('auto-activates a worker that appears after update() already resolved', async () => {
-        const harness = createHarness();
-        harness.storage.setItem(UPDATE_SESSION_STORAGE_KEY, JSON.stringify({
+    it('clears obsolete retry state from an existing installation', async () => {
+        const storage = createStorage();
+        storage.setItem(UPDATE_SESSION_STORAGE_KEY, JSON.stringify({
             expiresAt: Date.now() + 60_000,
-            attempts: 0,
+            attempts: 3,
         }));
+        storage.setItem(LEGACY_UPDATE_STORAGE_KEY, String(Date.now() + 60_000));
+        const harness = createHarness(true, storage);
+        const waiting = new FakeWorker('installed');
+        harness.registration.waiting = waiting;
+
         await harness.controller.start();
-        const delayedWorker = new FakeWorker('installing');
 
-        harness.registration.discover(delayedWorker);
-        harness.registration.finishInstalling(delayedWorker);
-
-        expect(delayedWorker.messages).toEqual([{ type: 'SKIP_WAITING' }]);
-        expect(harness.controller.getSnapshot().status).toBe('applying');
+        expect(storage.getItem(UPDATE_SESSION_STORAGE_KEY)).toBeNull();
+        expect(storage.getItem(LEGACY_UPDATE_STORAGE_KEY)).toBeNull();
+        expect(waiting.messages).toEqual([]);
+        expect(harness.controller.getSnapshot().status).toBe('idle');
         harness.controller.dispose();
     });
 
-    it('still activates an existing waiting worker when the network update check fails', async () => {
+    it('never reloads merely because an old worker remains waiting', async () => {
+        vi.useFakeTimers();
         const harness = createHarness();
         const waiting = new FakeWorker('installed');
         harness.registration.waiting = waiting;
-        await harness.controller.start();
-        harness.registration.updateImplementation = async () => {
-            throw new Error('offline');
-        };
 
+        await harness.controller.start();
         await harness.controller.applyUpdate();
+        await vi.advanceTimersByTimeAsync(60_000);
 
-        expect(waiting.messages).toEqual([{ type: 'SKIP_WAITING' }]);
-        expect(harness.controller.getSnapshot().status).toBe('applying');
-        harness.controller.dispose();
-    });
-
-    it('activates within the page when persistent storage is unavailable', async () => {
-        const unavailableStorage: UpdateStorage = {
-            getItem: () => null,
-            setItem: () => {
-                throw new Error('storage denied');
-            },
-            removeItem: () => {
-                throw new Error('storage denied');
-            },
-        };
-        const harness = createHarness(true, unavailableStorage);
-        const waiting = new FakeWorker('installed');
-        harness.registration.waiting = waiting;
-        await harness.controller.start();
-
-        await harness.controller.applyUpdate();
-
-        expect(waiting.messages).toEqual([{ type: 'SKIP_WAITING' }]);
-        expect(harness.controller.getSnapshot().status).toBe('applying');
-        harness.controller.dispose();
-    });
-
-    it('does not show an update prompt during first installation', async () => {
-        const harness = createHarness(false);
-        const waiting = new FakeWorker('installed');
-        harness.registration.waiting = waiting;
-
-        await harness.controller.start();
-        harness.container.changeController(waiting);
-
-        expect(waiting.messages).toEqual([{ type: 'SKIP_WAITING' }]);
-        expect(harness.controller.getSnapshot().status).toBe('idle');
+        expect(waiting.messages).toEqual([]);
         expect(harness.reloadCount()).toBe(0);
         harness.controller.dispose();
     });
 
-    it('does not offer the same dismissed worker again during later checks', async () => {
+    it('prompts with the proposed hash after autonomous takeover, then reloads once', async () => {
         const harness = createHarness();
-        harness.registration.waiting = new FakeWorker('installed');
         await harness.controller.start();
 
-        harness.controller.dismiss();
-        await harness.controller.checkForUpdates();
+        const worker = installAndTakeControl(harness);
+        harness.container.dispatchEvent(new Event('controllerchange'));
+        await vi.waitFor(() => expect(harness.controller.getSnapshot().status).toBe('available'));
 
-        expect(harness.controller.getSnapshot().status).toBe('idle');
+        expect(worker.messages).toEqual([]);
+        expect(harness.controller.getSnapshot()).toMatchObject({
+            hash: 'abcdef1',
+            changelogUrl: 'https://github.com/arpheno/lalange/compare/8f0573a...abcdef1',
+        });
+        expect(harness.reloadCount()).toBe(0);
+
+        await harness.controller.applyUpdate();
+
+        expect(harness.reloadCount()).toBe(1);
         harness.controller.dispose();
     });
 
-    it('does not reuse expired consent for a newly waiting worker', async () => {
+    it('detects a confirmed takeover even when controllerchange is not emitted', async () => {
         const harness = createHarness();
-        const waiting = new FakeWorker('installed');
-        harness.registration.waiting = waiting;
-        harness.storage.setItem(UPDATE_SESSION_STORAGE_KEY, JSON.stringify({
-            expiresAt: Date.now() - 1,
-            attempts: 0,
-        }));
-
         await harness.controller.start();
 
-        expect(waiting.messages).toEqual([]);
-        expect(harness.controller.getSnapshot().status).toBe('available');
+        const worker = installAndTakeControl(harness, false);
+        await vi.waitFor(() => expect(harness.controller.getSnapshot().status).toBe('available'));
+
+        expect(worker.messages).toEqual([]);
+        expect(harness.controller.getSnapshot().hash).toBe('abcdef1');
+        expect(harness.reloadCount()).toBe(0);
+        harness.controller.dispose();
+    });
+
+    it('does not reload when the first service worker claims a fresh page', async () => {
+        const harness = createHarness(false);
+        await harness.controller.start();
+
+        const worker = installAndTakeControl(harness);
+
+        expect(worker.messages).toEqual([]);
+        expect(harness.reloadCount()).toBe(0);
+        harness.controller.dispose();
+    });
+
+    it('does not carry an attempt budget across successive deployed workers', async () => {
+        const storage = createStorage();
+        storage.setItem(UPDATE_SESSION_STORAGE_KEY, JSON.stringify({
+            expiresAt: Date.now() + 60_000,
+            attempts: 3,
+        }));
+
+        for (let generation = 0; generation < 5; generation += 1) {
+            const proposedHash = `abcde${generation}1`;
+            const harness = createHarness(true, storage, proposedHash);
+            await harness.controller.start();
+            installAndTakeControl(harness);
+            await vi.waitFor(() => expect(harness.controller.getSnapshot().status).toBe('available'));
+
+            expect(storage.getItem(UPDATE_SESSION_STORAGE_KEY)).toBeNull();
+            expect(harness.controller.getSnapshot().hash).toBe(proposedHash);
+            expect(harness.reloadCount()).toBe(0);
+
+            await harness.controller.applyUpdate();
+
+            expect(harness.reloadCount()).toBe(1);
+            harness.controller.dispose();
+        }
+    });
+
+    it('shows only the latest hash when another worker takes over during metadata loading', async () => {
+        let metadataCalls = 0;
+        let resolveFirstMetadata: (metadata: { hash: string }) => void = () => undefined;
+        const getDeploymentMetadata = vi.fn(() => {
+            metadataCalls += 1;
+            if (metadataCalls === 1) {
+                return new Promise<{ hash: string }>((resolve) => {
+                    resolveFirstMetadata = resolve;
+                });
+            }
+            return Promise.resolve({ hash: '2222222' });
+        });
+        const harness = createHarness(true, createStorage(), 'unused1', getDeploymentMetadata);
+        await harness.controller.start();
+
+        installAndTakeControl(harness);
+        await vi.waitFor(() => expect(getDeploymentMetadata).toHaveBeenCalledTimes(1));
+        installAndTakeControl(harness);
+        resolveFirstMetadata({ hash: '1111111' });
+
+        await vi.waitFor(() => expect(harness.controller.getSnapshot().hash).toBe('2222222'));
+        expect(getDeploymentMetadata).toHaveBeenCalledTimes(2);
+        expect(harness.controller.getSnapshot().changelogUrl).toContain('2222222');
         harness.controller.dispose();
     });
 
@@ -278,47 +304,17 @@ describe('ServiceWorkerUpdateController', () => {
         harness.controller.dispose();
     });
 
-    it('reloads once when another tab activates an external update', async () => {
-        const harness = createHarness();
-        await harness.controller.start();
-
-        harness.container.changeController(new FakeWorker('activated'));
-        harness.container.changeController(new FakeWorker('activated'));
-
-        expect(harness.reloadCount()).toBe(1);
-        harness.controller.dispose();
-    });
-
-    it('reloads as a recovery fallback when activation does not change the controller', async () => {
+    it('does not reload when an update check times out without a takeover', async () => {
         vi.useFakeTimers();
         const harness = createHarness();
-        const waiting = new FakeWorker('installed');
-        harness.registration.waiting = waiting;
         await harness.controller.start();
-        await harness.controller.applyUpdate();
+        harness.registration.updateImplementation = () => new Promise(() => undefined);
 
-        await vi.advanceTimersByTimeAsync(8_000);
+        const check = harness.controller.checkForUpdates();
+        await vi.advanceTimersByTimeAsync(15_000);
+        await check;
 
-        expect(harness.reloadCount()).toBe(1);
-        harness.controller.dispose();
-    });
-
-    it('stops automatic recovery after three persisted activation attempts', async () => {
-        const harness = createHarness();
-        const waiting = new FakeWorker('installed');
-        harness.registration.waiting = waiting;
-        harness.storage.setItem(UPDATE_SESSION_STORAGE_KEY, JSON.stringify({
-            expiresAt: Date.now() + 60_000,
-            attempts: 3,
-        }));
-
-        await harness.controller.start();
-
-        expect(waiting.messages).toEqual([]);
-        expect(harness.controller.getSnapshot()).toMatchObject({
-            status: 'error',
-            attempt: 3,
-        });
+        expect(harness.reloadCount()).toBe(0);
         harness.controller.dispose();
     });
 });

@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import { RefreshCw, TriangleAlert, X } from 'lucide-react';
+import { ExternalLink, RefreshCw, TriangleAlert, X } from 'lucide-react';
 import { pwaUpdateController } from '../core/pwa/browserUpdateController';
 
 export const PwaUpdateStatus = () => {
@@ -21,7 +21,7 @@ export const PwaUpdateStatus = () => {
     const detail = isError
         ? snapshot.error ?? 'The update could not be activated.'
         : isApplying
-            ? `Verifying activation${snapshot.attempt > 0 ? ` · attempt ${snapshot.attempt}` : ''}...`
+            ? 'Reading deployment metadata...'
             : 'A verified version is ready. Local books and AI models will be preserved.';
 
     const handlePrimaryAction = () => {
@@ -54,6 +54,20 @@ export const PwaUpdateStatus = () => {
                         <p className="text-xs text-gray-400 mt-1 break-words">
                             {detail}
                         </p>
+
+                        {snapshot.hash && snapshot.changelogUrl && (
+                            <a
+                                href={snapshot.changelogUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="mt-2 inline-flex items-center gap-1.5 font-mono text-xs text-dune-gold hover:text-white transition-colors"
+                            >
+                                {snapshot.hash}
+                                <span aria-hidden>·</span>
+                                <span>Changelog</span>
+                                <ExternalLink className="w-3 h-3" aria-hidden />
+                            </a>
+                        )}
 
                         {!isApplying && (
                             <div className="flex gap-2 mt-3">

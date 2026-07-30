@@ -5,14 +5,27 @@ import basicSsl from '@vitejs/plugin-basic-ssl'
 import { execSync } from 'child_process'
 import { PWA_INJECT_REGISTER, PWA_MAX_PRECACHE_FILE_BYTES, PWA_PRECACHE_GLOB_IGNORES } from './pwa.config'
 
-// Get commit hash, with fallback for CI environments without git history
-let commitHash = 'unknown';
-try {
-  commitHash = execSync('git rev-parse --short HEAD').toString().trim();
-} catch {
-  // Cloudflare Pages sets CF_PAGES_COMMIT_SHA
-  commitHash = process.env.CF_PAGES_COMMIT_SHA?.slice(0, 7) || 'unknown';
+// Cloudflare provides the exact deployed commit; local builds fall back to git.
+let commitHash = process.env.CF_PAGES_COMMIT_SHA?.slice(0, 7) || 'unknown';
+if (commitHash === 'unknown') {
+  try {
+    commitHash = execSync('git rev-parse --short HEAD').toString().trim();
+  } catch {
+    // Keep the explicit unknown value when no source revision is available.
+  }
 }
+
+const deploymentMetadataPlugin: PluginOption = {
+  name: 'deployment-metadata',
+  apply: 'build',
+  generateBundle() {
+    this.emitFile({
+      type: 'asset',
+      fileName: 'version.json',
+      source: `${JSON.stringify({ hash: commitHash })}\n`,
+    });
+  },
+};
 
 // https://vite.dev/config/
 export default defineConfig(() => {
@@ -21,9 +34,10 @@ export default defineConfig(() => {
   const plugins: PluginOption[] = [
     useHttps && basicSsl(),
     react(),
+    deploymentMetadataPlugin,
     VitePWA({
       injectRegister: PWA_INJECT_REGISTER,
-      registerType: 'prompt', // Show update prompt instead of auto-updating
+      registerType: 'autoUpdate',
       devOptions: {
         enabled: false,
       },
@@ -31,6 +45,11 @@ export default defineConfig(() => {
         maximumFileSizeToCacheInBytes: PWA_MAX_PRECACHE_FILE_BYTES,
         // Optional AI and TTS runtimes load on demand and manage their own caches.
         globIgnores: PWA_PRECACHE_GLOB_IGNORES,
+        additionalManifestEntries: [
+          { url: 'version.json', revision: commitHash },
+        ],
+        skipWaiting: true,
+        clientsClaim: true,
       },
       manifest: {
         name: "XYZ",

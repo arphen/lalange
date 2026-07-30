@@ -31,10 +31,19 @@ const safeStorage: UpdateStorage = {
 const serviceWorker = 'serviceWorker' in navigator
     ? navigator.serviceWorker as unknown as UpdateWorkerContainer
     : null;
+const currentHash = typeof __COMMIT_HASH__ === 'string' ? __COMMIT_HASH__ : 'unknown';
 
 export const pwaUpdateController = new ServiceWorkerUpdateController({
     serviceWorker,
     storage: safeStorage,
+    currentHash,
+    getDeploymentMetadata: async () => {
+        const response = await fetch('/version.json', { cache: 'reload' });
+        if (!response.ok) {
+            throw new Error(`Update metadata request failed (${response.status}).`);
+        }
+        return response.json() as Promise<{ hash: string }>;
+    },
     now: () => Date.now(),
     reload: () => window.location.reload(),
     setInterval: (callback, delay) => window.setInterval(callback, delay),

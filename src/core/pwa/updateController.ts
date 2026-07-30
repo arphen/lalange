@@ -1,12 +1,8 @@
 export const UPDATE_POLL_INTERVAL_MS = 5 * 60 * 1000;
-export const UPDATE_CONSENT_TTL_MS = 30 * 60 * 1000;
 export const UPDATE_CHECK_TIMEOUT_MS = 15 * 1000;
-export const UPDATE_ACTIVATION_TIMEOUT_MS = 8 * 1000;
-export const UPDATE_MAX_ACTIVATION_ATTEMPTS = 3;
 export const UPDATE_SESSION_STORAGE_KEY = 'arphen:sw-update-session';
 
 const LEGACY_UPDATE_STORAGE_KEY = 'arphen:sw-update-catch-up-until';
-const SKIP_WAITING_MESSAGE = { type: 'SKIP_WAITING' } as const;
 
 export type UpdateStatus = 'idle' | 'available' | 'applying' | 'error';
 
@@ -14,6 +10,12 @@ export interface UpdateSnapshot {
     status: UpdateStatus;
     attempt: number;
     error: string | null;
+    hash: string | null;
+    changelogUrl: string | null;
+}
+
+export interface DeploymentMetadata {
+    hash: string;
 }
 
 export interface UpdateWorker {
@@ -51,6 +53,8 @@ export interface UpdateStorage {
 export interface UpdateControllerDependencies {
     serviceWorker: UpdateWorkerContainer | null;
     storage: UpdateStorage;
+    currentHash: string;
+    getDeploymentMetadata: () => Promise<DeploymentMetadata>;
     now: () => number;
     reload: () => void;
     setInterval: (callback: () => void, delay: number) => unknown;
@@ -62,22 +66,18 @@ export interface UpdateControllerDependencies {
 
 export interface UpdateControllerOptions {
     pollIntervalMs?: number;
-    consentTtlMs?: number;
     updateCheckTimeoutMs?: number;
-    activationTimeoutMs?: number;
-    maxActivationAttempts?: number;
-}
-
-interface UpdateSession {
-    expiresAt: number;
-    attempts: number;
 }
 
 const IDLE_SNAPSHOT: UpdateSnapshot = Object.freeze({
     status: 'idle',
     attempt: 0,
     error: null,
+    hash: null,
+    changelogUrl: null,
 });
+
+const GITHUB_REPOSITORY_URL = 'https://github.com/arpheno/lalange';
 
 const errorMessage = (error: unknown): string => (
     error instanceof Error ? error.message : String(error)
@@ -86,10 +86,7 @@ const errorMessage = (error: unknown): string => (
 export class ServiceWorkerUpdateController {
     private readonly dependencies: UpdateControllerDependencies;
     private readonly pollIntervalMs: number;
-    private readonly consentTtlMs: number;
     private readonly updateCheckTimeoutMs: number;
-    private readonly activationTimeoutMs: number;
-    private readonly maxActivationAttempts: number;
     private readonly listeners = new Set<() => void>();
     private readonly workerStateListeners = new Map<UpdateWorker, EventListener>();
     private snapshot: UpdateSnapshot = IDLE_SNAPSHOT;
@@ -97,13 +94,11 @@ export class ServiceWorkerUpdateController {
     private startPromise: Promise<void> | null = null;
     private updateCheckPromise: Promise<void> | null = null;
     private pollHandle: unknown = null;
-    private activationTimeoutHandle: unknown = null;
-    private applyingWorker: UpdateWorker | null = null;
-    private dismissedWorker: UpdateWorker | null = null;
-    private hasControlledPage = false;
+    private initialController: UpdateWorker | null = null;
+    private metadataController: UpdateWorker | null = null;
+    private pendingMetadataLoad: Promise<void> | null = null;
     private controllerListenerAttached = false;
     private reloadStarted = false;
-    private volatileUpdateSession: UpdateSession | null = null;
 
     constructor(
         dependencies: UpdateControllerDependencies,
@@ -111,10 +106,7 @@ export class ServiceWorkerUpdateController {
     ) {
         this.dependencies = dependencies;
         this.pollIntervalMs = options.pollIntervalMs ?? UPDATE_POLL_INTERVAL_MS;
-        this.consentTtlMs = options.consentTtlMs ?? UPDATE_CONSENT_TTL_MS;
         this.updateCheckTimeoutMs = options.updateCheckTimeoutMs ?? UPDATE_CHECK_TIMEOUT_MS;
-        this.activationTimeoutMs = options.activationTimeoutMs ?? UPDATE_ACTIVATION_TIMEOUT_MS;
-        this.maxActivationAttempts = options.maxActivationAttempts ?? UPDATE_MAX_ACTIVATION_ATTEMPTS;
     }
 
     getSnapshot = (): UpdateSnapshot => this.snapshot;
@@ -147,16 +139,11 @@ export class ServiceWorkerUpdateController {
     };
 
     applyUpdate = async (): Promise<void> => {
-        if (!this.registration) {
-            this.setSnapshot('error', 0, 'The update service is not registered.');
+        if (this.snapshot.status === 'available') {
+            this.reloadOnce();
             return;
         }
-
-        this.beginUpdateSession();
-        this.setSnapshot('applying', 0, null);
         await this.checkForUpdates();
-        this.inspectRegistration();
-        this.activateWaitingWorker(this.registration.waiting);
     };
 
     retry = async (): Promise<void> => {
@@ -167,11 +154,15 @@ export class ServiceWorkerUpdateController {
             return;
         }
 
-        await this.applyUpdate();
+        if (this.snapshot.status === 'error' && this.metadataController) {
+            await this.loadUpdateMetadata();
+        } else {
+            this.setSnapshot('idle', 0, null);
+            await this.checkForUpdates();
+        }
     };
 
     dismiss = (): void => {
-        this.dismissedWorker = this.registration?.waiting ?? null;
         this.setSnapshot('idle', 0, null);
     };
 
@@ -186,14 +177,14 @@ export class ServiceWorkerUpdateController {
         });
         this.workerStateListeners.clear();
         if (this.pollHandle !== null) this.dependencies.clearInterval(this.pollHandle);
-        this.clearActivationTimeout();
     };
 
     private startInternal = async (): Promise<void> => {
         const serviceWorker = this.dependencies.serviceWorker;
         if (!serviceWorker) return;
 
-        this.hasControlledPage = Boolean(serviceWorker.controller);
+        this.clearObsoleteUpdateState();
+        this.initialController = serviceWorker.controller;
         if (!this.controllerListenerAttached) {
             serviceWorker.addEventListener('controllerchange', this.handleControllerChange);
             this.controllerListenerAttached = true;
@@ -225,49 +216,26 @@ export class ServiceWorkerUpdateController {
     };
 
     private handleControllerChange: EventListener = () => {
-        this.clearActivationTimeout();
-        this.applyingWorker = null;
-
-        if (!this.hasControlledPage) {
-            this.hasControlledPage = true;
-            this.dependencies.log?.('First service worker took control');
-            this.setSnapshot('idle', 0, null);
-            return;
-        }
-
-        this.dependencies.log?.('Updated service worker took control');
-        this.reloadOnce();
+        this.inspectController();
     };
 
     private inspectRegistration = (): void => {
         const registration = this.registration;
         if (!registration) return;
 
+        this.observeWorker(registration.active);
         this.observeWorker(registration.installing);
         this.observeWorker(registration.waiting);
-
-        if (registration.waiting) {
-            this.handleWaitingWorker(registration.waiting);
-        } else if (this.snapshot.status === 'available') {
-            this.setSnapshot('idle', 0, null);
-        }
+        this.inspectController();
     };
 
     private observeWorker = (worker: UpdateWorker | null): void => {
-        if (!worker || this.workerStateListeners.has(worker)) return;
+        if (!worker || worker.state === 'redundant' || this.workerStateListeners.has(worker)) return;
 
         const listener: EventListener = () => {
-            if (worker.state === 'redundant' && this.applyingWorker === worker) {
-                this.clearActivationTimeout();
-                this.applyingWorker = null;
-                this.clearUpdateSession();
-                this.setSnapshot('error', 0, 'The downloaded update became invalid before activation.');
-            }
-
             if (worker.state === 'redundant') {
                 worker.removeEventListener('statechange', listener);
                 this.workerStateListeners.delete(worker);
-                return;
             }
             this.inspectRegistration();
         };
@@ -275,67 +243,56 @@ export class ServiceWorkerUpdateController {
         worker.addEventListener('statechange', listener);
     };
 
-    private handleWaitingWorker = (worker: UpdateWorker): void => {
-        if (worker.state === 'redundant' || this.applyingWorker === worker) return;
+    private inspectController = (): void => {
+        const controller = this.dependencies.serviceWorker?.controller ?? null;
+        if (!controller) return;
 
-        if (!this.hasControlledPage) {
-            this.applyingWorker = worker;
-            this.dependencies.log?.('Activating first service worker');
-            this.postSkipWaiting(worker);
+        if (!this.initialController) {
+            this.initialController = controller;
+            this.dependencies.log?.('First service worker took control');
             return;
         }
 
-        const updateSession = this.readUpdateSession();
-        if (updateSession) {
-            this.setSnapshot('applying', updateSession.attempts, null);
-            this.activateWaitingWorker(worker);
-            return;
-        }
+        if (controller === this.initialController) return;
 
-        if (this.dismissedWorker !== worker) {
-            if (this.snapshot.status !== 'available') this.dependencies.log?.('Update available');
-            this.setSnapshot('available', 0, null);
-        }
+        this.initialController = controller;
+        this.metadataController = controller;
+        this.dependencies.log?.('Updated service worker took control');
+        void this.loadUpdateMetadata();
     };
 
-    private activateWaitingWorker = (worker: UpdateWorker | null): void => {
-        if (!worker || worker.state === 'redundant' || this.applyingWorker === worker) return;
+    private loadUpdateMetadata = (): Promise<void> => {
+        const targetController = this.metadataController;
+        if (!targetController) return Promise.resolve();
+        if (this.pendingMetadataLoad) return this.pendingMetadataLoad;
 
-        const session = this.incrementActivationAttempt();
-        if (!session) return;
-        if (session.attempts > this.maxActivationAttempts) {
-            this.dismissedWorker = worker;
-            this.clearUpdateSession();
-            this.setSnapshot(
-                'error',
-                this.maxActivationAttempts,
-                `The update could not take control after ${this.maxActivationAttempts} attempts.`,
-            );
-            return;
-        }
+        this.setSnapshot('applying', 0, null);
+        this.pendingMetadataLoad = Promise.resolve()
+            .then(() => this.dependencies.getDeploymentMetadata())
+            .then(({ hash }) => {
+                if (this.metadataController !== targetController) return;
+                if (!/^[0-9a-f]{7,40}$/i.test(hash)) {
+                    throw new Error('The update did not provide a valid deployment hash.');
+                }
 
-        this.applyingWorker = worker;
-        this.dependencies.log?.(`Activating update (attempt ${session.attempts})`);
-        this.setSnapshot('applying', session.attempts, null);
-        this.clearActivationTimeout();
-        this.activationTimeoutHandle = this.dependencies.setTimeout(() => {
-            if (this.applyingWorker !== worker) return;
-            this.dependencies.log?.('Service worker activation timed out; reloading for recovery');
-            this.reloadOnce();
-        }, this.activationTimeoutMs);
-
-        try {
-            this.postSkipWaiting(worker);
-        } catch (error) {
-            this.clearActivationTimeout();
-            this.applyingWorker = null;
-            this.clearUpdateSession();
-            this.setSnapshot('error', session.attempts, errorMessage(error));
-        }
-    };
-
-    private postSkipWaiting = (worker: UpdateWorker): void => {
-        worker.postMessage(SKIP_WAITING_MESSAGE);
+                const currentHash = this.dependencies.currentHash;
+                const changelogUrl = /^[0-9a-f]{7,40}$/i.test(currentHash) && currentHash !== hash
+                    ? `${GITHUB_REPOSITORY_URL}/compare/${currentHash}...${hash}`
+                    : `${GITHUB_REPOSITORY_URL}/commit/${hash}`;
+                this.setSnapshot('available', 0, null, hash, changelogUrl);
+            })
+            .catch((error) => {
+                if (this.metadataController === targetController) {
+                    this.setSnapshot('error', 0, errorMessage(error));
+                }
+            })
+            .finally(() => {
+                this.pendingMetadataLoad = null;
+                if (this.metadataController !== targetController) {
+                    void this.loadUpdateMetadata();
+                }
+            });
+        return this.pendingMetadataLoad;
     };
 
     private reloadOnce = (): void => {
@@ -347,15 +304,17 @@ export class ServiceWorkerUpdateController {
             this.dependencies.reload();
         } catch (error) {
             this.reloadStarted = false;
-            this.clearUpdateSession();
             this.setSnapshot('error', 0, errorMessage(error));
         }
     };
 
-    private clearActivationTimeout = (): void => {
-        if (this.activationTimeoutHandle === null) return;
-        this.dependencies.clearTimeout(this.activationTimeoutHandle);
-        this.activationTimeoutHandle = null;
+    private clearObsoleteUpdateState = (): void => {
+        try {
+            this.dependencies.storage.removeItem(UPDATE_SESSION_STORAGE_KEY);
+            this.dependencies.storage.removeItem(LEGACY_UPDATE_STORAGE_KEY);
+        } catch {
+            // Storage can be unavailable in private browsing modes.
+        }
     };
 
     private settleWithTimeout = (
@@ -375,81 +334,22 @@ export class ServiceWorkerUpdateController {
         operation.then(() => finish(), (error) => finish(error));
     });
 
-    private beginUpdateSession = (): void => {
-        this.writeUpdateSession({
-            expiresAt: this.dependencies.now() + this.consentTtlMs,
-            attempts: 0,
-        });
-    };
-
-    private incrementActivationAttempt = (): UpdateSession | null => {
-        const session = this.readUpdateSession();
-        if (!session) return null;
-
-        const nextSession = { ...session, attempts: session.attempts + 1 };
-        this.writeUpdateSession(nextSession);
-        return nextSession;
-    };
-
-    private readUpdateSession = (): UpdateSession | null => {
-        let session = this.volatileUpdateSession;
-        try {
-            const current = this.dependencies.storage.getItem(UPDATE_SESSION_STORAGE_KEY);
-            const legacy = this.dependencies.storage.getItem(LEGACY_UPDATE_STORAGE_KEY);
-
-            if (current) {
-                const parsed = JSON.parse(current) as Partial<UpdateSession>;
-                if (Number.isFinite(parsed.expiresAt) && Number.isFinite(parsed.attempts)) {
-                    session = {
-                        expiresAt: Number(parsed.expiresAt),
-                        attempts: Number(parsed.attempts),
-                    };
-                }
-            } else if (legacy && Number.isFinite(Number(legacy))) {
-                session = { expiresAt: Number(legacy), attempts: 0 };
-                this.writeUpdateSession(session);
-                this.dependencies.storage.removeItem(LEGACY_UPDATE_STORAGE_KEY);
-            }
-        } catch {
-            // Retain the in-memory session when persistent storage is unavailable.
-        }
-
-        if (!session || session.expiresAt <= this.dependencies.now()) {
-            this.clearUpdateSession();
-            return null;
-        }
-
-        this.volatileUpdateSession = session;
-        return session;
-    };
-
-    private writeUpdateSession = (session: UpdateSession): void => {
-        this.volatileUpdateSession = session;
-        try {
-            this.dependencies.storage.setItem(UPDATE_SESSION_STORAGE_KEY, JSON.stringify(session));
-        } catch {
-            // Storage can be unavailable in private browsing modes.
-        }
-    };
-
-    private clearUpdateSession = (): void => {
-        this.volatileUpdateSession = null;
-        try {
-            this.dependencies.storage.removeItem(UPDATE_SESSION_STORAGE_KEY);
-            this.dependencies.storage.removeItem(LEGACY_UPDATE_STORAGE_KEY);
-        } catch {
-            // Storage can be unavailable in private browsing modes.
-        }
-    };
-
-    private setSnapshot = (status: UpdateStatus, attempt: number, error: string | null): void => {
+    private setSnapshot = (
+        status: UpdateStatus,
+        attempt: number,
+        error: string | null,
+        hash: string | null = null,
+        changelogUrl: string | null = null,
+    ): void => {
         if (
             this.snapshot.status === status
             && this.snapshot.attempt === attempt
             && this.snapshot.error === error
+            && this.snapshot.hash === hash
+            && this.snapshot.changelogUrl === changelogUrl
         ) return;
 
-        this.snapshot = Object.freeze({ status, attempt, error });
+        this.snapshot = Object.freeze({ status, attempt, error, hash, changelogUrl });
         this.listeners.forEach((listener) => listener());
     };
 }
