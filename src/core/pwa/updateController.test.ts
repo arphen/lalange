@@ -190,7 +190,8 @@ describe('ServiceWorkerUpdateController', () => {
     });
 
     it('prompts with the proposed hash after autonomous takeover, then reloads once', async () => {
-        const harness = createHarness();
+        const getDeploymentMetadata = vi.fn(async () => ({ hash: 'abcdef1' }));
+        const harness = createHarness(true, createStorage(), 'abcdef1', getDeploymentMetadata);
         await harness.controller.start();
 
         const worker = installAndTakeControl(harness);
@@ -198,6 +199,7 @@ describe('ServiceWorkerUpdateController', () => {
         await vi.waitFor(() => expect(harness.controller.getSnapshot().status).toBe('available'));
 
         expect(worker.messages).toEqual([]);
+        expect(getDeploymentMetadata).toHaveBeenCalledWith(worker);
         expect(harness.controller.getSnapshot()).toMatchObject({
             hash: 'abcdef1',
             changelogUrl: 'https://github.com/arpheno/lalange/compare/8f0573a...abcdef1',

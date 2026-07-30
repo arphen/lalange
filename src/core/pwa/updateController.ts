@@ -1,3 +1,5 @@
+import type { DeploymentMetadata } from './updateProtocol';
+
 export const UPDATE_POLL_INTERVAL_MS = 5 * 60 * 1000;
 export const UPDATE_CHECK_TIMEOUT_MS = 15 * 1000;
 export const UPDATE_SESSION_STORAGE_KEY = 'arphen:sw-update-session';
@@ -14,13 +16,9 @@ export interface UpdateSnapshot {
     changelogUrl: string | null;
 }
 
-export interface DeploymentMetadata {
-    hash: string;
-}
-
 export interface UpdateWorker {
     readonly state: ServiceWorkerState;
-    postMessage(message: unknown): void;
+    postMessage(message: unknown, transfer?: Transferable[]): void;
     addEventListener(type: string, listener: EventListenerOrEventListenerObject | null): void;
     removeEventListener(type: string, listener: EventListenerOrEventListenerObject | null): void;
 }
@@ -54,7 +52,7 @@ export interface UpdateControllerDependencies {
     serviceWorker: UpdateWorkerContainer | null;
     storage: UpdateStorage;
     currentHash: string;
-    getDeploymentMetadata: () => Promise<DeploymentMetadata>;
+    getDeploymentMetadata: (worker: UpdateWorker) => Promise<DeploymentMetadata>;
     now: () => number;
     reload: () => void;
     setInterval: (callback: () => void, delay: number) => unknown;
@@ -268,7 +266,7 @@ export class ServiceWorkerUpdateController {
 
         this.setSnapshot('applying', 0, null);
         this.pendingMetadataLoad = Promise.resolve()
-            .then(() => this.dependencies.getDeploymentMetadata())
+            .then(() => this.dependencies.getDeploymentMetadata(targetController))
             .then(({ hash }) => {
                 if (this.metadataController !== targetController) return;
                 if (!/^[0-9a-f]{7,40}$/i.test(hash)) {

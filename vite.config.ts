@@ -15,18 +15,6 @@ if (commitHash === 'unknown') {
   }
 }
 
-const deploymentMetadataPlugin: PluginOption = {
-  name: 'deployment-metadata',
-  apply: 'build',
-  generateBundle() {
-    this.emitFile({
-      type: 'asset',
-      fileName: 'version.json',
-      source: `${JSON.stringify({ hash: commitHash })}\n`,
-    });
-  },
-};
-
 // https://vite.dev/config/
 export default defineConfig(() => {
   const useHttps = process.env.VITE_HTTPS === '1';
@@ -34,22 +22,19 @@ export default defineConfig(() => {
   const plugins: PluginOption[] = [
     useHttps && basicSsl(),
     react(),
-    deploymentMetadataPlugin,
     VitePWA({
       injectRegister: PWA_INJECT_REGISTER,
       registerType: 'autoUpdate',
+      strategies: 'injectManifest',
+      srcDir: 'src',
+      filename: 'sw.ts',
       devOptions: {
         enabled: false,
       },
-      workbox: {
+      injectManifest: {
         maximumFileSizeToCacheInBytes: PWA_MAX_PRECACHE_FILE_BYTES,
         // Optional AI and TTS runtimes load on demand and manage their own caches.
         globIgnores: PWA_PRECACHE_GLOB_IGNORES,
-        additionalManifestEntries: [
-          { url: 'version.json', revision: commitHash },
-        ],
-        skipWaiting: true,
-        clientsClaim: true,
       },
       manifest: {
         name: "XYZ",
