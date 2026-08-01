@@ -40,6 +40,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
     chapterHandoffSelection = null,
     chapterHandoffActive = false,
 }) => {
+    const [showRecaps, setShowRecaps] = React.useState(false);
+    const recapsExpanded = Boolean(activeSummaryId) || showRecaps;
+
     // Filter out image chapters
     const displayChapters = chapters.filter(isReadingChapter);
 
@@ -126,40 +129,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </div>
 
             <div className="reader-scroll-surface flex-1 overflow-y-auto p-3 space-y-2">
-                {/* Global Summaries Section */}
-                {globalSummaries.length > 0 && (
-                    <div className="mb-3 pb-3 border-b border-cyan-400/15">
-                        <div className="text-[10px] text-cyan-300/70 uppercase tracking-widest mb-2 px-1">
-                            Recaps
-                        </div>
-                        {globalSummaries.map((summary, idx) => {
-                            const isActive = activeSummaryId === summary.id;
-                            const wordRange = `${summary.startWordIndex.toLocaleString()}-${summary.endWordIndex.toLocaleString()}`;
-                            return (
-                                <div key={summary.id} className="mb-1">
-                                    <button
-                                        onClick={() => onPlayGlobalSummary?.(summary)}
-                                        className={clsx(
-                                            "w-full text-left p-2 rounded border transition-all",
-                                            isActive 
-                                                ? "bg-cyan-950/40 border-cyan-400/40 text-cyan-100"
-                                                : "bg-black/20 border-white/5 text-gray-400 hover:border-cyan-400/25 hover:text-cyan-200"
-                                        )}
-                                    >
-                                        <div className="flex items-center gap-2">
-                                            <span className="text-cyan-400">▶</span>
-                                            <span className="font-bold">Summary {idx + 1}</span>
-                                        </div>
-                                        <div className="text-[9px] text-gray-500 mt-1 truncate">
-                                            Words {wordRange}
-                                        </div>
-                                    </button>
-                                </div>
-                            );
-                        })}
-                    </div>
-                )}
-                
                 {displayChapters.map(chapter => {
                     const readingTime = getChapterReadingTime(chapter);
                     const isCurrent = currentChapter?.id === chapter.id;
@@ -287,6 +256,46 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         </div>
                     );
                 })}
+
+                {globalSummaries.length > 0 && (
+                    <section className="mt-4 pt-3 border-t border-cyan-400/15">
+                        <button
+                            type="button"
+                            className="w-full text-left px-1 py-1.5 text-[10px] text-cyan-300/70 uppercase tracking-widest hover:text-cyan-200 transition-colors"
+                            onClick={() => {
+                                if (!activeSummaryId) setShowRecaps((value) => !value);
+                            }}
+                            aria-expanded={recapsExpanded}
+                        >
+                            Recaps {recapsExpanded ? '[-]' : `[${globalSummaries.length}]`}
+                        </button>
+                        {recapsExpanded && globalSummaries.map((summary, idx) => {
+                            const isActive = activeSummaryId === summary.id;
+                            const wordRange = `${summary.startWordIndex.toLocaleString()}-${summary.endWordIndex.toLocaleString()}`;
+                            return (
+                                <div key={summary.id} className="mb-1">
+                                    <button
+                                        onClick={() => onPlayGlobalSummary?.(summary)}
+                                        className={clsx(
+                                            "w-full text-left p-2 rounded border transition-all",
+                                            isActive
+                                                ? "bg-cyan-950/40 border-cyan-400/40 text-cyan-100"
+                                                : "bg-black/20 border-white/5 text-gray-400 hover:border-cyan-400/25 hover:text-cyan-200"
+                                        )}
+                                    >
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-cyan-400">▶</span>
+                                            <span className="font-bold">Summary {idx + 1}</span>
+                                        </div>
+                                        <div className="text-[9px] text-gray-500 mt-1 truncate">
+                                            Words {wordRange}
+                                        </div>
+                                    </button>
+                                </div>
+                            );
+                        })}
+                    </section>
+                )}
             </div>
 
         </div>

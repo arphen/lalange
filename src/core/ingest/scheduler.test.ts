@@ -493,6 +493,64 @@ describe('IngestionScheduler', () => {
             expect(mockChapter.subchapters[0].summary).toBe('Summary with whitespace.');
         });
 
+        it('removes assistant-style meta preambles from summary response', async () => {
+            (generateUnifiedCompletion as any).mockResolvedValue({
+                response: 'As an AI chatbot, here is a summary: The chapter opens with a storm at sea.'
+            });
+
+            mockChapter.subchapters = [{ startWordIndex: 0, endWordIndex: 100 }];
+            mockChapter.incrementalModify = vi.fn(async (fn) => {
+                const doc = { subchapters: [...mockChapter.subchapters] };
+                const result = fn(doc);
+                mockChapter.subchapters = result.subchapters;
+                return result;
+            });
+
+            scheduler.addTask({
+                id: 'summary_task_meta',
+                bookId: 'book1',
+                chapterId: 'chapter1',
+                subchapterIndex: 0,
+                startWordIndex: 0,
+                endWordIndex: 100,
+                type: 'SUMMARY',
+                text: 'some text'
+            });
+
+            await new Promise(resolve => setTimeout(resolve, 50));
+
+            expect(mockChapter.subchapters[0].summary).toBe('The chapter opens with a storm at sea.');
+        });
+
+        it('adds a no-chatbot guardrail to summary prompts', async () => {
+            (generateUnifiedCompletion as any).mockResolvedValue({ response: 'A plain summary.' });
+
+            mockChapter.subchapters = [{ startWordIndex: 0, endWordIndex: 100 }];
+            mockChapter.incrementalModify = vi.fn(async (fn) => {
+                const doc = { subchapters: [...mockChapter.subchapters] };
+                const result = fn(doc);
+                mockChapter.subchapters = result.subchapters;
+                return result;
+            });
+
+            scheduler.addTask({
+                id: 'summary_task_guard',
+                bookId: 'book1',
+                chapterId: 'chapter1',
+                subchapterIndex: 0,
+                startWordIndex: 0,
+                endWordIndex: 100,
+                type: 'SUMMARY',
+                text: 'some text'
+            });
+
+            await new Promise(resolve => setTimeout(resolve, 50));
+
+            expect(generateUnifiedCompletion).toHaveBeenCalled();
+            const [promptArg] = (generateUnifiedCompletion as any).mock.calls.at(-1);
+            expect(promptArg).toContain('Do not mention prompts, instructions, being an AI, or being a chatbot.');
+        });
+
         it('should handle LLM service throwing an error', async () => {
             (generateUnifiedCompletion as any).mockRejectedValue(new Error('LLM service unavailable'));
 

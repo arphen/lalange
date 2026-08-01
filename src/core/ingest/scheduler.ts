@@ -35,6 +35,20 @@ export interface GlobalSummaryTask {
     // Text is collected at execution time by reading chapters
 }
 
+const SUMMARY_STYLE_GUARD = 'Write only the summary text. Do not mention prompts, instructions, being an AI, or being a chatbot.';
+
+const sanitizeSummaryText = (rawSummary: string): string => {
+    const cleaned = rawSummary
+        .trim()
+        .replace(/^as\s+an?\s+(?:ai(?:\s+language\s+model)?|language\s+model|chatbot)[^\n]*?[:.!?]\s*/i, '')
+        .replace(/^i\s+(?:am|can't|cannot|do not|don't)\s+[^.!?]*[.!?]\s*/i, '')
+        .replace(/^(?:here(?: is|'s)\s+)?(?:a\s+)?summary\s*[:-]\s*/i, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    return cleaned || rawSummary.trim();
+};
+
 export class IngestionScheduler {
     private tasks: IngestionTask[] = [];
     private globalSummaryTasks: GlobalSummaryTask[] = [];
@@ -513,11 +527,13 @@ export class IngestionScheduler {
 
                 const prompt = `${summaryInstruction}
 
+${SUMMARY_STYLE_GUARD}
+
 ${task.text.substring(0, 3000)}`;
 
                 const { response } = await generateUnifiedCompletion(prompt, summarizerModel);
-                
-                const summary = response.trim();
+
+                const summary = sanitizeSummaryText(response);
 
                 console.log(`[Scheduler] Summary for chunk ${task.subchapterIndex} (${summary.length} chars):`, summary.substring(0, 200));
 
@@ -617,10 +633,10 @@ ${task.text.substring(0, 3000)}`;
             }
 
             const summaryInstruction = settings.summaryPrompt || "Summarize the following text in 5 sentences.";
-            const prompt = `${summaryInstruction}\n\n${collectedText.trim()}`;
+            const prompt = `${summaryInstruction}\n\n${SUMMARY_STYLE_GUARD}\n\n${collectedText.trim()}`;
 
             const { response } = await generateUnifiedCompletion(prompt, summarizerModel);
-            const summary = response.trim();
+            const summary = sanitizeSummaryText(response);
 
             console.log(`[Scheduler] Global Summary ${task.summaryIndex} (${summary.length} chars):`, summary.substring(0, 200));
 

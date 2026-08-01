@@ -672,7 +672,6 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
             setShowChapters(false);
             setChapterHandoffSelection(null);
         }
-        else if (kind === 'summary') setShowChapters(true);
 
         // Clear RSVP display
         if (rsvpRef.current) {
@@ -868,7 +867,23 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
         initialIndex: number = 0,
         selectionStartWordIndex?: number | null,
     ) => {
-        if (countdownIntervalRef.current || chapterTransitionActiveRef.current) return;
+        if (countdownIntervalRef.current && transitionKind === 'summary') {
+            clearInterval(countdownIntervalRef.current);
+            countdownIntervalRef.current = null;
+            setCountdown(null);
+            setTransitionLabel(null);
+            setTransitionKind(null);
+        }
+
+        if (isSummaryActiveRef.current) {
+            isSummaryActiveRef.current = false;
+            setIsSummaryActive(false);
+            setActiveGlobalSummaryId(null);
+            summaryWordsRef.current = [];
+            wpmRef.current = wpm;
+        }
+
+        if (chapterTransitionActiveRef.current) return;
 
         setChapterHandoffSelection(selectionStartWordIndex === undefined
             ? null
@@ -914,7 +929,16 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                 closeContents: true,
             },
         );
-    }, [loadChapter, renderWord, resetDisplaySegments, startTransition, syncSchedulerCursor, updateProgressMilestone]);
+    }, [
+        loadChapter,
+        renderWord,
+        resetDisplaySegments,
+        startTransition,
+        syncSchedulerCursor,
+        transitionKind,
+        updateProgressMilestone,
+        wpm,
+    ]);
 
     const moveToWord = useCallback((wordIndex: number) => {
         if (wordIndex < 0 && currentChapterRef.current) {

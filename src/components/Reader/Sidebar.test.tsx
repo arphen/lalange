@@ -252,9 +252,28 @@ describe('Sidebar Component', () => {
 
             render(<Sidebar {...defaultProps} globalSummaries={globalSummaries} />);
 
-            expect(screen.getByText('Recaps')).toBeInTheDocument();
+            expect(screen.getByRole('button', { name: /Recaps/i })).toBeInTheDocument();
+            fireEvent.click(screen.getByRole('button', { name: /Recaps/i }));
             expect(screen.getByText('Summary 1')).toBeInTheDocument();
             expect(screen.getByText('Summary 2')).toBeInTheDocument();
+        });
+
+        it('keeps recap entries collapsed by default', () => {
+            const globalSummaries = [
+                {
+                    id: 'global-1',
+                    startWordIndex: 0,
+                    endWordIndex: 2500,
+                    startChapterId: 'ch1',
+                    endChapterId: 'ch1',
+                    summary: 'Summary text',
+                    generatedAt: Date.now()
+                }
+            ];
+
+            render(<Sidebar {...defaultProps} globalSummaries={globalSummaries} />);
+
+            expect(screen.queryByText('Summary 1')).not.toBeInTheDocument();
         });
 
         it('should show word range for each global summary', () => {
@@ -272,6 +291,7 @@ describe('Sidebar Component', () => {
 
             render(<Sidebar {...defaultProps} globalSummaries={globalSummaries} />);
 
+            fireEvent.click(screen.getByRole('button', { name: /Recaps/i }));
             expect(screen.getByText('Words 0-2,500')).toBeInTheDocument();
         });
 
@@ -297,13 +317,14 @@ describe('Sidebar Component', () => {
                 />
             );
 
+            fireEvent.click(screen.getByRole('button', { name: /Recaps/i }));
             const summaryButton = screen.getByText('Summary 1').closest('button');
             fireEvent.click(summaryButton!);
 
             expect(onPlayGlobalSummary).toHaveBeenCalledWith(globalSummaries[0]);
         });
 
-        it('should highlight active global summary', () => {
+        it('should highlight active global summary', async () => {
             const globalSummaries = [
                 {
                     id: 'global-1',
@@ -333,7 +354,7 @@ describe('Sidebar Component', () => {
                 />
             );
 
-            const activeButton = screen.getByText('Summary 1').closest('button');
+            const activeButton = (await screen.findByText('Summary 1')).closest('button');
             const inactiveButton = screen.getByText('Summary 2').closest('button');
 
             expect(activeButton).toHaveClass('bg-cyan-950/40');
