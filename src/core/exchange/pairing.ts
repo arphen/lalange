@@ -6,8 +6,35 @@ const DATA_CHANNEL_LABEL = 'xyz-device-exchange-v1';
 const MAX_CHUNK_BYTES = 32 * 1024;
 const MAX_BUFFERED_BYTES = 1024 * 1024;
 const BUFFER_LOW_THRESHOLD = 256 * 1024;
-const ICE_GATHER_TIMEOUT_MS = 5000;
+const ICE_GATHER_TIMEOUT_MS = 10000;
 const PUBLIC_EXCHANGE_ORIGIN = import.meta.env.VITE_PUBLIC_APP_URL || 'https://arphen.xyz';
+const DEFAULT_ICE_SERVERS: RTCIceServer[] = [
+    { urls: 'stun:stun.cloudflare.com:3478' },
+];
+
+export function buildExchangeIceServers(
+    configuredServers = import.meta.env.VITE_WEBRTC_ICE_SERVERS,
+): RTCIceServer[] {
+    if (!configuredServers) return [...DEFAULT_ICE_SERVERS];
+
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(configuredServers);
+    } catch {
+        throw new Error('VITE_WEBRTC_ICE_SERVERS must be a JSON array of WebRTC ICE servers.');
+    }
+
+    if (!Array.isArray(parsed) || parsed.some((server) => {
+        if (!server || typeof server !== 'object' || !('urls' in server)) return true;
+        const { urls } = server as { urls: unknown };
+        return typeof urls !== 'string'
+            && (!Array.isArray(urls) || urls.length === 0 || urls.some((url) => typeof url !== 'string'));
+    })) {
+        throw new Error('VITE_WEBRTC_ICE_SERVERS must be a JSON array of WebRTC ICE servers.');
+    }
+
+    return [...DEFAULT_ICE_SERVERS, ...(parsed as RTCIceServer[])];
+}
 
 interface EncodedOffer {
     kind: 'offer';
@@ -366,7 +393,7 @@ export class OpticalExchangePeer {
 export async function createOpticalExchangeOffer(
     invitationSummary?: ExchangeInvitationSummary,
 ): Promise<ExchangeOfferSession> {
-    const peerConnection = new RTCPeerConnection({ iceServers: [] });
+    const peerConnection = new RTCPeerConnection({ iceServers: buildExchangeIceServers() });
     const channel = peerConnection.createDataChannel(DATA_CHANNEL_LABEL, { ordered: true });
     const peer = new OpticalExchangePeer(peerConnection, channel);
     const sessionId = generateUUID();
@@ -399,7 +426,7 @@ export async function answerOpticalExchangeOffer(codeOrUrl: string): Promise<Exc
     const offer = await decodePairingSignal(code);
     if (offer.kind !== 'offer') throw new Error('Scan the invitation shown on the sending device.');
 
-    const peerConnection = new RTCPeerConnection({ iceServers: [] });
+    const peerConnection = new RTCPeerConnection({ iceServers: buildExchangeIceServers() });
     const peer = new OpticalExchangePeer(peerConnection);
     await peerConnection.setRemoteDescription(offer.description);
     await peerConnection.setLocalDescription(await peerConnection.createAnswer());

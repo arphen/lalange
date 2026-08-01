@@ -233,4 +233,293 @@ describe('buildEpubStructurePlan', () => {
         expect(plan.chapters.length).toBeLessThan(12);
         expect(plan.chapters.some((chapter) => chapter.source === 'merged')).toBe(true);
     });
+
+    it('omits cover, table of contents, and license documents from planned chapters', async () => {
+        const zip = new JSZip();
+        zip.file('META-INF/container.xml', containerXml('OPS/content.opf'));
+        zip.file('OPS/content.opf', `
+            <package xmlns:dc="http://purl.org/dc/elements/1.1/">
+                <metadata>
+                    <dc:title>Clean Reading Plan</dc:title>
+                    <dc:creator>Tester</dc:creator>
+                </metadata>
+                <manifest>
+                    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav" />
+                    <item id="cover" href="cover.xhtml" media-type="application/xhtml+xml" />
+                    <item id="contents" href="front-02.xhtml" media-type="application/xhtml+xml" />
+                    <item id="title" href="front-03.xhtml" media-type="application/xhtml+xml" />
+                    <item id="divider" href="front-04.xhtml" media-type="application/xhtml+xml" />
+                    <item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml" />
+                    <item id="license" href="license.xhtml" media-type="application/xhtml+xml" />
+                </manifest>
+                <spine>
+                    <itemref idref="cover" />
+                    <itemref idref="nav" />
+                    <itemref idref="contents" />
+                    <itemref idref="title" />
+                    <itemref idref="divider" />
+                    <itemref idref="chapter" />
+                    <itemref idref="license" />
+                </spine>
+            </package>
+        `);
+        zip.file('OPS/cover.xhtml', xhtml('<h1>Cover</h1><img src="cover.jpg" alt="Cover" />'));
+        zip.file('OPS/nav.xhtml', xhtml(`
+            <nav epub:type="toc">
+                <h1>Table of Contents</h1>
+                <ol><li><a href="chapter.xhtml">Chapter One</a></li></ol>
+            </nav>
+        `));
+        zip.file('OPS/front-02.xhtml', xhtml(`
+            <section>
+                <h1>CONTENTS OF VOL. I.</h1>
+                <p>Chapter I. 1</p><p>Chapter II. 20</p><p>Chapter III. 42</p>
+            </section>
+        `));
+        zip.file('OPS/front-03.xhtml', xhtml('<h1>Clean Reading Plan</h1><p>By Tester</p>'));
+        zip.file('OPS/front-04.xhtml', xhtml('<h1>Part I</h1>'));
+        zip.file('OPS/chapter.xhtml', xhtml(`<h1>Chapter One</h1><p>${repeatedWords('story', 300)}</p>`));
+        zip.file('OPS/license.xhtml', xhtml(`
+            <h1>Project Gutenberg License</h1>
+            <p>THE FULL PROJECT GUTENBERG LICENSE</p>
+            <p>Project Gutenberg Literary Archive Foundation trademark royalty redistribute electronic work gutenberg.org.</p>
+        `));
+
+        const plan = await buildEpubStructurePlan(zip);
+
+        expect(plan.chapters).toHaveLength(1);
+        expect(plan.chapters[0].title).toBe('Chapter One');
+        expect(plan.chapters[0].slices).toEqual([{ path: 'OPS/chapter.xhtml' }]);
+    });
+
+    it('keeps readable content when a TOC is embedded in the same document', async () => {
+        const zip = new JSZip();
+        zip.file('META-INF/container.xml', containerXml('OPS/content.opf'));
+        zip.file('OPS/content.opf', `
+            <package xmlns:dc="http://purl.org/dc/elements/1.1/">
+                <metadata>
+                    <dc:title>Inline Contents</dc:title>
+                    <dc:creator>Tester</dc:creator>
+                </metadata>
+                <manifest>
+                    <item id="book" href="book.xhtml" media-type="application/xhtml+xml" />
+                </manifest>
+                <spine><itemref idref="book" /></spine>
+            </package>
+        `);
+        zip.file('OPS/book.xhtml', xhtml(`
+            <section epub:type="toc">
+                <h1>Contents</h1>
+                <p>Chapter One</p><p>Chapter Two</p><p>Chapter Three</p>
+            </section>
+            <section>
+                <h1>The Story</h1>
+                <p>${repeatedWords('story', 400)}</p>
+            </section>
+        `));
+
+        const plan = await buildEpubStructurePlan(zip);
+        const sources = await loadPlannedChapterSources(zip, plan.chapters[0].slices);
+
+        expect(plan.chapters).toHaveLength(1);
+        expect(plan.chapters[0].estimatedWords).toBeGreaterThan(350);
+        expect(sources[0].text).toContain('The Story');
+        expect(sources[0].text).not.toContain('Contents');
+        expect(sources[0].html).not.toContain('epub:type="toc"');
+    });
+
+    it('rejects EPUBs with no readable content after publication matter is removed', async () => {
+        const zip = new JSZip();
+        zip.file('META-INF/container.xml', containerXml('OPS/content.opf'));
+        zip.file('OPS/content.opf', `
+            <package xmlns:dc="http://purl.org/dc/elements/1.1/">
+                <metadata>
+                    <dc:title>Artifacts Only</dc:title>
+                    <dc:creator>Tester</dc:creator>
+                </metadata>
+                <manifest>
+                    <item id="cover" href="cover.xhtml" media-type="application/xhtml+xml" />
+                    <item id="license" href="license.xhtml" media-type="application/xhtml+xml" />
+                </manifest>
+                <spine><itemref idref="cover" /><itemref idref="license" /></spine>
+            </package>
+        `);
+        zip.file('OPS/cover.xhtml', xhtml('<h1>Cover</h1><img src="cover.jpg" alt="Cover" />'));
+        zip.file('OPS/license.xhtml', xhtml(`
+            <h1>Project Gutenberg License</h1>
+            <p>THE FULL PROJECT GUTENBERG LICENSE</p>
+            <p>Project Gutenberg Literary Archive Foundation trademark royalty redistribute electronic work gutenberg.org.</p>
+        `));
+
+        await expect(buildEpubStructurePlan(zip)).rejects.toThrow('No readable content');
+    });
+
+    it('preserves short chapters when the EPUB TOC declares meaningful boundaries', async () => {
+        const zip = new JSZip();
+        zip.file('META-INF/container.xml', containerXml('OPS/content.opf'));
+
+        const manifestItems = ['<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav" />'];
+        const spineItems: string[] = [];
+        const navItems: string[] = [];
+
+        for (let i = 1; i <= 12; i++) {
+            manifestItems.push(`<item id="story${i}" href="story${i}.xhtml" media-type="application/xhtml+xml" />`);
+            spineItems.push(`<itemref idref="story${i}" />`);
+            navItems.push(`<li><a href="story${i}.xhtml">Story ${i}: A Distinct Tale</a></li>`);
+            zip.file(`OPS/story${i}.xhtml`, xhtml(`<h1>Story ${i}: A Distinct Tale</h1><p>${repeatedWords(`story${i}_`, 40)}</p>`));
+        }
+
+        zip.file('OPS/content.opf', `
+            <package xmlns:dc="http://purl.org/dc/elements/1.1/">
+                <metadata>
+                    <dc:title>Short Story Collection</dc:title>
+                    <dc:creator>Tester</dc:creator>
+                </metadata>
+                <manifest>${manifestItems.join('\n')}</manifest>
+                <spine>${spineItems.join('\n')}</spine>
+            </package>
+        `);
+        zip.file('OPS/nav.xhtml', xhtml(`<nav epub:type="toc"><ol>${navItems.join('\n')}</ol></nav>`));
+
+        const plan = await buildEpubStructurePlan(zip);
+
+        expect(plan.chapters).toHaveLength(12);
+        expect(plan.chapters.every((chapter) => chapter.source === 'toc')).toBe(true);
+    });
+
+    it('uses nested chapter links instead of a top-level book-title link', async () => {
+        const zip = new JSZip();
+        zip.file('META-INF/container.xml', containerXml('OPS/content.opf'));
+        zip.file('OPS/content.opf', `
+            <package xmlns:dc="http://purl.org/dc/elements/1.1/">
+                <metadata>
+                    <dc:title>Nested Navigation</dc:title>
+                    <dc:creator>Tester</dc:creator>
+                </metadata>
+                <manifest>
+                    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav" />
+                    <item id="book" href="book.xhtml" media-type="application/xhtml+xml" />
+                </manifest>
+                <spine><itemref idref="book" /></spine>
+            </package>
+        `);
+        zip.file('OPS/nav.xhtml', xhtml(`
+            <nav epub:type="toc"><ol><li>
+                <a href="book.xhtml#title">Nested Navigation</a>
+                <ol>
+                    <li><a href="book.xhtml#ch1">Chapter I. Arrival</a></li>
+                    <li><a href="book.xhtml#ch2">Chapter II. Discovery</a></li>
+                    <li><a href="book.xhtml#ch3">Chapter III. Return</a></li>
+                </ol>
+            </li></ol></nav>
+        `));
+        zip.file('OPS/book.xhtml', xhtml(`
+            <h1 id="title">Nested Navigation</h1>
+            <h2 id="ch1">Chapter I. Arrival</h2><p>${repeatedWords('arrival', 120)}</p>
+            <h2 id="ch2">Chapter II. Discovery</h2><p>${repeatedWords('discovery', 120)}</p>
+            <h2 id="ch3">Chapter III. Return</h2><p>${repeatedWords('return', 120)}</p>
+        `));
+
+        const plan = await buildEpubStructurePlan(zip);
+
+        expect(plan.chapters.map((chapter) => chapter.title)).toEqual([
+            'Chapter I. Arrival',
+            'Chapter II. Discovery',
+            'Chapter III. Return',
+        ]);
+        expect(plan.chapters.every((chapter) => chapter.source === 'toc')).toBe(true);
+    });
+
+    it('keeps a complete peer-level TOC instead of partial nested subdivisions', async () => {
+        const zip = new JSZip();
+        zip.file('META-INF/container.xml', containerXml('OPS/content.opf'));
+        zip.file('OPS/content.opf', `
+            <package xmlns:dc="http://purl.org/dc/elements/1.1/">
+                <metadata>
+                    <dc:title>Essay Collection</dc:title>
+                    <dc:creator>Tester</dc:creator>
+                </metadata>
+                <manifest>
+                    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav" />
+                    <item id="first" href="first.xhtml" media-type="application/xhtml+xml" />
+                    <item id="second" href="second.xhtml" media-type="application/xhtml+xml" />
+                    <item id="third" href="third.xhtml" media-type="application/xhtml+xml" />
+                </manifest>
+                <spine>
+                    <itemref idref="first" />
+                    <itemref idref="second" />
+                    <itemref idref="third" />
+                </spine>
+            </package>
+        `);
+        zip.file('OPS/nav.xhtml', xhtml(`
+            <nav epub:type="toc"><ol>
+                <li><a href="first.xhtml#first">The First Essay</a></li>
+                <li><a href="second.xhtml#second">The Second Essay</a><ol>
+                    <li><a href="second.xhtml#second-a">I A Question</a></li>
+                    <li><a href="second.xhtml#second-b">II An Answer</a></li>
+                </ol></li>
+                <li><a href="third.xhtml#third">The Third Essay</a><ol>
+                    <li><a href="third.xhtml#third-a">I A Beginning</a></li>
+                    <li><a href="third.xhtml#third-b">II An Ending</a></li>
+                </ol></li>
+            </ol></nav>
+        `));
+        zip.file('OPS/first.xhtml', xhtml(`<h1 id="first">The First Essay</h1><p>${repeatedWords('first', 160)}</p>`));
+        zip.file('OPS/second.xhtml', xhtml(`
+            <h1 id="second">The Second Essay</h1><p>${repeatedWords('second', 80)}</p>
+            <h2 id="second-a">I A Question</h2><p>${repeatedWords('question', 80)}</p>
+            <h2 id="second-b">II An Answer</h2><p>${repeatedWords('answer', 80)}</p>
+        `));
+        zip.file('OPS/third.xhtml', xhtml(`
+            <h1 id="third">The Third Essay</h1><p>${repeatedWords('third', 80)}</p>
+            <h2 id="third-a">I A Beginning</h2><p>${repeatedWords('beginning', 80)}</p>
+            <h2 id="third-b">II An Ending</h2><p>${repeatedWords('ending', 80)}</p>
+        `));
+
+        const plan = await buildEpubStructurePlan(zip);
+
+        expect(plan.chapters.map((chapter) => chapter.title)).toEqual([
+            'The First Essay',
+            'The Second Essay',
+            'The Third Essay',
+        ]);
+    });
+
+    it('resolves parent-relative paths from navigation documents', async () => {
+        const zip = new JSZip();
+        zip.file('META-INF/container.xml', containerXml('OPS/package/content.opf'));
+        zip.file('OPS/package/content.opf', `
+            <package xmlns:dc="http://purl.org/dc/elements/1.1/">
+                <metadata>
+                    <dc:title>Relative Navigation</dc:title>
+                    <dc:creator>Tester</dc:creator>
+                </metadata>
+                <manifest>
+                    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav" />
+                    <item id="chapter" href="../Text/chapter.xhtml" media-type="application/xhtml+xml" />
+                </manifest>
+                <spine><itemref idref="chapter" /></spine>
+            </package>
+        `);
+        zip.file('OPS/package/nav.xhtml', xhtml(`
+            <nav epub:type="toc"><ol>
+                <li><a href="../Text/chapter.xhtml#one">The First Chapter</a></li>
+                <li><a href="../Text/chapter.xhtml#two">The Second Chapter</a></li>
+            </ol></nav>
+        `));
+        zip.file('OPS/Text/chapter.xhtml', xhtml(`
+            <h1 id="one">The First Chapter</h1><p>${repeatedWords('first', 120)}</p>
+            <h1 id="two">The Second Chapter</h1><p>${repeatedWords('second', 120)}</p>
+        `));
+
+        const plan = await buildEpubStructurePlan(zip);
+
+        expect(plan.chapters.map((chapter) => chapter.title)).toEqual([
+            'The First Chapter',
+            'The Second Chapter',
+        ]);
+        expect(plan.chapters.every((chapter) => chapter.source === 'toc')).toBe(true);
+        expect(plan.chapters[0].slices[0].path).toBe('OPS/Text/chapter.xhtml');
+    });
 });

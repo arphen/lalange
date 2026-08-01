@@ -1,5 +1,36 @@
 import { describe, expect, it } from 'vitest';
-import { decodePairingSignal, encodePairingSignal, extractPairingCode } from './pairing';
+import {
+    buildExchangeIceServers,
+    decodePairingSignal,
+    encodePairingSignal,
+    extractPairingCode,
+} from './pairing';
+
+describe('exchange ICE servers', () => {
+    it('uses public STUN discovery by default', () => {
+        expect(buildExchangeIceServers('')).toEqual([
+            { urls: 'stun:stun.cloudflare.com:3478' },
+        ]);
+    });
+
+    it('adds configured TURN relays', () => {
+        const turnServer = {
+            urls: 'turns:relay.example.com:5349',
+            username: 'temporary-user',
+            credential: 'temporary-password',
+        };
+
+        expect(buildExchangeIceServers(JSON.stringify([turnServer]))).toEqual([
+            { urls: 'stun:stun.cloudflare.com:3478' },
+            turnServer,
+        ]);
+    });
+
+    it('rejects malformed ICE server configuration', () => {
+        expect(() => buildExchangeIceServers('{bad json')).toThrow('must be a JSON array');
+        expect(() => buildExchangeIceServers('{}')).toThrow('must be a JSON array');
+    });
+});
 
 describe('exchange pairing codes', () => {
     it('round-trips a compressed WebRTC offer', async () => {

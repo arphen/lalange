@@ -1,6 +1,7 @@
 import JSZip from 'jszip';
 import * as cheerio from 'cheerio';
 import type { Element } from 'domhandler';
+import { classifyChapter, type ChapterClassification } from './cleaning';
 
 type ChapterSource = 'toc' | 'spine' | 'merged';
 
@@ -44,6 +45,14 @@ export interface PlannedChapter {
     source: ChapterSource;
 }
 
+export interface SkippedPlannedChapter {
+    title: string;
+    slices: ChapterSlice[];
+    estimatedWords: number;
+    classificationType: ChapterClassification['type'];
+    reason: string;
+}
+
 export interface LoadedChapterSlice {
     path: string;
     text: string;
@@ -59,6 +68,7 @@ export interface EpubStructurePlan {
     manifest: Record<string, ManifestItem>;
     spine: SpineItem[];
     chapters: PlannedChapter[];
+    skippedChapters: SkippedPlannedChapter[];
 }
 
 const MARKER_START = '__XYZ_CHAPTER_START__';
@@ -110,15 +120,16 @@ const getBaseName = (value: string): string => {
 };
 
 const resolveArchivePath = (baseDir: string, href: string): string => {
-    const cleanedHref = normalizeArchivePath(href);
+    const decodedHref = decodeUriSafely(href).replace(/\\/g, '/');
+    const cleanedHref = decodedHref.split('?')[0] || '';
     if (!cleanedHref) {
         return normalizeArchivePath(baseDir);
     }
-    if (href.startsWith('/')) {
-        return cleanedHref;
+    if (cleanedHref.startsWith('/')) {
+        return normalizeArchivePath(cleanedHref);
     }
     if (!baseDir) {
-        return cleanedHref;
+        return normalizeArchivePath(cleanedHref);
     }
     return normalizeArchivePath(`${baseDir}/${cleanedHref}`);
 };
@@ -163,19 +174,18 @@ const findFragmentElement = (
 };
 
 const extractReadableTextFromRoot = ($: cheerio.CheerioAPI): string => {
-    let text = '';
-    $('p, h1, h2, h3, h4, h5, h6, div, li, blockquote').each((_, el) => {
-        const block = $(el).text().trim();
-        if (block) {
-            text += `${block}\n\n`;
-        }
-    });
+    const body = $('body').first();
+    const root = (body.length > 0 ? body : $('html').first()).clone();
+    root.find('script, style, noscript, svg').remove();
+    root.find('br').replaceWith('\n');
+    root.find('p, h1, h2, h3, h4, h5, h6, li, blockquote, section, article').append('\n\n');
 
-    if (!text.trim()) {
-        text = $('body').text() || $.root().text() || '';
-    }
-
-    return text.replace(/\r/g, '').replace(/\n{3,}/g, '\n\n').trim();
+    return root
+        .text()
+        .replace(/\r/g, '')
+        .replace(/[\t ]+\n/g, '\n')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
 };
 
 const extractSliceHtml = (
@@ -373,6 +383,17 @@ const normalizeChapterGranularity = (chapters: PlannedChapter[]): PlannedChapter
         return ensureChapterTitles(chapters);
     }
 
+    const pageLikeTitle = /^(?:(?:page|p\.?)[\s_-]*)?\d{1,5}$/i;
+    const pageLikeTocEntries = chapters.filter((chapter) => (
+        chapter.source === 'toc' && pageLikeTitle.test(normalizeWhitespace(chapter.title))
+    )).length;
+    const tocChapters = chapters.filter((chapter) => chapter.source === 'toc').length;
+    const tocLooksPageBased = tocChapters > 0 && pageLikeTocEntries / tocChapters >= 0.35;
+
+    if (tocChapters > 0 && !tocLooksPageBased) {
+        return ensureChapterTitles(chapters);
+    }
+
     const wordCounts = chapters.map((chapter) => chapter.estimatedWords);
     const medianWords = median(wordCounts);
     const tinyThreshold = medianWords < 180 ? 260 : 140;
@@ -488,6 +509,35 @@ const looksLikeChapterHeading = (title: string): boolean => {
     return false;
 };
 
+interface TocDepthCandidate {
+    title: string;
+    resolvedPath: string;
+    fragment?: string;
+    depth: number;
+}
+
+const selectTocDepth = (candidates: TocDepthCandidate[]): TocEntry[] => {
+    if (candidates.length === 0) return [];
+
+    const byDepth = new Map<number, TocDepthCandidate[]>();
+    for (const candidate of candidates) {
+        const group = byDepth.get(candidate.depth) || [];
+        group.push(candidate);
+        byDepth.set(candidate.depth, group);
+    }
+
+    const groups = [...byDepth.entries()].sort(([left], [right]) => left - right);
+    let selected = groups[0][1];
+
+    for (let index = 1; index < groups.length && selected.length <= 2; index++) {
+        const next = groups[index][1];
+        if (next.length <= selected.length) break;
+        selected = next;
+    }
+
+    return selected.map(({ title, resolvedPath, fragment }) => ({ title, resolvedPath, fragment }));
+};
+
 const buildSingleSpineHeadingChapters = async (
     zip: JSZip,
     spine: SpineItem[],
@@ -538,13 +588,10 @@ const extractNavEntries = async (
 
     const navRoot = $('nav[epub\\:type="toc"], nav[role="doc-toc"]').first();
     const sourceRoot = navRoot.length > 0 ? navRoot : $('body');
-    let links = sourceRoot.find('> ol > li > a[href]');
-    if (links.length === 0) {
-        links = sourceRoot.find('a[href]');
-    }
+    const links = sourceRoot.find('a[href]');
 
     const navDir = getDirectoryPath(navPath);
-    const entries: TocEntry[] = [];
+    const candidates: TocDepthCandidate[] = [];
 
     links.each((_, el) => {
         const href = ($(el).attr('href') || '').trim();
@@ -560,14 +607,15 @@ const extractNavEntries = async (
         const title = normalizeWhitespace($(el).text());
         if (!resolvedPath) return;
 
-        entries.push({
+        candidates.push({
             title,
             resolvedPath,
             fragment,
+            depth: Math.max(1, $(el).parents('li').length),
         });
     });
 
-    return entries;
+    return selectTocDepth(candidates);
 };
 
 const extractNcxEntries = async (
@@ -581,10 +629,9 @@ const extractNcxEntries = async (
     const $ = cheerio.load(xml, { xmlMode: true });
     const navDir = getDirectoryPath(ncxPath);
 
-    const topLevelPoints = $('navMap > navPoint');
-    const points = topLevelPoints.length > 0 ? topLevelPoints : $('navPoint');
+    const points = $('navMap navPoint');
 
-    const entries: TocEntry[] = [];
+    const candidates: TocDepthCandidate[] = [];
     points.each((_, el) => {
         const src = $(el).find('> content').attr('src') || $(el).find('content').first().attr('src') || '';
         if (!src) return;
@@ -601,14 +648,15 @@ const extractNcxEntries = async (
 
         if (!resolvedPath) return;
 
-        entries.push({
+        candidates.push({
             title,
             resolvedPath,
             fragment,
+            depth: $(el).parents('navPoint').length + 1,
         });
     });
 
-    return entries;
+    return selectTocDepth(candidates);
 };
 
 const collectTocEntries = async (
@@ -711,47 +759,316 @@ const buildBoundariesFromToc = (
     return boundaries;
 };
 
-const estimateChapterWordCounts = async (
+const normalizeArtifactLabel = (value: string): string => normalizeWhitespace(value)
+    .toLowerCase()
+    .replace(/[\s_-]+/g, ' ')
+    .replace(/^[\W_]+|[\W_]+$/g, '');
+
+const classifyArtifactLabel = (
+    title: string,
+    path: string,
+): Pick<ChapterClassification, 'type' | 'reason' | 'shouldIncludeInReading'> | null => {
+    const label = normalizeArtifactLabel(title);
+    const filename = normalizeArtifactLabel(getBaseName(path).replace(/\.[^.]+$/, ''));
+    const candidates = [label, filename].filter(Boolean);
+
+    if (candidates.some((candidate) => /^(?:cover|cover page|title page|front cover|back cover)$/.test(candidate))) {
+        return { type: 'cover', reason: 'Publication cover or title page', shouldIncludeInReading: false };
+    }
+
+    if (candidates.some((candidate) => /^(?:toc|navigation|nav|(?:table of )?contents?(?: of (?:vol(?:ume)?|book|part)\.? [\divxlcdm]+)?|list of (?:illustrations?|figures?|tables?|plates?))$/.test(candidate))) {
+        return { type: 'toc', reason: 'Publication navigation or table of contents', shouldIncludeInReading: false };
+    }
+
+    if (candidates.some((candidate) => /^(?:copyright|copyright page|legal notice|license|licence|project gutenberg license|imprint|colophon|about this (?:ebook|edition))$/.test(candidate))) {
+        return { type: 'license', reason: 'Publication legal or production boilerplate', shouldIncludeInReading: false };
+    }
+
+    return null;
+};
+
+const normalizeMetadataLabel = (value: string): string => normalizeWhitespace(value)
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/^the project gutenberg e-?book of\s+/, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+
+const metadataLabelVariants = (value: string): string[] => {
+    const variants = [value, ...value.split(/[:;/]/)];
+    return [...new Set(variants.map(normalizeMetadataLabel).filter(Boolean))];
+};
+
+const classifyTitleMatter = (
+    title: string,
+    text: string,
+    html: string,
+    publicationTitle: string,
+    publicationAuthor: string,
+): Pick<ChapterClassification, 'type' | 'reason' | 'shouldIncludeInReading'> | null => {
+    const wordCount = countWords(text);
+    if (wordCount > 80) return null;
+
+    const titleKey = normalizeMetadataLabel(title);
+    const publicationTitleVariants = metadataLabelVariants(publicationTitle);
+    const publicationAuthorKey = normalizeMetadataLabel(publicationAuthor);
+
+    const matchesPublicationTitle = titleKey && publicationTitleVariants.some((variant) => {
+        if (variant === titleKey) return true;
+        const shorterLength = Math.min(variant.length, titleKey.length);
+        const longerLength = Math.max(variant.length, titleKey.length);
+        return shorterLength >= 8
+            && shorterLength / longerLength >= 0.6
+            && (variant.startsWith(titleKey) || titleKey.startsWith(variant));
+    });
+
+    if (matchesPublicationTitle) {
+        return { type: 'cover', reason: 'Low-content publication title page', shouldIncludeInReading: false };
+    }
+
+    if (publicationAuthorKey && titleKey.includes(publicationAuthorKey) && wordCount <= 40) {
+        return { type: 'cover', reason: 'Low-content publication byline page', shouldIncludeInReading: false };
+    }
+
+    if (/\b(?:edition|published by|publication of|printing)\b/i.test(title) && wordCount <= 40) {
+        return { type: 'cover', reason: 'Low-content edition or publication page', shouldIncludeInReading: false };
+    }
+
+    if (/^(?:part|book|volume)\s+(?:\d+|[ivxlcdm]+|one|two|three|four|five|six|seven|eight|nine|ten)\b/i.test(title)) {
+        const $ = cheerio.load(`<body>${html}</body>`);
+        const proseWords = countWords($('p, li, blockquote').text());
+        if (proseWords < 20) {
+            return { type: 'toc', reason: 'Content-free structural divider', shouldIncludeInReading: false };
+        }
+    }
+
+    return null;
+};
+
+const classifyArtifactMarkup = (
+    html: string,
+): Pick<ChapterClassification, 'type' | 'reason' | 'shouldIncludeInReading'> | null => {
+    const $ = cheerio.load(`<body>${html}</body>`);
+    const artifactElements: {
+        element: Element;
+        classification: Pick<ChapterClassification, 'type' | 'reason' | 'shouldIncludeInReading'>;
+    }[] = [];
+
+    $('[epub\\:type], [role]').each((_, el) => {
+        const values = `${$(el).attr('epub:type') || ''} ${$(el).attr('role') || ''}`;
+        const semanticTokens = new Set(values.toLowerCase().split(/\s+/).filter(Boolean));
+        let classification: Pick<ChapterClassification, 'type' | 'reason' | 'shouldIncludeInReading'> | null = null;
+
+        if (['cover', 'cover-image', 'titlepage', 'doc-cover', 'doc-titlepage'].some((value) => semanticTokens.has(value))) {
+            classification = { type: 'cover', reason: 'EPUB cover or title-page semantics', shouldIncludeInReading: false };
+        } else if (['toc', 'landmarks', 'page-list', 'loi', 'lot', 'doc-toc'].some((value) => semanticTokens.has(value))) {
+            classification = { type: 'toc', reason: 'EPUB navigation semantics', shouldIncludeInReading: false };
+        } else if (['copyright-page', 'colophon', 'imprint', 'doc-colophon', 'doc-credit'].some((value) => semanticTokens.has(value))) {
+            classification = { type: 'license', reason: 'EPUB legal or production semantics', shouldIncludeInReading: false };
+        }
+
+        if (classification) {
+            artifactElements.push({ element: el, classification });
+        }
+    });
+
+    if (artifactElements.length === 0) return null;
+
+    const artifactSet = new Set(artifactElements.map(({ element }) => element));
+    const topLevelArtifacts = artifactElements.filter(({ element }) => (
+        !$(element).parents().toArray().some((parent) => artifactSet.has(parent))
+    ));
+    const fullTextLength = normalizeWhitespace($('body').first().text()).length;
+    const artifactTextLength = topLevelArtifacts.reduce((sum, { element }) => (
+        sum + normalizeWhitespace($(element).text()).length
+    ), 0);
+    const remainingTextLength = Math.max(0, fullTextLength - artifactTextLength);
+
+    if (fullTextLength === 0 || artifactTextLength / fullTextLength >= 0.8 || remainingTextLength < 80) {
+        return topLevelArtifacts[0].classification;
+    }
+
+    return null;
+};
+
+const stripEmbeddedPublicationMatter = (html: string): string => {
+    const $ = cheerio.load(`<body>${html}</body>`);
+
+    $('[epub\\:type], [role]').each((_, el) => {
+        const values = `${$(el).attr('epub:type') || ''} ${$(el).attr('role') || ''}`;
+        const semanticTokens = new Set(values.toLowerCase().split(/\s+/).filter(Boolean));
+        const isArtifact = [
+            'cover',
+            'cover-image',
+            'titlepage',
+            'doc-cover',
+            'doc-titlepage',
+            'toc',
+            'landmarks',
+            'page-list',
+            'loi',
+            'lot',
+            'doc-toc',
+            'copyright-page',
+            'colophon',
+            'imprint',
+            'doc-colophon',
+            'doc-credit',
+        ].some((value) => semanticTokens.has(value));
+
+        if (isArtifact) $(el).remove();
+    });
+
+    return $('body').first().html() || '';
+};
+
+const extractSliceTitle = (html: string, fallback: string): string => {
+    const $ = cheerio.load(`<body>${html}</body>`);
+    const heading = normalizeWhitespace(
+        $('h1, h2, h3, [epub\\:type~="title"], [role="doc-title"]').first().text(),
+    );
+    if (heading) return heading;
+
+    const documentTitle = normalizeWhitespace($('title').first().text());
+    return documentTitle || normalizeWhitespace(fallback);
+};
+
+const filterNonReadingChapters = async (
     zip: JSZip,
     chapters: PlannedChapter[],
-): Promise<PlannedChapter[]> => {
+    manifest: Record<string, ManifestItem>,
+    coverManifestId?: string,
+    publicationTitle = '',
+    publicationAuthor = '',
+): Promise<{ chapters: PlannedChapter[]; skippedChapters: SkippedPlannedChapter[] }> => {
+    const manifestByPath = new Map(
+        Object.values(manifest).map((item) => [normalizeArchivePath(item.resolvedPath), item]),
+    );
+    const coverPath = coverManifestId && manifest[coverManifestId]
+        ? normalizeArchivePath(manifest[coverManifestId].resolvedPath)
+        : '';
     const htmlCache = new Map<string, string>();
+    const readableChapters: PlannedChapter[] = [];
+    const skippedChapters: SkippedPlannedChapter[] = [];
 
-    const loadHtml = async (path: string): Promise<string | null> => {
+    const loadHtml = async (path: string): Promise<string> => {
         const normalizedPath = normalizeArchivePath(path);
         const cached = htmlCache.get(normalizedPath);
         if (cached !== undefined) return cached;
 
         const entry = findZipEntry(zip, normalizedPath);
-        if (!entry) {
-            htmlCache.set(normalizedPath, '');
-            return null;
-        }
-
-        const html = await entry.async('string');
+        const html = entry ? await entry.async('string') : '';
         htmlCache.set(normalizedPath, html);
         return html;
     };
 
-    const estimatedChapters: PlannedChapter[] = [];
-    for (const chapter of chapters) {
-        let chapterWords = 0;
+    for (const [chapterIndex, chapter] of chapters.entries()) {
+        const readableSlices: ChapterSlice[] = [];
+        const readableSources: { html: string; text: string }[] = [];
+        const skippedSlices: SkippedPlannedChapter[] = [];
+        let bestTitle = normalizeWhitespace(chapter.title);
 
         for (const slice of chapter.slices) {
-            const html = await loadHtml(slice.path);
+            const normalizedPath = normalizeArchivePath(slice.path);
+            const html = await loadHtml(normalizedPath);
             if (!html) continue;
 
-            const text = extractReadableTextFromHtml(html, slice.startFragment, slice.endFragment);
-            chapterWords += countWords(text);
+            const slicedHtml = extractSliceHtml(html, slice.startFragment, slice.endFragment);
+            const markupClassification = classifyArtifactMarkup(slicedHtml);
+            const readableHtml = stripEmbeddedPublicationMatter(slicedHtml);
+            const text = extractReadableTextFromHtml(readableHtml);
+            const sliceTitle = extractSliceTitle(readableHtml, bestTitle);
+            const manifestItem = manifestByPath.get(normalizedPath);
+
+            const explicitClassification = normalizedPath === coverPath
+                ? { type: 'cover' as const, reason: 'Manifest cover document', shouldIncludeInReading: false }
+                : (manifestItem?.properties || '').split(/\s+/).includes('nav')
+                    ? { type: 'toc' as const, reason: 'EPUB navigation document', shouldIncludeInReading: false }
+                    : classifyArtifactLabel(sliceTitle, normalizedPath)
+                        || classifyTitleMatter(
+                            sliceTitle,
+                            text,
+                            readableHtml,
+                            publicationTitle,
+                            publicationAuthor,
+                        )
+                        || markupClassification;
+
+            const classification = explicitClassification || classifyChapter(
+                text,
+                readableHtml,
+                sliceTitle,
+            );
+            const estimatedWords = countWords(text);
+
+            if (!classification.shouldIncludeInReading) {
+                skippedSlices.push({
+                    title: sliceTitle || bestTitle || 'Skipped Section',
+                    slices: [slice],
+                    estimatedWords,
+                    classificationType: classification.type,
+                    reason: classification.reason,
+                });
+                continue;
+            }
+
+            readableSlices.push(slice);
+            readableSources.push({ html: readableHtml, text });
+            if (!bestTitle || isGenericChapterTitle(bestTitle) || bestTitle === 'Front Matter') {
+                bestTitle = sliceTitle || bestTitle;
+            }
         }
 
-        estimatedChapters.push({
+        skippedChapters.push(...skippedSlices);
+
+        if (readableSlices.length === 0) {
+            if (skippedSlices.length === 0) {
+                skippedChapters.push({
+                    title: bestTitle || `Chapter ${chapterIndex + 1}`,
+                    slices: chapter.slices,
+                    estimatedWords: 0,
+                    classificationType: 'image',
+                    reason: 'No readable text found',
+                });
+            }
+            continue;
+        }
+
+        const readableChapter: PlannedChapter = {
             ...chapter,
-            estimatedWords: chapterWords,
-        });
+            title: bestTitle || `Chapter ${readableChapters.length + 1}`,
+            slices: readableSlices,
+            estimatedWords: readableSources.reduce((sum, source) => sum + countWords(source.text), 0),
+        };
+
+        const combinedText = readableSources.map((source) => source.text).join('\n\n');
+        const combinedHtml = readableSources.map((source) => source.html).join('\n\n');
+        const combinedClassification = classifyArtifactLabel(readableChapter.title, readableSlices[0].path)
+            || classifyTitleMatter(
+                readableChapter.title,
+                combinedText,
+                combinedHtml,
+                publicationTitle,
+                publicationAuthor,
+            )
+            || classifyChapter(combinedText, combinedHtml, readableChapter.title);
+
+        if (!combinedClassification.shouldIncludeInReading) {
+            skippedChapters.push({
+                title: readableChapter.title,
+                slices: readableChapter.slices,
+                estimatedWords: readableChapter.estimatedWords,
+                classificationType: combinedClassification.type,
+                reason: combinedClassification.reason,
+            });
+            continue;
+        }
+
+        readableChapters.push(readableChapter);
     }
 
-    return estimatedChapters;
+    return { chapters: readableChapters, skippedChapters };
 };
 
 export const buildEpubStructurePlan = async (zip: JSZip): Promise<EpubStructurePlan> => {
@@ -831,8 +1148,19 @@ export const buildEpubStructurePlan = async (zip: JSZip): Promise<EpubStructureP
         }
     }
 
-    const estimatedChapters = await estimateChapterWordCounts(zip, rawChapters);
-    const normalizedChapters = normalizeChapterGranularity(estimatedChapters);
+    const filtered = await filterNonReadingChapters(
+        zip,
+        rawChapters,
+        manifest,
+        coverManifestId,
+        title,
+        author,
+    );
+    if (filtered.chapters.length === 0) {
+        throw new Error('Invalid EPUB: No readable content remains after excluding publication matter');
+    }
+
+    const normalizedChapters = normalizeChapterGranularity(filtered.chapters);
 
     return {
         opfPath,
@@ -843,6 +1171,7 @@ export const buildEpubStructurePlan = async (zip: JSZip): Promise<EpubStructureP
         manifest,
         spine,
         chapters: normalizedChapters,
+        skippedChapters: filtered.skippedChapters,
     };
 };
 
@@ -870,11 +1199,13 @@ export const loadPlannedChapterSources = async (
 
         if (!html) continue;
 
-        const text = extractReadableTextFromHtml(html, slice.startFragment, slice.endFragment);
+        const slicedHtml = extractSliceHtml(html, slice.startFragment, slice.endFragment);
+        const readableHtml = stripEmbeddedPublicationMatter(slicedHtml);
+        const text = extractReadableTextFromHtml(readableHtml);
         sources.push({
             path: normalizedPath,
             text,
-            html: slice.startFragment || slice.endFragment ? '' : html,
+            html: readableHtml,
         });
     }
 

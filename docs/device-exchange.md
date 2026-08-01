@@ -40,8 +40,10 @@ library exchange.
 
 ## Physical Connection
 
-The connection uses an ephemeral WebRTC data channel with host ICE candidates
-only. There is no signaling server and no TURN relay.
+The connection uses an ephemeral WebRTC data channel. It gathers local host
+candidates and, through the default Cloudflare STUN server, public
+server-reflexive candidates. There is no signaling server; the offer and answer
+still move directly between devices through the QR or copy/paste flow.
 
 1. The initiator creates an offer and displays an invitation QR.
 2. The receiving browser scans the QR and opens the static `/exchange` route.
@@ -50,10 +52,20 @@ only. There is no signaling server and no TURN relay.
 5. Both devices show the same short pairing code and open a direct data channel.
 6. The transfer is staged, reviewed, applied, and acknowledged.
 
-This requires both devices to be able to reach each other on the local network.
-The static application can load from the public site, but no book or state data
-passes through that host. Restricted Wi-Fi networks may block local peer
-connections; an encrypted file/AirDrop package is the planned fallback.
+This allows a direct connection across many home and mobile networks. Symmetric
+NATs, carrier-grade NATs, and restrictive firewalls may require a TURN relay.
+Deployments can append one or more TURN servers through the
+`VITE_WEBRTC_ICE_SERVERS` build variable. TURN relays encrypted WebRTC packets;
+it cannot read book or state contents. The static application host is never
+used as a signaling or content service.
+
+```bash
+VITE_WEBRTC_ICE_SERVERS='[{"urls":"turns:relay.example.com:5349","username":"app-user","credential":"app-password"}]' npm run build
+```
+
+`VITE_` values are included in the public JavaScript bundle. Use credentials
+that are restricted and quota-limited for this application, never TURN service
+administration credentials.
 
 ## Exchange Manifest
 
@@ -196,7 +208,7 @@ No received data is committed before review.
 
 - compressed offer and answer QR codec
 - camera scanner and copy/paste fallback
-- local-only WebRTC data channel
+- direct WebRTC data channel with STUN discovery and optional TURN relay
 - chunking, backpressure, checksums, cancellation, and acknowledgements
 
 ### Phase 3: Product Surfaces

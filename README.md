@@ -48,6 +48,9 @@ npm install
 # Start dev server
 npm run dev
 
+# Optional: add TURN for networks that cannot establish a direct WebRTC path
+VITE_WEBRTC_ICE_SERVERS='[{"urls":"turns:relay.example.com:5349","username":"app-user","credential":"app-password"}]' npm run dev
+
 # Run tests
 npm test -- --run
 
@@ -61,7 +64,7 @@ npm run build
 - **Styling**: Tailwind CSS
 - **AI**: WebLLM (local LLM inference via WebGPU)
 - **Storage**: RxDB + IndexedDB (local-first)
-- **Sync**: WebRTC (peer-to-peer)
+- **Sync**: WebRTC (peer-to-peer through STUN, with optional TURN relay)
 
 ## 📖 Documentation
 
