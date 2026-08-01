@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { Sidebar } from './Sidebar';
-import { getSubchapterDisplayName, getSummaryProgress } from './Sidebar.utils';
+import { getChapterStructureLabel, getSubchapterDisplayName, getSummaryProgress } from './Sidebar.utils';
 import type { ChapterDocType } from '../../core/sync/db';
 
 // Mock the AI store
@@ -57,6 +57,16 @@ describe('Sidebar Helper Functions', () => {
             const content = ['Hello', 'world', 'test'];
             const result = getSubchapterDisplayName(sub, content);
             expect(result).toBe('Hello world test...');
+        });
+    });
+
+    describe('getChapterStructureLabel', () => {
+        it('distinguishes publisher structure from recovered structure', () => {
+            expect(getChapterStructureLabel('toc')).toBe('Publisher contents');
+            expect(getChapterStructureLabel('heading')).toBe('Document heading');
+            expect(getChapterStructureLabel('spine')).toBe('Recovered');
+            expect(getChapterStructureLabel('merged')).toBe('Combined by XYZ');
+            expect(getChapterStructureLabel(undefined)).toBeNull();
         });
     });
 
@@ -196,6 +206,17 @@ describe('Sidebar Component', () => {
 
             const button = screen.getByTestId('subchapter-btn-0');
             expect(button).toHaveTextContent('The quick brown fox jumps...');
+        });
+
+        it('labels app-created sections separately from document headings', () => {
+            const chapter = createMockChapter({
+                metadata: { classificationType: 'content', structureSource: 'heading' },
+            });
+            render(<Sidebar {...defaultProps} chapters={[chapter]} />);
+
+            expect(screen.getByTestId('chapter-structure-chapter-1')).toHaveTextContent('Document heading');
+            expect(screen.getByText('XYZ-created sections')).toBeInTheDocument();
+            expect(screen.getByTestId('subchapter-btn-0')).toHaveTextContent('Hello world this is a...');
         });
     });
 

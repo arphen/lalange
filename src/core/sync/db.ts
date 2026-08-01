@@ -62,6 +62,7 @@ export type ChapterDocType = {
     metadata?: {
         classificationType?: 'content' | 'license' | 'toc' | 'cover' | 'frontmatter' | 'backmatter' | 'image';
         classificationReason?: string;
+        structureSource?: 'toc' | 'heading' | 'spine' | 'merged';
         licenseInfo?: {
             publisher: string;
             text: string;

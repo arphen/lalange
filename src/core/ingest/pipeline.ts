@@ -1,7 +1,5 @@
 import JSZip from 'jszip';
-import * as cheerio from 'cheerio';
 import { initDB, type BookDocType, type ChapterDocType, type ImageDocType, type RawFileDocType } from '../sync/db';
-import { cleanHtmlBeforeExtraction } from './license';
 import { classifyChapter, cleanText } from './cleaning';
 import { normalizeReferenceTokens, tokenizeForRSVP } from '../rsvp/tokenize';
 import { useSettingsStore } from '../store/settings';
@@ -92,7 +90,10 @@ export const initialIngest = async (file: File, onProgress?: (msg: string) => vo
             index: chapterIndex,
             title: plannedChapter.title,
             status: 'pending',
-            content: []
+            content: [],
+            metadata: {
+                structureSource: plannedChapter.source,
+            },
         });
     }
 
@@ -178,16 +179,7 @@ export const processChaptersInBackground = async (bookId: string) => {
                             .filter(html => html.trim().length > 0)
                             .join('\n\n');
 
-                        let extractedTitle = plannedChapter.title;
-                        if (htmlContent.trim()) {
-                            const cleanedHtml = cleanHtmlBeforeExtraction(htmlContent, { referenceHandling });
-                            const $cleaned = cheerio.load(cleanedHtml);
-                            const headingTitle = $cleaned('h1, h2').first().text().trim();
-                            if (headingTitle) {
-                                extractedTitle = headingTitle;
-                                console.log(`[Pipeline] Extracted title: "${headingTitle}"`);
-                            }
-                        }
+                        const extractedTitle = plannedChapter.title;
 
                         let rawText = chapterSources
                             .map(source => source.text)
@@ -219,6 +211,7 @@ export const processChaptersInBackground = async (bookId: string) => {
                                     metadata: {
                                         classificationType: classification.type,
                                         classificationReason: classification.reason,
+                                        structureSource: plannedChapter.source,
                                         licenseInfo: classification.licenseInfo,
                                         tocEntries: classification.tocEntries,
                                     }
@@ -359,7 +352,12 @@ export const processChaptersInBackground = async (bookId: string) => {
                                 densities: [...allDensities],
                                 subchapters,
                                 title: extractedTitle || plannedChapter.title || finalDoc.title,
-                                progress: 100
+                                progress: 100,
+                                metadata: {
+                                    ...finalDoc.metadata,
+                                    classificationType: 'content',
+                                    structureSource: plannedChapter.source,
+                                },
                             });
                         }
 

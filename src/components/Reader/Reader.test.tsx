@@ -495,7 +495,7 @@ describe('Reader Component', () => {
         Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth });
     });
 
-    it('should seek forward when swiping up on the RSVP lane', async () => {
+    it('should seek during vertical RSVP drags without waiting for touch end', async () => {
         render(<Reader book={mockBook} />);
         await waitFor(() => {
             expect(screen.getByTestId('rsvp-container')).toHaveTextContent('Hello');
@@ -506,9 +506,14 @@ describe('Reader Component', () => {
         fireEvent.touchStart(touchSurface, {
             touches: [{ identifier: 1, clientX: 100, clientY: 120 }],
         });
-        fireEvent.touchMove(touchSurface, {
+        const allowedBrowserScroll = fireEvent.touchMove(touchSurface, {
+            cancelable: true,
             touches: [{ identifier: 1, clientX: 100, clientY: 64 }],
         });
+
+        expect(allowedBrowserScroll).toBe(false);
+        expect(rsvpContainer).toHaveTextContent('this');
+
         fireEvent.touchEnd(touchSurface, {
             touches: [],
             changedTouches: [{ identifier: 1, clientX: 100, clientY: 64 }],
@@ -516,6 +521,15 @@ describe('Reader Component', () => {
 
         expect(rsvpContainer).toHaveTextContent('this');
         expect(screen.getByText('20% through book')).toBeInTheDocument();
+
+        fireEvent.touchStart(touchSurface, {
+            touches: [{ identifier: 1, clientX: 100, clientY: 64 }],
+        });
+        fireEvent.touchMove(touchSurface, {
+            touches: [{ identifier: 1, clientX: 100, clientY: 120 }],
+        });
+
+        expect(rsvpContainer).toHaveTextContent('Hello');
     });
 
     it('should cross forward into the next chapter without a mechanical count-in', async () => {

@@ -149,6 +149,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
     const prevContainerRef = useRef<HTMLDivElement>(null);
     const nextContainerRef = useRef<HTMLDivElement>(null);
     const rsvpRef = useRef<HTMLDivElement>(null);
+    const rsvpTouchSurfaceRef = useRef<HTMLDivElement | null>(null);
     const contextHistoryStartRef = useRef(0);
     
     // Track if initial render has been done (to trigger full render once all refs are mounted)
@@ -179,6 +180,8 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
     const suppressNextRsvpTapRef = useRef(false);
     const rsvpTapStartRef = useRef<{ x: number; y: number } | null>(null);
     const rsvpTapMovedRef = useRef(false);
+    const rsvpTouchLastSeekYRef = useRef<number | null>(null);
+    const rsvpTouchDidSeekRef = useRef(false);
     const riverLastScrollAtRef = useRef(0);
     const chapterDrawerTouchStartRef = useRef<{ x: number; y: number } | null>(null);
     const chapterDrawerSwipeDeltaRef = useRef(0);
@@ -1023,11 +1026,23 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
         handleWordNavigationWheel(e);
     }, [handleWordNavigationWheel, updateLensScale]);
 
+    const preventRsvpNativeTouchMove = useCallback((event: TouchEvent) => {
+        event.preventDefault();
+    }, []);
+
+    const setRsvpTouchSurface = useCallback((node: HTMLDivElement | null) => {
+        rsvpTouchSurfaceRef.current?.removeEventListener('touchmove', preventRsvpNativeTouchMove);
+        rsvpTouchSurfaceRef.current = node;
+        node?.addEventListener('touchmove', preventRsvpNativeTouchMove, { passive: false });
+    }, [preventRsvpNativeTouchMove]);
+
     const handleRsvpTouchStart = useCallback((e: React.TouchEvent<HTMLDivElement>) => {
         if (e.touches.length === 1) {
             const touch = e.touches[0];
             rsvpTapStartRef.current = { x: touch.clientX, y: touch.clientY };
             rsvpTapMovedRef.current = false;
+            rsvpTouchLastSeekYRef.current = touch.clientY;
+            rsvpTouchDidSeekRef.current = false;
             return;
         }
 
@@ -1038,20 +1053,44 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
             distance: getTouchDistance(firstTouch, secondTouch),
             scale: lensScaleRef.current,
         };
+        rsvpTapStartRef.current = null;
+        rsvpTouchLastSeekYRef.current = null;
+        rsvpTouchDidSeekRef.current = false;
         suppressNextRsvpTapRef.current = true;
     }, []);
 
     const handleRsvpTouchMove = useCallback((e: React.TouchEvent<HTMLDivElement>) => {
         if (e.touches.length === 1 && rsvpTapStartRef.current) {
             const touch = e.touches[0];
-            const movement = Math.hypot(
-                touch.clientX - rsvpTapStartRef.current.x,
-                touch.clientY - rsvpTapStartRef.current.y,
-            );
+            const deltaX = touch.clientX - rsvpTapStartRef.current.x;
+            const deltaY = touch.clientY - rsvpTapStartRef.current.y;
+            const movement = Math.hypot(deltaX, deltaY);
 
             if (movement > TOUCH_TAP_MAX_MOVEMENT_PX) {
                 rsvpTapMovedRef.current = true;
                 suppressNextRsvpTapRef.current = true;
+            }
+
+            const isVerticalDrag = rsvpTouchDidSeekRef.current || Math.abs(deltaY) > Math.abs(deltaX);
+            if (!rsvpTapMovedRef.current || !isVerticalDrag) return;
+
+            e.preventDefault();
+            if (isPlayingRef.current) setIsPlaying(false);
+
+            const lastSeekY = rsvpTouchLastSeekYRef.current ?? rsvpTapStartRef.current.y;
+            const deltaSinceLastSeek = touch.clientY - lastSeekY;
+            let wordDelta = 0;
+
+            if (!rsvpTouchDidSeekRef.current) {
+                wordDelta = Math.sign(-deltaY) * Math.max(1, Math.round(Math.abs(deltaY) / TOUCH_WORD_STEP_PX));
+            } else if (Math.abs(deltaSinceLastSeek) >= TOUCH_WORD_STEP_PX) {
+                wordDelta = Math.sign(-deltaSinceLastSeek) * Math.floor(Math.abs(deltaSinceLastSeek) / TOUCH_WORD_STEP_PX);
+            }
+
+            if (wordDelta !== 0) {
+                moveToWord(indexRef.current + wordDelta);
+                rsvpTouchDidSeekRef.current = true;
+                rsvpTouchLastSeekYRef.current = touch.clientY;
             }
             return;
         }
@@ -1067,7 +1106,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
         const ratio = currentDistance / pinchGestureRef.current.distance;
         updateLensScale(pinchGestureRef.current.scale * ratio);
         suppressNextRsvpTapRef.current = true;
-    }, [updateLensScale]);
+    }, [moveToWord, updateLensScale]);
 
     const handleRsvpTouchEnd = useCallback((e: React.TouchEvent<HTMLDivElement>) => {
         const wasPinching = pinchGestureRef.current !== null;
@@ -1076,21 +1115,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
         }
 
         if (e.touches.length === 0) {
-            const start = rsvpTapStartRef.current;
-            const end = e.changedTouches[0];
-
-            if (!wasPinching && start && end && rsvpTapMovedRef.current) {
-                const deltaX = end.clientX - start.x;
-                const deltaY = end.clientY - start.y;
-
-                if (Math.abs(deltaY) > Math.abs(deltaX)) {
-                    if (isPlayingRef.current) setIsPlaying(false);
-                    const wordDelta = Math.sign(-deltaY) * Math.max(1, Math.round(Math.abs(deltaY) / TOUCH_WORD_STEP_PX));
-                    moveToWord(indexRef.current + wordDelta);
-                }
-            }
-
-            if (rsvpTapMovedRef.current) {
+            if (!wasPinching && rsvpTapMovedRef.current) {
                 suppressNextRsvpTapRef.current = true;
                 window.setTimeout(() => {
                     suppressNextRsvpTapRef.current = false;
@@ -1099,8 +1124,10 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
 
             rsvpTapStartRef.current = null;
             rsvpTapMovedRef.current = false;
+            rsvpTouchLastSeekYRef.current = null;
+            rsvpTouchDidSeekRef.current = false;
         }
-    }, [moveToWord]);
+    }, []);
 
     const handleRsvpClick = useCallback(() => {
         if (countdown !== null) return;
@@ -2061,6 +2088,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                     >
                         {/* Text area container with border */}
                         <div 
+                            ref={setRsvpTouchSurface}
                             className="reader-focus-lane w-full h-full flex items-center justify-center transition-colors cursor-zoom-in"
                             onWheel={handleRsvpWheel}
                             onTouchStart={handleRsvpTouchStart}

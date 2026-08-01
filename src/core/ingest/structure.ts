@@ -3,7 +3,7 @@ import * as cheerio from 'cheerio';
 import type { Element } from 'domhandler';
 import { classifyChapter, type ChapterClassification } from './cleaning';
 
-type ChapterSource = 'toc' | 'spine' | 'merged';
+export type ChapterSource = 'toc' | 'heading' | 'spine' | 'merged';
 
 interface ManifestItem {
     id: string;
@@ -30,12 +30,15 @@ interface ChapterBoundary {
     index: number;
     title: string;
     fragment?: string;
+    headingIndex?: number;
 }
 
 export interface ChapterSlice {
     path: string;
     startFragment?: string;
     endFragment?: string;
+    startHeadingIndex?: number;
+    endHeadingIndex?: number;
 }
 
 export interface PlannedChapter {
@@ -192,27 +195,38 @@ const extractSliceHtml = (
     html: string,
     startFragment?: string,
     endFragment?: string,
+    startHeadingIndex?: number,
+    endHeadingIndex?: number,
 ): string => {
-    if (!startFragment && !endFragment) return html;
+    if (!startFragment && !endFragment && startHeadingIndex === undefined && endHeadingIndex === undefined) {
+        return html;
+    }
 
     const $ = cheerio.load(html);
     $('script, style, noscript').remove();
 
     const root = $('body').first();
 
-    if (startFragment) {
-        const startEl = findFragmentElement($, startFragment);
-        if (startEl && startEl.length > 0) {
-            startEl.before(MARKER_START);
+    const findBoundaryElement = (
+        fragment: string | undefined,
+        headingIndex: number | undefined,
+    ): cheerio.Cheerio<Element> | null => {
+        if (fragment) {
+            const fragmentElement = findFragmentElement($, fragment);
+            if (fragmentElement) return fragmentElement;
         }
-    }
+        if (headingIndex !== undefined) {
+            const heading = $('h1, h2').eq(headingIndex);
+            if (heading.length > 0) return heading;
+        }
+        return null;
+    };
 
-    if (endFragment) {
-        const endEl = findFragmentElement($, endFragment);
-        if (endEl && endEl.length > 0) {
-            endEl.before(MARKER_END);
-        }
-    }
+    const startElement = findBoundaryElement(startFragment, startHeadingIndex);
+    if (startElement && startElement.length > 0) startElement.before(MARKER_START);
+
+    const endElement = findBoundaryElement(endFragment, endHeadingIndex);
+    if (endElement && endElement.length > 0) endElement.before(MARKER_END);
 
     const marked = root.length > 0 ? root.html() || '' : $.root().html() || '';
     let working = marked;
@@ -343,7 +357,7 @@ const resolveTocEntryToIndex = (
     return null;
 };
 
-const isGenericChapterTitle = (title: string): boolean => /^(chapter|section|part)\s+\d+$/i.test(normalizeWhitespace(title));
+const isGenericChapterTitle = (title: string): boolean => /^(?:chapter|section|part|book)\s+(?:\d{1,4}|[ivxlcdm]+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty)[.:-]?$/i.test(normalizeWhitespace(title));
 
 const mergeChapterPair = (left: PlannedChapter, right: PlannedChapter): PlannedChapter => {
     const leftTitle = normalizeWhitespace(left.title);
@@ -445,6 +459,7 @@ const normalizeChapterGranularity = (chapters: PlannedChapter[]): PlannedChapter
 const buildChaptersFromBoundaries = (
     boundaries: ChapterBoundary[],
     spine: SpineItem[],
+    source: ChapterSource = 'toc',
 ): PlannedChapter[] => {
     const chapters: PlannedChapter[] = [];
 
@@ -459,12 +474,15 @@ const buildChaptersFromBoundaries = (
                     path: spine[current.index].resolvedPath,
                     startFragment: current.fragment,
                     endFragment: next.fragment,
+                    startHeadingIndex: current.headingIndex,
+                    endHeadingIndex: next.headingIndex,
                 });
             } else {
                 for (let spineIndex = current.index; spineIndex < next.index; spineIndex++) {
                     slices.push({
                         path: spine[spineIndex].resolvedPath,
                         startFragment: spineIndex === current.index ? current.fragment : undefined,
+                        startHeadingIndex: spineIndex === current.index ? current.headingIndex : undefined,
                     });
                 }
             }
@@ -473,6 +491,7 @@ const buildChaptersFromBoundaries = (
                 slices.push({
                     path: spine[spineIndex].resolvedPath,
                     startFragment: spineIndex === current.index ? current.fragment : undefined,
+                    startHeadingIndex: spineIndex === current.index ? current.headingIndex : undefined,
                 });
             }
         }
@@ -484,7 +503,7 @@ const buildChaptersFromBoundaries = (
             title: current.title,
             slices,
             estimatedWords: 0,
-            source: 'toc',
+            source,
         });
     }
 
@@ -498,15 +517,123 @@ const buildFallbackSpineChapters = (spine: SpineItem[]): PlannedChapter[] => spi
     source: 'spine',
 }));
 
-const looksLikeChapterHeading = (title: string): boolean => {
+type HeadingKind = 'chapter' | 'book' | 'part' | 'section' | 'ordinal' | 'numbered-title';
+
+interface HeadingCandidate extends ChapterBoundary {
+    kind: HeadingKind;
+    level: number;
+    ordinal?: number;
+}
+
+const writtenOrdinals: Record<string, number> = {
+    one: 1,
+    two: 2,
+    three: 3,
+    four: 4,
+    five: 5,
+    six: 6,
+    seven: 7,
+    eight: 8,
+    nine: 9,
+    ten: 10,
+    eleven: 11,
+    twelve: 12,
+    thirteen: 13,
+    fourteen: 14,
+    fifteen: 15,
+    sixteen: 16,
+    seventeen: 17,
+    eighteen: 18,
+    nineteen: 19,
+    twenty: 20,
+};
+
+const romanToNumber = (value: string): number | null => {
+    const normalized = value.toUpperCase();
+    if (!/^M{0,3}(?:CM|CD|D?C{0,3})(?:XC|XL|L?X{0,3})(?:IX|IV|V?I{0,3})$/.test(normalized)) {
+        return null;
+    }
+
+    const values: Record<string, number> = {
+        I: 1,
+        V: 5,
+        X: 10,
+        L: 50,
+        C: 100,
+        D: 500,
+        M: 1000,
+    };
+    let total = 0;
+    let previous = 0;
+    for (let index = normalized.length - 1; index >= 0; index--) {
+        const current = values[normalized[index]];
+        total += current < previous ? -current : current;
+        previous = current;
+    }
+    return total > 0 ? total : null;
+};
+
+const parseOrdinal = (value: string): number | null => {
+    if (/^\d{1,3}$/.test(value)) return Number(value);
+    const written = writtenOrdinals[value.toLowerCase()];
+    if (written) return written;
+    return romanToNumber(value);
+};
+
+const classifyHeading = (title: string): Pick<HeadingCandidate, 'kind' | 'ordinal'> | null => {
     const normalized = normalizeWhitespace(title);
-    if (!normalized) return false;
+    if (!normalized) return null;
 
-    if (/^(chapter|book|part|section)\b/i.test(normalized)) return true;
-    if (/^[ivxlcdm]{1,8}[.:-]?$/i.test(normalized)) return true;
-    if (/^\d{1,3}[.:-]?$/i.test(normalized)) return true;
+    const explicit = /^(chapter|book|part|section)\b/i.exec(normalized);
+    if (explicit) {
+        return { kind: explicit[1].toLowerCase() as HeadingKind };
+    }
 
-    return false;
+    const standaloneOrdinal = /^([ivxlcdm]{1,8}|\d{1,3}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty)[.:-]?$/i.exec(normalized);
+    if (standaloneOrdinal) {
+        return {
+            kind: 'ordinal',
+            ordinal: parseOrdinal(standaloneOrdinal[1]) ?? undefined,
+        };
+    }
+
+    const titledOrdinal = /^([ivxlcdm]{1,8}|\d{1,3}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty)(?:[.):-]|\s+)\s*(\S.+)$/i.exec(normalized);
+    if (titledOrdinal) {
+        return {
+            kind: 'numbered-title',
+            ordinal: parseOrdinal(titledOrdinal[1]) ?? undefined,
+        };
+    }
+
+    return null;
+};
+
+const isConsecutiveSequence = (candidates: HeadingCandidate[]): boolean => {
+    if (candidates.some((candidate) => candidate.ordinal === undefined)) return false;
+    return candidates.every((candidate, index) => (
+        index === 0 || candidate.ordinal === candidates[index - 1].ordinal! + 1
+    ));
+};
+
+const selectHeadingFamily = (candidates: HeadingCandidate[]): HeadingCandidate[] => {
+    for (const kind of ['chapter', 'section', 'book', 'part'] as const) {
+        const family = candidates.filter((candidate) => candidate.kind === kind);
+        if (family.length >= 2) return family;
+    }
+
+    for (const kind of ['numbered-title', 'ordinal'] as const) {
+        const families = [1, 2]
+            .map((level) => ({
+                level,
+                family: candidates.filter((candidate) => candidate.kind === kind && candidate.level === level),
+            }))
+            .filter(({ level, family }) => family.length >= (kind === 'numbered-title' && level === 2 ? 3 : 2))
+            .filter(({ family }) => isConsecutiveSequence(family))
+            .sort((left, right) => right.family.length - left.family.length);
+        if (families[0]) return families[0].family;
+    }
+
+    return [];
 };
 
 interface TocDepthCandidate {
@@ -538,42 +665,52 @@ const selectTocDepth = (candidates: TocDepthCandidate[]): TocEntry[] => {
     return selected.map(({ title, resolvedPath, fragment }) => ({ title, resolvedPath, fragment }));
 };
 
-const buildSingleSpineHeadingChapters = async (
+const buildHeadingChapters = async (
     zip: JSZip,
     spine: SpineItem[],
 ): Promise<PlannedChapter[] | null> => {
-    if (spine.length !== 1) return null;
+    const candidates: HeadingCandidate[] = [];
 
-    const onlySpinePath = spine[0].resolvedPath;
-    const entry = findZipEntry(zip, onlySpinePath);
-    if (!entry) return null;
+    for (const spineItem of spine) {
+        const entry = findZipEntry(zip, spineItem.resolvedPath);
+        if (!entry) continue;
 
-    const html = await entry.async('string');
-    const $ = cheerio.load(html);
-    const headings: { title: string; fragment: string }[] = [];
+        const html = await entry.async('string');
+        const $ = cheerio.load(html);
 
-    $('h1, h2').each((_, el) => {
-        const title = normalizeWhitespace($(el).text());
-        if (!looksLikeChapterHeading(title)) return;
+        $('h1, h2').each((headingIndex, el) => {
+            const title = normalizeWhitespace($(el).text());
+            const classification = classifyHeading(title);
+            if (!classification) return;
 
-        const fragment = normalizeWhitespace($(el).attr('id') || $(el).attr('name') || '');
-        if (!fragment) return;
+            const fragment = normalizeWhitespace($(el).attr('id') || $(el).attr('name') || '') || undefined;
+            candidates.push({
+                index: spineItem.index,
+                title,
+                fragment,
+                headingIndex,
+                level: Number(el.tagName.slice(1)),
+                ...classification,
+            });
+        });
+    }
 
-        headings.push({ title, fragment });
-    });
+    const boundaries: ChapterBoundary[] = [...selectHeadingFamily(candidates)];
+    if (boundaries.length < 2) return null;
 
-    if (headings.length < 2) return null;
+    const hasRecoveredOpening = boundaries[0].index > 0 || (boundaries[0].headingIndex ?? 0) > 0;
+    if (hasRecoveredOpening) {
+        boundaries.unshift({
+            index: 0,
+            title: 'Opening',
+        });
+    }
 
-    return headings.map((heading, index) => ({
-        title: heading.title,
-        slices: [{
-            path: onlySpinePath,
-            startFragment: heading.fragment,
-            endFragment: headings[index + 1]?.fragment,
-        }],
-        estimatedWords: 0,
-        source: 'spine',
-    }));
+    const chapters = buildChaptersFromBoundaries(boundaries, spine, 'heading');
+    if (hasRecoveredOpening && chapters[0]) {
+        chapters[0].source = 'spine';
+    }
+    return chapters;
 };
 
 const extractNavEntries = async (
@@ -715,6 +852,85 @@ const collectTocEntries = async (
     }
 
     return deduped;
+};
+
+const isLowInformationTocTitle = (title: string): boolean => {
+    const normalized = normalizeWhitespace(title).toLowerCase().replace(/[\s_-]+/g, ' ');
+    return !normalized || /^(?:untitled|unknown|title|chapter|section|part|book|item|entry)$/i.test(normalized);
+};
+
+const validateAndOrderTocEntries = async (
+    zip: JSZip,
+    tocEntries: TocEntry[],
+    spine: SpineItem[],
+): Promise<TocEntry[]> => {
+    const lookups = buildPathLookup(spine);
+    const htmlCache = new Map<string, string>();
+    const candidates: {
+        entry: TocEntry;
+        spineIndex: number;
+        anchorIndex: number;
+        originalIndex: number;
+    }[] = [];
+
+    for (const [originalIndex, tocEntry] of tocEntries.entries()) {
+        const spineIndex = resolveTocEntryToIndex(tocEntry, lookups, 0);
+        if (spineIndex === null) continue;
+
+        let anchorIndex = -1;
+        if (tocEntry.fragment) {
+            const path = spine[spineIndex].resolvedPath;
+            let html = htmlCache.get(path);
+            if (html === undefined) {
+                const entry = findZipEntry(zip, path);
+                html = entry ? await entry.async('string') : '';
+                htmlCache.set(path, html);
+            }
+            if (!html) continue;
+
+            const $ = cheerio.load(html);
+            const anchor = findFragmentElement($, tocEntry.fragment);
+            if (!anchor) continue;
+
+            const anchorElement = anchor.get(0);
+            if (!anchorElement) continue;
+
+            const semanticContainer = anchor.closest('[epub\\:type], [role]').first();
+            const semanticTokens = new Set(
+                `${semanticContainer.attr('epub:type') || ''} ${semanticContainer.attr('role') || ''}`
+                    .toLowerCase()
+                    .split(/\s+/)
+                    .filter(Boolean),
+            );
+            if (semanticTokens.has('pagebreak') || semanticTokens.has('doc-pagebreak')) continue;
+
+            const targetHeading = anchor.is('h1, h2, h3, h4, h5, h6')
+                ? anchor
+                : anchor.closest('h1, h2, h3, h4, h5, h6').first();
+            const targetTitle = normalizeWhitespace(targetHeading.text());
+            const validatedEntry = isLowInformationTocTitle(tocEntry.title) && targetTitle
+                ? { ...tocEntry, title: targetTitle }
+                : tocEntry;
+
+            $('*').each((index, element) => {
+                if (element === anchorElement) anchorIndex = index;
+            });
+            if (anchorIndex < 0) continue;
+
+            candidates.push({ entry: validatedEntry, spineIndex, anchorIndex, originalIndex });
+            continue;
+        }
+
+        candidates.push({ entry: tocEntry, spineIndex, anchorIndex, originalIndex });
+    }
+
+    return candidates
+        .sort((left, right) => (
+            left.spineIndex - right.spineIndex
+            || left.anchorIndex - right.anchorIndex
+            || left.originalIndex - right.originalIndex
+        ))
+        .map(({ entry }) => entry);
 };
 
 const buildBoundariesFromToc = (
@@ -930,8 +1146,11 @@ const extractSliceTitle = (html: string, fallback: string): string => {
     );
     if (heading) return heading;
 
+    const fallbackTitle = normalizeWhitespace(fallback);
+    if (fallbackTitle) return fallbackTitle;
+
     const documentTitle = normalizeWhitespace($('title').first().text());
-    return documentTitle || normalizeWhitespace(fallback);
+    return documentTitle;
 };
 
 const filterNonReadingChapters = async (
@@ -974,7 +1193,13 @@ const filterNonReadingChapters = async (
             const html = await loadHtml(normalizedPath);
             if (!html) continue;
 
-            const slicedHtml = extractSliceHtml(html, slice.startFragment, slice.endFragment);
+            const slicedHtml = extractSliceHtml(
+                html,
+                slice.startFragment,
+                slice.endFragment,
+                slice.startHeadingIndex,
+                slice.endHeadingIndex,
+            );
             const markupClassification = classifyArtifactMarkup(slicedHtml);
             const readableHtml = stripEmbeddedPublicationMatter(slicedHtml);
             const text = extractReadableTextFromHtml(readableHtml);
@@ -1015,7 +1240,7 @@ const filterNonReadingChapters = async (
 
             readableSlices.push(slice);
             readableSources.push({ html: readableHtml, text });
-            if (!bestTitle || isGenericChapterTitle(bestTitle) || bestTitle === 'Front Matter') {
+            if (!bestTitle || isGenericChapterTitle(bestTitle) || bestTitle === 'Front Matter' || bestTitle === 'Opening') {
                 bestTitle = sliceTitle || bestTitle;
             }
         }
@@ -1134,16 +1359,23 @@ export const buildEpubStructurePlan = async (zip: JSZip): Promise<EpubStructureP
     }
 
     const spineTocId = normalizeWhitespace($opf('spine').attr('toc') || '') || undefined;
-    const tocEntries = await collectTocEntries(zip, manifest, spineTocId);
+    const collectedTocEntries = await collectTocEntries(zip, manifest, spineTocId);
+    const tocEntries = await validateAndOrderTocEntries(zip, collectedTocEntries, spine);
     const tocBoundaries = buildBoundariesFromToc(tocEntries, spine);
+    const tocWasDegraded = tocEntries.length < collectedTocEntries.length;
 
     let rawChapters = tocBoundaries.length > 0
         ? buildChaptersFromBoundaries(tocBoundaries, spine)
         : buildFallbackSpineChapters(spine);
 
-    if (tocBoundaries.length === 0 || rawChapters.length === 1) {
-        const headingFallback = await buildSingleSpineHeadingChapters(zip, spine);
-        if (headingFallback && headingFallback.length > 1) {
+    if (tocBoundaries.length === 0 || rawChapters.length === 1 || tocWasDegraded) {
+        const headingFallback = await buildHeadingChapters(zip, spine);
+        const headingIsMoreComplete = headingFallback && headingFallback.length > rawChapters.length;
+        if (headingFallback && (
+            (headingFallback.length > 1 && tocBoundaries.length === 0)
+            || rawChapters.length === 1
+            || (tocWasDegraded && headingIsMoreComplete)
+        )) {
             rawChapters = headingFallback;
         }
     }
@@ -1199,7 +1431,13 @@ export const loadPlannedChapterSources = async (
 
         if (!html) continue;
 
-        const slicedHtml = extractSliceHtml(html, slice.startFragment, slice.endFragment);
+        const slicedHtml = extractSliceHtml(
+            html,
+            slice.startFragment,
+            slice.endFragment,
+            slice.startHeadingIndex,
+            slice.endHeadingIndex,
+        );
         const readableHtml = stripEmbeddedPublicationMatter(slicedHtml);
         const text = extractReadableTextFromHtml(readableHtml);
         sources.push({

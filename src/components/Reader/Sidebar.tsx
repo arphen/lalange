@@ -2,8 +2,8 @@ import React from 'react';
 import { type ChapterDocType, type GlobalSummaryType } from '../../core/sync/db';
 import { formatReadingTime } from '../../hooks/useReadingTimeEstimate';
 import { clsx } from 'clsx';
-import { BookOpen, ChevronRight, MapPin, X } from 'lucide-react';
-import { getSubchapterDisplayName } from './Sidebar.utils';
+import { BookOpen, ChevronRight, ListTree, MapPin, X } from 'lucide-react';
+import { getChapterStructureLabel, getSubchapterDisplayName } from './Sidebar.utils';
 import { isReadingChapter } from './readerNavigation';
 
 interface SidebarProps {
@@ -140,6 +140,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         : 0;
                     const chapterProgressPercent = Math.round(chapterProgress * 100);
                     const chapterIsHandoffTarget = chapterHandoffActive && chapterHandoffSelection?.chapterId === chapter.id;
+                    const chapterStructureLabel = getChapterStructureLabel(chapter.metadata?.structureSource);
 
                     return (
                         <div key={chapter.id} className="relative group flex flex-col">
@@ -162,7 +163,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                 >
                                     <div className="relative z-10">
                                         <div className="flex justify-between items-center gap-2 w-full mb-1">
-                                            <span className="truncate font-bold text-sm">{chapter.title}</span>
+                                            <span className="min-w-0 flex-1">
+                                                <span className="block truncate font-bold text-sm">{chapter.title}</span>
+                                                {chapterStructureLabel && (
+                                                    <span
+                                                        className="block mt-0.5 text-[9px] font-normal uppercase text-white/35"
+                                                        data-testid={`chapter-structure-${chapter.id}`}
+                                                    >
+                                                        {chapterStructureLabel}
+                                                    </span>
+                                                )}
+                                            </span>
                                             {isProcessing && (
                                                 <span className="w-1.5 h-1.5 bg-cyan-400 rounded-full animate-pulse" />
                                             )}
@@ -204,6 +215,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
                             {/* Subchapters */}
                             {chapter.subchapters && chapter.subchapters.length > 0 && (
                                 <div className="reader-section-list pl-3 ml-2 mb-2 space-y-1">
+                                    <div className="flex items-center gap-1.5 px-3 pt-2 pb-1 text-[9px] uppercase text-white/35">
+                                        <ListTree className="w-3 h-3" aria-hidden="true" />
+                                        <span>XYZ-created sections</span>
+                                    </div>
                                     {chapter.subchapters.map((sub, idx) => {
                                         // Check if we have ANY content for this subchapter (start index exists in content array)
                                         const currentContentLength = chapter.content?.length || 0;

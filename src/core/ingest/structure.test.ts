@@ -200,6 +200,386 @@ describe('buildEpubStructurePlan', () => {
         expect(plan.chapters[2].title).toBe('Chapter III');
     });
 
+    it('recovers a coherent sequence of titled headings without fragment IDs', async () => {
+        const zip = new JSZip();
+        zip.file('META-INF/container.xml', containerXml('OPS/content.opf'));
+        zip.file('OPS/content.opf', `
+            <package xmlns:dc="http://purl.org/dc/elements/1.1/">
+                <metadata><dc:title>ID-less Chapters</dc:title></metadata>
+                <manifest><item id="book" href="book.xhtml" media-type="application/xhtml+xml" /></manifest>
+                <spine><itemref idref="book" /></spine>
+            </package>
+        `);
+        zip.file('OPS/book.xhtml', xhtml(`
+            <h2>I. Loomings</h2><p>${repeatedWords('first', 120)}</p>
+            <h2>II. The Carpet-Bag</h2><p>${repeatedWords('second', 120)}</p>
+            <h2>III. The Spouter-Inn</h2><p>${repeatedWords('third', 120)}</p>
+        `));
+
+        const plan = await buildEpubStructurePlan(zip);
+        const firstSources = await loadPlannedChapterSources(zip, plan.chapters[0].slices);
+        const secondSources = await loadPlannedChapterSources(zip, plan.chapters[1].slices);
+
+        expect(plan.chapters.map((chapter) => chapter.title)).toEqual([
+            'I. Loomings',
+            'II. The Carpet-Bag',
+            'III. The Spouter-Inn',
+        ]);
+        expect(firstSources.map((source) => source.text).join(' ')).not.toContain('second0');
+        expect(secondSources.map((source) => source.text).join(' ')).not.toContain('third0');
+    });
+
+    it('recovers a coherent sequence of written-number headings', async () => {
+        const zip = new JSZip();
+        zip.file('META-INF/container.xml', containerXml('OPS/content.opf'));
+        zip.file('OPS/content.opf', `
+            <package xmlns:dc="http://purl.org/dc/elements/1.1/">
+                <metadata><dc:title>Written Numbers</dc:title></metadata>
+                <manifest><item id="book" href="book.xhtml" media-type="application/xhtml+xml" /></manifest>
+                <spine><itemref idref="book" /></spine>
+            </package>
+        `);
+        zip.file('OPS/book.xhtml', xhtml(`
+            <h2>ONE. The Door</h2><p>${repeatedWords('first', 120)}</p>
+            <h2>TWO. The Hall</h2><p>${repeatedWords('second', 120)}</p>
+            <h2>THREE. The Garden</h2><p>${repeatedWords('third', 120)}</p>
+        `));
+
+        const plan = await buildEpubStructurePlan(zip);
+
+        expect(plan.chapters.map((chapter) => chapter.title)).toEqual([
+            'ONE. The Door',
+            'TWO. The Hall',
+            'THREE. The Garden',
+        ]);
+        expect(plan.chapters.every((chapter) => chapter.source === 'heading')).toBe(true);
+    });
+
+    it('does not promote an isolated numbered heading to a chapter boundary', async () => {
+        const zip = new JSZip();
+        zip.file('META-INF/container.xml', containerXml('OPS/content.opf'));
+        zip.file('OPS/content.opf', `
+            <package xmlns:dc="http://purl.org/dc/elements/1.1/">
+                <metadata><dc:title>Decorative Number</dc:title></metadata>
+                <manifest><item id="book" href="book.xhtml" media-type="application/xhtml+xml" /></manifest>
+                <spine><itemref idref="book" /></spine>
+            </package>
+        `);
+        zip.file('OPS/book.xhtml', xhtml(`
+            <h1>A Complete Essay</h1><p>${repeatedWords('opening', 120)}</p>
+            <h2>I. A Digression</h2><p>${repeatedWords('ending', 120)}</p>
+        `));
+
+        const plan = await buildEpubStructurePlan(zip);
+
+        expect(plan.chapters).toHaveLength(1);
+        expect(plan.chapters[0].title).toBe('A Complete Essay');
+    });
+
+    it('rejects broken TOC fragments and recovers authored heading boundaries', async () => {
+        const zip = new JSZip();
+        zip.file('META-INF/container.xml', containerXml('OPS/content.opf'));
+        zip.file('OPS/content.opf', `
+            <package xmlns:dc="http://purl.org/dc/elements/1.1/">
+                <metadata>
+                    <dc:title>Broken Navigation</dc:title>
+                    <dc:creator>Tester</dc:creator>
+                </metadata>
+                <manifest>
+                    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav" />
+                    <item id="book" href="book.xhtml" media-type="application/xhtml+xml" />
+                </manifest>
+                <spine><itemref idref="book" /></spine>
+            </package>
+        `);
+        zip.file('OPS/nav.xhtml', xhtml(`
+            <nav epub:type="toc"><ol>
+                <li><a href="book.xhtml#missing-one">Chapter I</a></li>
+                <li><a href="book.xhtml#missing-two">Chapter II</a></li>
+            </ol></nav>
+        `));
+        zip.file('OPS/book.xhtml', xhtml(`
+            <h1 id="chapter-one">Chapter I</h1><p>${repeatedWords('first', 120)}</p>
+            <h1 id="chapter-two">Chapter II</h1><p>${repeatedWords('second', 120)}</p>
+        `));
+
+        const plan = await buildEpubStructurePlan(zip);
+        const firstSources = await loadPlannedChapterSources(zip, plan.chapters[0].slices);
+        const secondSources = await loadPlannedChapterSources(zip, plan.chapters[1].slices);
+
+        expect(plan.chapters.map((chapter) => chapter.title)).toEqual(['Chapter I', 'Chapter II']);
+        expect(firstSources.map((source) => source.text).join(' ')).not.toContain('second0');
+        expect(secondSources.map((source) => source.text).join(' ')).not.toContain('first0');
+    });
+
+    it('prefers a complete heading sequence over a partially broken TOC', async () => {
+        const zip = new JSZip();
+        zip.file('META-INF/container.xml', containerXml('OPS/content.opf'));
+        zip.file('OPS/content.opf', `
+            <package xmlns:dc="http://purl.org/dc/elements/1.1/">
+                <metadata><dc:title>Partial Navigation</dc:title></metadata>
+                <manifest>
+                    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav" />
+                    <item id="book" href="book.xhtml" media-type="application/xhtml+xml" />
+                </manifest>
+                <spine><itemref idref="book" /></spine>
+            </package>
+        `);
+        zip.file('OPS/nav.xhtml', xhtml(`
+            <nav epub:type="toc"><ol>
+                <li><a href="book.xhtml#one">Chapter I</a></li>
+                <li><a href="book.xhtml#missing-two">Chapter II</a></li>
+                <li><a href="book.xhtml#three">Chapter III</a></li>
+            </ol></nav>
+        `));
+        zip.file('OPS/book.xhtml', xhtml(`
+            <h1 id="one">Chapter I</h1><p>${repeatedWords('first', 120)}</p>
+            <h1 id="two">Chapter II</h1><p>${repeatedWords('second', 120)}</p>
+            <h1 id="three">Chapter III</h1><p>${repeatedWords('third', 120)}</p>
+        `));
+
+        const plan = await buildEpubStructurePlan(zip);
+        const firstSources = await loadPlannedChapterSources(zip, plan.chapters[0].slices);
+
+        expect(plan.chapters.map((chapter) => chapter.title)).toEqual(['Chapter I', 'Chapter II', 'Chapter III']);
+        expect(plan.chapters.every((chapter) => chapter.source === 'heading')).toBe(true);
+        expect(firstSources.map((source) => source.text).join(' ')).not.toContain('second0');
+    });
+
+    it('orders reversed TOC fragments by their physical document position', async () => {
+        const zip = new JSZip();
+        zip.file('META-INF/container.xml', containerXml('OPS/content.opf'));
+        zip.file('OPS/content.opf', `
+            <package xmlns:dc="http://purl.org/dc/elements/1.1/">
+                <metadata><dc:title>Reversed Navigation</dc:title></metadata>
+                <manifest>
+                    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav" />
+                    <item id="book" href="book.xhtml" media-type="application/xhtml+xml" />
+                </manifest>
+                <spine><itemref idref="book" /></spine>
+            </package>
+        `);
+        zip.file('OPS/nav.xhtml', xhtml(`
+            <nav epub:type="toc"><ol>
+                <li><a href="book.xhtml#chapter-two">Chapter II</a></li>
+                <li><a href="book.xhtml#chapter-one">Chapter I</a></li>
+            </ol></nav>
+        `));
+        zip.file('OPS/book.xhtml', xhtml(`
+            <h1 id="chapter-one">Chapter I</h1><p>${repeatedWords('first', 120)}</p>
+            <h1 id="chapter-two">Chapter II</h1><p>${repeatedWords('second', 120)}</p>
+        `));
+
+        const plan = await buildEpubStructurePlan(zip);
+        const firstSources = await loadPlannedChapterSources(zip, plan.chapters[0].slices);
+
+        expect(plan.chapters.map((chapter) => chapter.title)).toEqual(['Chapter I', 'Chapter II']);
+        expect(firstSources.map((source) => source.text).join(' ')).not.toContain('second0');
+    });
+
+    it('rejects semantic pagebreak links that masquerade as chapter navigation', async () => {
+        const zip = new JSZip();
+        zip.file('META-INF/container.xml', containerXml('OPS/content.opf'));
+        zip.file('OPS/content.opf', `
+            <package xmlns:dc="http://purl.org/dc/elements/1.1/">
+                <metadata><dc:title>Pagebreak Navigation</dc:title></metadata>
+                <manifest>
+                    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav" />
+                    <item id="book" href="book.xhtml" media-type="application/xhtml+xml" />
+                </manifest>
+                <spine><itemref idref="book" /></spine>
+            </package>
+        `);
+        zip.file('OPS/nav.xhtml', xhtml(`
+            <nav epub:type="toc"><ol>
+                <li><a href="book.xhtml#page-1">1</a></li>
+                <li><a href="book.xhtml#page-2">2</a></li>
+                <li><a href="book.xhtml#page-3">3</a></li>
+            </ol></nav>
+        `));
+        zip.file('OPS/book.xhtml', xhtml(`
+            <span id="page-1" epub:type="pagebreak">1</span>
+            <h1>Chapter I</h1><p>${repeatedWords('first', 120)}</p>
+            <span id="page-2" role="doc-pagebreak">2</span>
+            <h1>Chapter II</h1><p>${repeatedWords('second', 120)}</p>
+            <span id="page-3" epub:type="pagebreak">3</span>
+            <h1>Chapter III</h1><p>${repeatedWords('third', 120)}</p>
+        `));
+
+        const plan = await buildEpubStructurePlan(zip);
+
+        expect(plan.chapters.map((chapter) => chapter.title)).toEqual([
+            'Chapter I',
+            'Chapter II',
+            'Chapter III',
+        ]);
+        expect(plan.chapters.every((chapter) => chapter.source === 'heading')).toBe(true);
+    });
+
+    it('repairs repeated low-information TOC labels from their exact target headings', async () => {
+        const zip = new JSZip();
+        zip.file('META-INF/container.xml', containerXml('OPS/content.opf'));
+        zip.file('OPS/content.opf', `
+            <package xmlns:dc="http://purl.org/dc/elements/1.1/">
+                <metadata><dc:title>Weak Labels</dc:title></metadata>
+                <manifest>
+                    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav" />
+                    <item id="book" href="book.xhtml" media-type="application/xhtml+xml" />
+                </manifest>
+                <spine><itemref idref="book" /></spine>
+            </package>
+        `);
+        zip.file('OPS/nav.xhtml', xhtml(`
+            <nav epub:type="toc"><ol>
+                <li><a href="book.xhtml#one">Untitled</a></li>
+                <li><a href="book.xhtml#two">Untitled</a></li>
+                <li><a href="book.xhtml#three"></a></li>
+            </ol></nav>
+        `));
+        zip.file('OPS/book.xhtml', xhtml(`
+            <h1 id="one">Chapter One: Arrival</h1><p>${repeatedWords('first', 120)}</p>
+            <h1 id="two">Chapter Two: Discovery</h1><p>${repeatedWords('second', 120)}</p>
+            <h1 id="three">Chapter Three: Return</h1><p>${repeatedWords('third', 120)}</p>
+        `));
+
+        const plan = await buildEpubStructurePlan(zip);
+
+        expect(plan.chapters.map((chapter) => chapter.title)).toEqual([
+            'Chapter One: Arrival',
+            'Chapter Two: Discovery',
+            'Chapter Three: Return',
+        ]);
+        expect(plan.chapters.every((chapter) => chapter.source === 'toc')).toBe(true);
+    });
+
+    it('enriches generic Roman-numeral TOC labels from target headings', async () => {
+        const zip = new JSZip();
+        zip.file('META-INF/container.xml', containerXml('OPS/content.opf'));
+        zip.file('OPS/content.opf', `
+            <package xmlns:dc="http://purl.org/dc/elements/1.1/">
+                <metadata><dc:title>Richer Headings</dc:title></metadata>
+                <manifest>
+                    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav" />
+                    <item id="book" href="book.xhtml" media-type="application/xhtml+xml" />
+                </manifest>
+                <spine><itemref idref="book" /></spine>
+            </package>
+        `);
+        zip.file('OPS/nav.xhtml', xhtml(`
+            <nav epub:type="toc"><ol>
+                <li><a href="book.xhtml#one">Chapter I</a></li>
+                <li><a href="book.xhtml#two">Chapter II</a></li>
+            </ol></nav>
+        `));
+        zip.file('OPS/book.xhtml', xhtml(`
+            <h1 id="one">Chapter I: Arrival</h1><p>${repeatedWords('first', 120)}</p>
+            <h1 id="two">Chapter II: Discovery</h1><p>${repeatedWords('second', 120)}</p>
+        `));
+
+        const plan = await buildEpubStructurePlan(zip);
+
+        expect(plan.chapters.map((chapter) => chapter.title)).toEqual([
+            'Chapter I: Arrival',
+            'Chapter II: Discovery',
+        ]);
+        expect(plan.chapters.every((chapter) => chapter.source === 'toc')).toBe(true);
+    });
+
+    it('groups page-like spine files under conservative authored headings', async () => {
+        const zip = new JSZip();
+        zip.file('META-INF/container.xml', containerXml('OPS/content.opf'));
+        zip.file('OPS/content.opf', `
+            <package xmlns:dc="http://purl.org/dc/elements/1.1/">
+                <metadata>
+                    <dc:title>Page Spine</dc:title>
+                    <dc:creator>Tester</dc:creator>
+                </metadata>
+                <manifest>
+                    <item id="page1" href="page1.xhtml" media-type="application/xhtml+xml" />
+                    <item id="page2" href="page2.xhtml" media-type="application/xhtml+xml" />
+                    <item id="page3" href="page3.xhtml" media-type="application/xhtml+xml" />
+                </manifest>
+                <spine>
+                    <itemref idref="page1" />
+                    <itemref idref="page2" />
+                    <itemref idref="page3" />
+                </spine>
+            </package>
+        `);
+        zip.file('OPS/page1.xhtml', xhtml(`<h1>Chapter I</h1><p>${repeatedWords('first', 100)}</p>`));
+        zip.file('OPS/page2.xhtml', xhtml(`<p>${repeatedWords('continued', 100)}</p>`));
+        zip.file('OPS/page3.xhtml', xhtml(`<h1>Chapter II</h1><p>${repeatedWords('second', 100)}</p>`));
+
+        const plan = await buildEpubStructurePlan(zip);
+
+        expect(plan.chapters.map((chapter) => chapter.title)).toEqual(['Chapter I', 'Chapter II']);
+        expect(plan.chapters[0].slices.map((slice) => slice.path)).toEqual([
+            'OPS/page1.xhtml',
+            'OPS/page2.xhtml',
+        ]);
+        expect(plan.chapters.every((chapter) => chapter.source === 'heading')).toBe(true);
+    });
+
+    it('retains material before recovered headings without calling it authored structure', async () => {
+        const zip = new JSZip();
+        zip.file('META-INF/container.xml', containerXml('OPS/content.opf'));
+        zip.file('OPS/content.opf', `
+            <package xmlns:dc="http://purl.org/dc/elements/1.1/">
+                <metadata><dc:title>Recovered Opening</dc:title></metadata>
+                <manifest>
+                    <item id="opening" href="opening.xhtml" media-type="application/xhtml+xml" />
+                    <item id="chapter1" href="chapter1.xhtml" media-type="application/xhtml+xml" />
+                    <item id="chapter2" href="chapter2.xhtml" media-type="application/xhtml+xml" />
+                </manifest>
+                <spine>
+                    <itemref idref="opening" />
+                    <itemref idref="chapter1" />
+                    <itemref idref="chapter2" />
+                </spine>
+            </package>
+        `);
+        zip.file('OPS/opening.xhtml', xhtml(`<h1>Prologue</h1><p>${repeatedWords('preface', 100)}</p>`));
+        zip.file('OPS/chapter1.xhtml', xhtml(`<h1>Chapter I</h1><p>${repeatedWords('first', 100)}</p>`));
+        zip.file('OPS/chapter2.xhtml', xhtml(`<h1>Chapter II</h1><p>${repeatedWords('second', 100)}</p>`));
+
+        const plan = await buildEpubStructurePlan(zip);
+
+        expect(plan.chapters.map((chapter) => chapter.title)).toEqual(['Prologue', 'Chapter I', 'Chapter II']);
+        expect(plan.chapters.map((chapter) => chapter.source)).toEqual(['spine', 'heading', 'heading']);
+    });
+
+    it('keeps safe numbered labels instead of promoting repeated document titles', async () => {
+        const zip = new JSZip();
+        zip.file('META-INF/container.xml', containerXml('OPS/content.opf'));
+        zip.file('OPS/content.opf', `
+            <package xmlns:dc="http://purl.org/dc/elements/1.1/">
+                <metadata><dc:title>Unstructured Book</dc:title></metadata>
+                <manifest>
+                    <item id="page1" href="page1.xhtml" media-type="application/xhtml+xml" />
+                    <item id="page2" href="page2.xhtml" media-type="application/xhtml+xml" />
+                    <item id="page3" href="page3.xhtml" media-type="application/xhtml+xml" />
+                </manifest>
+                <spine>
+                    <itemref idref="page1" />
+                    <itemref idref="page2" />
+                    <itemref idref="page3" />
+                </spine>
+            </package>
+        `);
+        zip.file('OPS/page1.xhtml', xhtml(`<p>${repeatedWords('first', 100)}</p>`));
+        zip.file('OPS/page2.xhtml', xhtml(`<p>${repeatedWords('second', 100)}</p>`));
+        zip.file('OPS/page3.xhtml', xhtml(`<p>${repeatedWords('third', 100)}</p>`));
+
+        const plan = await buildEpubStructurePlan(zip);
+
+        expect(plan.chapters.map((chapter) => chapter.title)).toEqual([
+            'Chapter 1',
+            'Chapter 2',
+            'Chapter 3',
+        ]);
+        expect(plan.chapters.every((chapter) => chapter.source === 'spine')).toBe(true);
+    });
+
     it('merges pathological tiny spine slices into larger reading chapters', async () => {
         const zip = new JSZip();
         zip.file('META-INF/container.xml', containerXml('OPS/content.opf'));
