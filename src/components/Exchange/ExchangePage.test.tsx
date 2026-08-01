@@ -1,9 +1,11 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
+import { StrictMode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ExchangePage } from './ExchangePage';
 
 const mockAnswerOpticalExchangeOffer = vi.hoisted(() => vi.fn());
+const mockExtractPairingCode = vi.hoisted(() => vi.fn());
 const mockWriteText = vi.hoisted(() => vi.fn());
 
 vi.mock('../../core/exchange', () => ({
@@ -23,7 +25,7 @@ vi.mock('../../core/exchange', () => ({
         },
     }),
     discardStagedExchangeBundle: vi.fn(),
-    extractPairingCode: vi.fn(),
+    extractPairingCode: mockExtractPairingCode,
     planExchangeImport: vi.fn(),
     stageExchangeBundle: vi.fn(),
 }));
@@ -41,6 +43,7 @@ describe('ExchangePage', () => {
             configurable: true,
             value: { writeText: mockWriteText },
         });
+        mockExtractPairingCode.mockReturnValue(undefined);
         mockWriteText.mockResolvedValue(undefined);
         mockAnswerOpticalExchangeOffer.mockResolvedValue({
             peer: {
@@ -72,5 +75,18 @@ describe('ExchangePage', () => {
 
         await waitFor(() => expect(mockWriteText).toHaveBeenCalledWith('xchg1.j.full-answer-payload'));
         expect(await screen.findByRole('button', { name: 'Full answer copied' })).toBeInTheDocument();
+    });
+
+    it('opens an invitation URL under React Strict Mode', async () => {
+        mockExtractPairingCode.mockReturnValue('offer-code');
+
+        render(
+            <StrictMode>
+                <MemoryRouter><ExchangePage /></MemoryRouter>
+            </StrictMode>,
+        );
+
+        expect(await screen.findByRole('heading', { name: 'Continue from the other screen.' })).toBeInTheDocument();
+        expect(screen.getByText('Invitation from Phone')).toBeInTheDocument();
     });
 });

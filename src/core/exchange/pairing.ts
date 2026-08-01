@@ -1,7 +1,10 @@
 import { generateUUID } from '../../utils/uuid';
 import type { ExchangeBundle, ExchangeInvitationSummary } from './types';
 
-const CODE_PREFIX = 'xchg1';
+const LEGACY_CODE_PREFIX = 'xchg1';
+const COMPACT_CODE_PREFIX = 'XCHG2';
+const BASE45_ALPHABET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ $%*+-./:';
+const MAX_INVITATION_BOOKS = 3;
 const DATA_CHANNEL_LABEL = 'xyz-device-exchange-v1';
 const MAX_CHUNK_BYTES = 32 * 1024;
 const MAX_BUFFERED_BYTES = 1024 * 1024;
@@ -52,6 +55,21 @@ interface EncodedAnswer {
 }
 
 type PairingSignal = EncodedOffer | EncodedAnswer;
+
+type CompactInvitation = [
+    intent: 0 | 1 | 2,
+    sourceDeviceName: string,
+    bookCount: number,
+    books: Array<[title: string, author?: string]>,
+];
+
+type CompactPairingSignal = [
+    kind: 0 | 1,
+    sessionId: string,
+    secret: string,
+    sdp: string,
+    invitation?: CompactInvitation,
+];
 
 interface TransferStartMessage {
     type: 'transfer-start';
@@ -118,6 +136,94 @@ function base64UrlToBytes(value: string): Uint8Array {
     return Uint8Array.from(binary, (character) => character.charCodeAt(0));
 }
 
+function bytesToBase45(bytes: Uint8Array): string {
+    let encoded = '';
+    for (let index = 0; index < bytes.length; index += 2) {
+        const value = index + 1 < bytes.length
+            ? bytes[index] * 256 + bytes[index + 1]
+            : bytes[index];
+        encoded += BASE45_ALPHABET[value % 45];
+        encoded += BASE45_ALPHABET[Math.floor(value / 45) % 45];
+        if (index + 1 < bytes.length) encoded += BASE45_ALPHABET[Math.floor(value / (45 * 45))];
+    }
+        return encoded.replace(/%/g, '%25').replace(/ /g, '%20').replace(/\//g, '%2F');
+}
+
+function base45ToBytes(value: string): Uint8Array {
+        const decodedValue = value.replace(/%20/g, ' ').replace(/%2F/g, '/').replace(/%25/g, '%');
+    if (decodedValue.length % 3 === 1) throw new Error('Invalid Base45 payload.');
+
+    const bytes: number[] = [];
+    for (let index = 0; index < decodedValue.length; index += 3) {
+        const chunkLength = Math.min(3, decodedValue.length - index);
+        const first = BASE45_ALPHABET.indexOf(decodedValue[index]);
+        const second = BASE45_ALPHABET.indexOf(decodedValue[index + 1]);
+        const third = chunkLength === 3 ? BASE45_ALPHABET.indexOf(decodedValue[index + 2]) : 0;
+        if (first < 0 || second < 0 || third < 0) throw new Error('Invalid Base45 payload.');
+
+        const decoded = first + second * 45 + third * 45 * 45;
+        if ((chunkLength === 3 && decoded > 0xffff) || (chunkLength === 2 && decoded > 0xff)) {
+            throw new Error('Invalid Base45 payload.');
+        }
+        if (chunkLength === 3) bytes.push(decoded >> 8);
+        bytes.push(decoded & 0xff);
+    }
+    return Uint8Array.from(bytes);
+}
+
+function compactPairingSignal(signal: PairingSignal): CompactPairingSignal {
+    const compact: CompactPairingSignal = [
+        signal.kind === 'offer' ? 0 : 1,
+        signal.sessionId,
+        signal.secret,
+        signal.description.sdp || '',
+    ];
+    if (signal.kind === 'offer' && signal.invitation) {
+        const intent = signal.invitation.intent === 'give' ? 0 : signal.invitation.intent === 'handoff' ? 1 : 2;
+        compact.push([
+            intent,
+            signal.invitation.sourceDevice.name,
+            signal.invitation.bookCount,
+            signal.invitation.books.slice(0, MAX_INVITATION_BOOKS).map((book) => [book.title, book.author]),
+        ]);
+    }
+    return compact;
+}
+
+function expandPairingSignal(signal: CompactPairingSignal): PairingSignal {
+    const [kind, sessionId, secret, sdp, compactInvitation] = signal;
+    if ((kind !== 0 && kind !== 1) || !sessionId || !secret || !sdp) {
+        throw new Error('The device exchange code is incomplete.');
+    }
+
+    if (kind === 1) return { kind: 'answer', sessionId, secret, description: { type: 'answer', sdp } };
+
+    let invitation: ExchangeInvitationSummary | undefined;
+    if (compactInvitation) {
+        const [intent, sourceDeviceName, bookCount, books] = compactInvitation;
+        invitation = {
+            intent: intent === 0 ? 'give' : intent === 1 ? 'handoff' : 'reconcile',
+            scope: 'selection',
+            sourceDevice: { id: '', name: sourceDeviceName, createdAt: 0 },
+            bookCount,
+            books: books.map(([title, author], index) => ({
+                bookId: `preview-${index}`,
+                title,
+                author,
+                estimatedBytes: 0,
+            })),
+            selection: {
+                content: false,
+                analysis: false,
+                progress: false,
+                highlights: false,
+                listening: false,
+            },
+        };
+    }
+    return { kind: 'offer', sessionId, secret, description: { type: 'offer', sdp }, invitation };
+}
+
 async function compress(bytes: Uint8Array): Promise<Uint8Array> {
     if (typeof CompressionStream === 'undefined') return bytes;
     const body = new Response(bytes as BodyInit).body;
@@ -137,11 +243,15 @@ async function decompress(bytes: Uint8Array, compressed: boolean): Promise<Uint8
     return new Uint8Array(await new Response(stream).arrayBuffer());
 }
 
-export async function encodePairingSignal(signal: PairingSignal): Promise<string> {
-    const json = new TextEncoder().encode(JSON.stringify(signal));
+export async function encodePairingSignal(signal: PairingSignal, legacy = false): Promise<string> {
+    const encodedSignal = legacy ? signal : compactPairingSignal(signal);
+    const json = new TextEncoder().encode(JSON.stringify(encodedSignal));
     const canCompress = typeof CompressionStream !== 'undefined';
     const payload = await compress(json);
-    return `${CODE_PREFIX}.${canCompress ? 'g' : 'j'}.${bytesToBase64Url(payload)}`;
+    if (legacy) {
+        return `${LEGACY_CODE_PREFIX}.${canCompress ? 'g' : 'j'}.${bytesToBase64Url(payload)}`;
+    }
+    return `${COMPACT_CODE_PREFIX}:${canCompress ? 'G' : 'J'}:${bytesToBase45(payload)}:`;
 }
 
 export async function decodePairingSignal(code: string): Promise<PairingSignal> {
@@ -149,9 +259,15 @@ export async function decodePairingSignal(code: string): Promise<PairingSignal> 
     if (/^[A-Z0-9]{6}$/i.test(normalizedCode)) {
         throw new Error('This is the verification code, not the full device exchange code. Copy the full answer code from the other device.');
     }
-    const match = normalizedCode.match(/^xchg1\.(g|j)\.([A-Za-z0-9_-]+)$/);
-    if (!match) throw new Error('This is not a valid device exchange code.');
-    const json = await decompress(base64UrlToBytes(match[2]), match[1] === 'g');
+    const compactMatch = normalizedCode.match(/^XCHG2:(G|J):(.+):$/);
+    if (compactMatch) {
+        const json = await decompress(base45ToBytes(compactMatch[2]), compactMatch[1] === 'G');
+        return expandPairingSignal(JSON.parse(new TextDecoder().decode(json)) as CompactPairingSignal);
+    }
+
+    const legacyMatch = normalizedCode.match(/^xchg1\.(g|j)\.([A-Za-z0-9_-]+)$/);
+    if (!legacyMatch) throw new Error('This is not a valid device exchange code.');
+    const json = await decompress(base64UrlToBytes(legacyMatch[2]), legacyMatch[1] === 'g');
     const signal = JSON.parse(new TextDecoder().decode(json)) as PairingSignal;
 
     if ((signal.kind !== 'offer' && signal.kind !== 'answer')
@@ -165,7 +281,12 @@ export async function decodePairingSignal(code: string): Promise<PairingSignal> 
 }
 
 export function extractPairingCode(value: string): string | undefined {
-    const hash = value.startsWith('http') ? new URL(value).hash : value;
+    if (/^https?:/i.test(value)) {
+        const url = new URL(value);
+        const pathMatch = url.pathname.match(/^\/exchange\/(.+)$/i);
+        if (pathMatch) return pathMatch[1];
+    }
+    const hash = /^https?:/i.test(value) ? new URL(value).hash : value;
     const params = new URLSearchParams(hash.replace(/^#/, ''));
     return params.get('offer') ?? params.get('answer') ?? undefined;
 }
@@ -410,19 +531,20 @@ export async function createOpticalExchangeOffer(
         description: peerConnection.localDescription.toJSON(),
         invitation: invitationSummary,
     });
-    const invitation = new URL('/exchange', PUBLIC_EXCHANGE_ORIGIN);
-    invitation.hash = new URLSearchParams({ offer: offerCode }).toString();
+    const publicOrigin = new URL(PUBLIC_EXCHANGE_ORIGIN).origin.toUpperCase();
+    const invitationUrl = `${publicOrigin}/EXCHANGE/${offerCode}`;
 
     return {
         peer,
         offerCode,
-        invitationUrl: invitation.toString(),
+        invitationUrl,
         pairingCode: displayPairingCode(secret),
     };
 }
 
 export async function answerOpticalExchangeOffer(codeOrUrl: string): Promise<ExchangeAnswerSession> {
     const code = extractPairingCode(codeOrUrl) ?? codeOrUrl;
+    const useLegacyCode = code.trim().startsWith(`${LEGACY_CODE_PREFIX}.`);
     const offer = await decodePairingSignal(code);
     if (offer.kind !== 'offer') throw new Error('Scan the invitation shown on the sending device.');
 
@@ -438,7 +560,7 @@ export async function answerOpticalExchangeOffer(codeOrUrl: string): Promise<Exc
         sessionId: offer.sessionId,
         secret: offer.secret,
         description: peerConnection.localDescription.toJSON(),
-    });
+    }, useLegacyCode);
     return {
         peer,
         answerCode,

@@ -136,7 +136,7 @@ export function ExchangeSheet({
     const acceptAnswer = async (answer: string) => {
         if (!peerRef.current || !bundleRef.current) return;
         if (/^[A-Z0-9]{6}$/i.test(answer.trim())) {
-            setError('That is the six-character verification code. Copy and paste the full xchg1... answer code from the other device.');
+            setError('That is the six-character verification code. Copy and paste the full answer code from the other device.');
             return;
         }
         try {
@@ -321,7 +321,7 @@ export function ExchangeSheet({
                                     setPastedAnswer(event.target.value);
                                     setError(null);
                                 }}
-                                placeholder="Or paste full xchg1... answer code"
+                                placeholder="Or paste full answer code"
                             />
                             <button type="button" onClick={() => void acceptAnswer(pastedAnswer)} disabled={!pastedAnswer.trim()}>Connect</button>
                         </div>

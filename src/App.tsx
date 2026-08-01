@@ -36,7 +36,7 @@ function App() {
   // Incoming device routes are completely standalone: receiving a book must not
   // require AI setup or any other first-run flow.
   const isSyncPage = location.pathname === '/sync';
-  const isExchangePage = location.pathname === '/exchange';
+  const isExchangePage = location.pathname.toLowerCase().startsWith('/exchange');
 
   // Determine current view for sidebar highlighting
   let view: ViewState = 'archive';

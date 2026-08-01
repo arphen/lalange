@@ -38,7 +38,6 @@ export function ExchangePage() {
     const [error, setError] = useState<string | null>(null);
     const [answerCopyState, setAnswerCopyState] = useState<'idle' | 'copied' | 'error'>('idle');
     const peerRef = useRef<OpticalExchangePeer | null>(null);
-    const initialOfferRef = useRef(false);
 
     const inspectOffer = async (value: string) => {
         try {
@@ -55,8 +54,6 @@ export function ExchangePage() {
     };
 
     useEffect(() => {
-        if (initialOfferRef.current) return;
-        initialOfferRef.current = true;
         const initialOffer = extractPairingCode(window.location.href);
         if (!initialOffer) return;
         const timeout = window.setTimeout(() => void inspectOffer(initialOffer), 0);

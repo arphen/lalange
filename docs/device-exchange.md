@@ -45,6 +45,11 @@ candidates and, through the default Cloudflare STUN server, public
 server-reflexive candidates. There is no signaling server; the offer and answer
 still move directly between devices through the QR or copy/paste flow.
 
+Pairing codes use gzip-compressed tuple data and Base45 so QR renderers can use
+their denser alphanumeric mode. Invitations preview at most three book titles;
+the complete manifest is sent only after the peer connection opens. Version 1
+pairing codes remain readable for compatibility.
+
 1. The initiator creates an offer and displays an invitation QR.
 2. The receiving browser scans the QR and opens the static `/exchange` route.
 3. The receiver creates an answer and displays an answer QR.

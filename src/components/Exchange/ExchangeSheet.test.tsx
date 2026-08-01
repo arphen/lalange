@@ -52,7 +52,7 @@ describe('ExchangeSheet', () => {
         fireEvent.click(screen.getByRole('button', { name: /Show transfer code/i }));
         fireEvent.click(await screen.findByRole('button', { name: /Scan their answer/i }));
 
-        fireEvent.change(screen.getByPlaceholderText('Or paste full xchg1... answer code'), {
+        fireEvent.change(screen.getByPlaceholderText('Or paste full answer code'), {
             target: { value: 'FBCA7B' },
         });
         fireEvent.click(screen.getByRole('button', { name: 'Connect' }));
