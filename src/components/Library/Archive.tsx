@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { ScanLine } from 'lucide-react';
 import { initDB, type BookDocType, type MyDatabase } from '../../core/sync/db';
 import { initialIngest, processChaptersInBackground, stopProcessing, estimateBookDensity } from '../../core/ingest/pipeline';
+import { decodeRawFilePayload, defaultIngestReaderRegistry } from '../../core/ingest/readers';
 import { useAIStore } from '../../core/store/ai';
 import { useSettingsStore } from '../../core/store/settings';
 import { BookCard } from './BookCard';
@@ -14,6 +15,8 @@ interface ArchiveProps {
 }
 
 const normalizeIdentity = (value?: string) => (value || '').trim().toLowerCase();
+const uploadAccept = defaultIngestReaderRegistry.getAcceptAttribute();
+const supportedFormatsLabel = defaultIngestReaderRegistry.getSupportedExtensionsLabel();
 
 const findDuplicateBook = async (
     db: MyDatabase,
@@ -21,6 +24,7 @@ const findDuplicateBook = async (
     incomingBook: BookDocType,
     incomingRawData: string
 ): Promise<BookDocType | null> => {
+    const incomingRawPayload = decodeRawFilePayload(incomingRawData).base64Data;
     const incomingTitle = normalizeIdentity(incomingBook.title);
     const incomingAuthor = normalizeIdentity(incomingBook.author || 'Unknown');
 
@@ -32,7 +36,10 @@ const findDuplicateBook = async (
 
     for (const candidate of candidateBooks) {
         const rawFileDoc = await db.raw_files.findOne(candidate.id).exec();
-        if (rawFileDoc?.data === incomingRawData) {
+        const candidateRawPayload = rawFileDoc?.data
+            ? decodeRawFilePayload(rawFileDoc.data).base64Data
+            : '';
+        if (candidateRawPayload && candidateRawPayload === incomingRawPayload) {
             return candidate;
         }
     }
@@ -194,10 +201,10 @@ export const Archive: React.FC<ArchiveProps> = ({ onOpenBook, onScanHandoff }) =
 
         if (e.dataTransfer.files && e.dataTransfer.files[0]) {
             const file = e.dataTransfer.files[0];
-            if (file.type === 'application/epub+zip' || file.name.endsWith('.epub')) {
+            if (defaultIngestReaderRegistry.isFileSupported(file)) {
                 await ingestBook(file);
             } else {
-                alert('Please drop an EPUB file.');
+                alert(`Please drop a supported file (${supportedFormatsLabel}).`);
             }
         }
     };
@@ -246,7 +253,7 @@ export const Archive: React.FC<ArchiveProps> = ({ onOpenBook, onScanHandoff }) =
                                 <div className="mt-3 flex flex-wrap gap-2">
                                     <span className="archive-kpi-chip">{books.length.toLocaleString()} texts</span>
                                     <span className="archive-kpi-chip">{books.reduce((acc, b) => acc + b.totalWords, 0).toLocaleString()} words</span>
-                                    <span className="archive-kpi-chip">Drop EPUB anywhere to ingest</span>
+                                    <span className="archive-kpi-chip">Drop supported files anywhere to ingest ({supportedFormatsLabel})</span>
                                 </div>
                             </div>
 
@@ -282,7 +289,7 @@ export const Archive: React.FC<ArchiveProps> = ({ onOpenBook, onScanHandoff }) =
                                 </button>
                                 <label className="archive-action-btn archive-action-btn--primary cursor-pointer">
                                     <span className="flex items-center gap-2">
-                                        {loading ? 'INGESTING...' : 'UPLOAD EPUB'}
+                                        {loading ? 'INGESTING...' : 'UPLOAD FILE'}
                                         {!loading && (
                                             <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
@@ -291,7 +298,7 @@ export const Archive: React.FC<ArchiveProps> = ({ onOpenBook, onScanHandoff }) =
                                     </span>
                                     <input
                                         type="file"
-                                        accept=".epub"
+                                        accept={uploadAccept}
                                         className="hidden"
                                         onChange={handleFileUpload}
                                         disabled={loading}
@@ -309,7 +316,7 @@ export const Archive: React.FC<ArchiveProps> = ({ onOpenBook, onScanHandoff }) =
                                 </svg>
                             </div>
                             <p className="mb-2 font-mono text-gray-400">ARCHIVE EMPTY</p>
-                            <p className="font-mono text-xs text-gray-500">UPLOAD EPUB TO BEGIN INGESTION</p>
+                            <p className="font-mono text-xs text-gray-500">UPLOAD A SUPPORTED FILE TO BEGIN INGESTION ({supportedFormatsLabel})</p>
                         </div>
                     ) : (
                         <div className="archive-grid grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3">

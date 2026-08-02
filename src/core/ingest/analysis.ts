@@ -9,6 +9,7 @@ export const analysisQueue = new PQueue({ concurrency: 1 });
 export interface AnalysisResult {
     densities: number[];
     analysisData: { tokens: string[], surprisals: number[] }[];
+    completed: boolean;
 }
 
 export interface WindowResult {
@@ -29,7 +30,8 @@ export type OnWindowComplete = (result: WindowResult) => Promise<void>;
  */
 export const analyzeDensityRange = async (
     words: string[],
-    onWindowComplete?: OnWindowComplete
+    onWindowComplete?: OnWindowComplete,
+    signal?: AbortSignal,
 ): Promise<AnalysisResult> => {
     const { pacingModelTier } = useSettingsStore.getState();
     const WINDOW_SIZE = 250;
@@ -42,6 +44,11 @@ export const analyzeDensityRange = async (
 
         // Process in chunks of WINDOW_SIZE
         for (let i = 0; i < words.length; i += WINDOW_SIZE) {
+            if (signal?.aborted) {
+                console.log(`[Analysis] Density scan interrupted after ${rawSurprisals.length}/${words.length} words.`);
+                break;
+            }
+
             const chunkWords = words.slice(i, i + WINDOW_SIZE);
             const chunkText = chunkWords.join(' ');
             
@@ -140,6 +147,10 @@ export const analyzeDensityRange = async (
         }
 
         // === PHASE 2: Calculate final percentiles for relative scoring across ALL words ===
+        if (rawSurprisals.length === 0) {
+            return { densities: [], analysisData: [], completed: words.length === 0 };
+        }
+
         const sortedSurprisals = [...rawSurprisals].sort((a, b) => a - b);
         const getPercentile = (p: number) => {
             const idx = Math.floor((p / 100) * (sortedSurprisals.length - 1));
@@ -158,7 +169,7 @@ export const analyzeDensityRange = async (
         const sensitivityMult = (useSettingsStore.getState().pacingSensitivity ?? 50) / 50;
         const densities: number[] = [];
 
-        for (let i = 0; i < words.length; i++) {
+        for (let i = 0; i < rawSurprisals.length; i++) {
             const word = words[i];
             const surprisal = rawSurprisals[i];
 
@@ -182,7 +193,11 @@ export const analyzeDensityRange = async (
             densities.push(clamped);
         }
 
-        return { densities, analysisData };
+        return {
+            densities,
+            analysisData,
+            completed: rawSurprisals.length === words.length,
+        };
 
     } catch (e) {
         console.warn('LLM failed for density analysis (Forward Pass)', e);
@@ -192,7 +207,8 @@ export const analyzeDensityRange = async (
         }
         return { 
             densities: new Array(words.length).fill(1.0), 
-            analysisData: defaultAnalysisData
+            analysisData: defaultAnalysisData,
+            completed: !signal?.aborted,
         };
     }
 };

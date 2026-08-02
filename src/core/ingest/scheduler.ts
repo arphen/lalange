@@ -53,6 +53,8 @@ export class IngestionScheduler {
     private tasks: IngestionTask[] = [];
     private globalSummaryTasks: GlobalSummaryTask[] = [];
     private isRunning = false;
+    private activeTask: IngestionTask | null = null;
+    private activeTaskAbortController: AbortController | null = null;
     private currentBookId: string | null = null;
     private currentChapterId: string | null = null;
     private currentWordIndex: number = 0;
@@ -84,7 +86,7 @@ export class IngestionScheduler {
 
                 if (summariesWereDisabled && summariesAreNowEnabled) {
                     console.log("[Scheduler] Automatic summaries enabled, resuming summary processing.");
-                    this.wakeUpDormantTasks();
+                    this.reconcileTaskActivation();
                     this.wakeUpGlobalSummaryTasks();
                     this.rebalancePriorities();
                     if (!this.isRunning) this.processNext();
@@ -100,13 +102,20 @@ export class IngestionScheduler {
         if (globalWordIndex !== undefined) {
             this.currentGlobalWordIndex = globalWordIndex;
         }
-        this.wakeUpDormantTasks();
+
+        const activeTaskIds = this.reconcileTaskActivation();
+        if (this.activeTask && !activeTaskIds.has(this.activeTask.id)) {
+            this.activeTaskAbortController?.abort();
+        }
         this.wakeUpGlobalSummaryTasks();
         this.rebalancePriorities();
         this.processNext();
     }
 
     public removeTasksForBook(bookId: string) {
+        if (this.activeTask?.bookId === bookId) {
+            this.activeTaskAbortController?.abort();
+        }
         const count = this.tasks.filter(t => t.bookId === bookId).length;
         const globalCount = this.globalSummaryTasks.filter(t => t.bookId === bookId).length;
         this.tasks = this.tasks.filter(t => t.bookId !== bookId);
@@ -137,7 +146,7 @@ export class IngestionScheduler {
 
         // A newly discovered next-chapter task may already be inside the active
         // lookahead window even when the pipeline initially marks it dormant.
-        this.wakeUpDormantTasks();
+        this.reconcileTaskActivation();
         if (newTask.status === 'pending') {
             this.rebalancePriorities();
             this.processNext();
@@ -192,8 +201,9 @@ export class IngestionScheduler {
         });
     }
 
-    private wakeUpDormantTasks() {
-        if (!this.currentBookId || !this.currentChapterId) return;
+    private reconcileTaskActivation(): Set<string> {
+        const activeTaskIds = new Set<string>();
+        if (!this.currentBookId || !this.currentChapterId) return activeTaskIds;
 
         // Calculate lookahead based on reading time rather than fixed chunk count.
         // This ensures we always have enough buffer even with small chunks from malformed epubs.
@@ -238,11 +248,14 @@ export class IngestionScheduler {
         }
 
         this.tasks.forEach((task) => {
-            if (task.status !== 'dormant') return;
-            if (task.bookId !== this.currentBookId) return;
-            if (task.type === 'SUMMARY' && settings.summariesEnabled === false) return;
+            if (task.status === 'completed' || task.status === 'failed') return;
+            let shouldBeActive = false;
 
-            if (task.chapterId === this.currentChapterId) {
+            if (
+                task.bookId === this.currentBookId
+                && task.chapterId === this.currentChapterId
+                && !(task.type === 'SUMMARY' && settings.summariesEnabled === false)
+            ) {
                 const lookaheadWords = task.type === 'DENSITY' ? DENSITY_LOOKAHEAD_WORDS : SUMMARY_LOOKAHEAD_WORDS;
                 const minChunks = task.type === 'DENSITY' ? MIN_DENSITY_CHUNKS : MIN_SUMMARY_CHUNKS;
                 
@@ -251,11 +264,9 @@ export class IngestionScheduler {
                 const isWithinChunkLookahead = task.subchapterIndex <= currentChunkIndex + minChunks;
                 const isRewind = task.subchapterIndex >= Math.max(0, currentChunkIndex - REWIND_CHUNKS);
 
-                if (isRewind && (isWithinWordLookahead || isWithinChunkLookahead)) {
-                    task.status = 'pending';
-                    console.log(`[Scheduler] Waking up task: ${task.id} (Chunk: ${task.subchapterIndex}, Current: ${currentChunkIndex}, WordDist: ${task.startWordIndex - this.currentWordIndex})`);
-                }
+                shouldBeActive = isRewind && (isWithinWordLookahead || isWithinChunkLookahead);
             } else if (
+                task.bookId === this.currentBookId &&
                 task.type === 'DENSITY' &&
                 currentChapterIndex !== undefined &&
                 task.chapterIndex === currentChapterIndex + 1
@@ -263,12 +274,25 @@ export class IngestionScheduler {
                 const isWithinWordLookahead = task.startWordIndex < DENSITY_LOOKAHEAD_WORDS;
                 const isWithinChunkLookahead = task.subchapterIndex < MIN_DENSITY_CHUNKS;
 
-                if (isWithinWordLookahead || isWithinChunkLookahead) {
-                    task.status = 'pending';
-                    console.log(`[Scheduler] Preloading next chapter task: ${task.id}`);
-                }
+                shouldBeActive = isWithinWordLookahead || isWithinChunkLookahead;
+            }
+
+            if (shouldBeActive) {
+                activeTaskIds.add(task.id);
+            }
+
+            if (task.status === 'processing') return;
+
+            if (shouldBeActive && task.status === 'dormant') {
+                task.status = 'pending';
+                console.log(`[Scheduler] Waking up task: ${task.id}`);
+            } else if (!shouldBeActive && task.status === 'pending') {
+                task.status = 'dormant';
+                console.log(`[Scheduler] Returning stale task to dormant: ${task.id}`);
             }
         });
+
+        return activeTaskIds;
     }
 
     private rebalancePriorities() {
@@ -408,6 +432,9 @@ export class IngestionScheduler {
         
         this.isRunning = true;
         nextTask.status = 'processing';
+        const abortController = new AbortController();
+        this.activeTask = nextTask;
+        this.activeTaskAbortController = abortController;
 
         try {
             // Note: We don't wrap in llmQueue.add() here because:
@@ -415,29 +442,35 @@ export class IngestionScheduler {
             // - generateUnifiedCompletion() for SUMMARY tasks is lightweight wrapper
             // Wrapping here would cause deadlock since analysisQueue has concurrency 1
             console.log(`[Scheduler] Executing task: ${nextTask.id}`);
-            await this.executeTask(nextTask);
-            console.log(`[Scheduler] [Success] Task Completed: [${nextTask.type}] Ch:${nextTask.chapterId.split('_').pop()} Pt:${nextTask.subchapterIndex}`);
-            nextTask.status = 'completed';
-            // Remove completed task
-            this.tasks = this.tasks.filter(t => t.id !== nextTask.id);
+            const completed = await this.executeTask(nextTask, abortController.signal);
+            if (completed) {
+                console.log(`[Scheduler] [Success] Task Completed: [${nextTask.type}] Ch:${nextTask.chapterId.split('_').pop()} Pt:${nextTask.subchapterIndex}`);
+                nextTask.status = 'completed';
+                this.tasks = this.tasks.filter(t => t.id !== nextTask.id);
+            } else {
+                console.log(`[Scheduler] Task interrupted and returned to dormant: ${nextTask.id}`);
+                nextTask.status = 'dormant';
+            }
         } catch (e) {
             console.error(`[Scheduler] [Failed] Task Error: [${nextTask.type}] Ch:${nextTask.chapterId.split('_').pop()} Pt:${nextTask.subchapterIndex}`, e);
             nextTask.status = 'failed';
             // Move to end or retry logic?
         } finally {
+            this.activeTask = null;
+            this.activeTaskAbortController = null;
             this.isRunning = false;
             this.processNext(); // Loop
         }
     }
 
-    private async executeTask(task: IngestionTask) {
+    private async executeTask(task: IngestionTask, signal: AbortSignal): Promise<boolean> {
         // Double check if task is still valid (might have been removed from queue but reference held)
         // Or if book was deleted
         const db = await initDB();
         const bookExists = await db.books.findOne(task.bookId).exec();
         if (!bookExists) {
             console.log(`[Scheduler] Skipping task for deleted book ${task.bookId}`);
-            return;
+            return true;
         }
 
         const settings = useSettingsStore.getState();
@@ -495,11 +528,10 @@ export class IngestionScheduler {
                     console.log(`[Scheduler] Incremental save: ${result.densities.length} densities at offset ${result.startIndex}`);
                 };
 
-                // Analyze with incremental saves
-                await analyzeDensityRange(words, onWindowComplete);
-                
-                // Note: Final global percentile-based densities are calculated at the end
-                // but incremental window-local densities are already saved for immediate reading
+                // A cursor jump can stop the scan between windows; completed
+                // windows have already been persisted by the callback above.
+                const result = await analyzeDensityRange(words, onWindowComplete, signal);
+                return result.completed !== false;
             } finally {
                 aiState.setActivity(null);
                 aiState.setCurrentTask(null);
@@ -567,6 +599,8 @@ ${task.text.substring(0, 3000)}`;
                 aiState.setCurrentTask(null);
             }
         }
+
+        return true;
     }
 
     /**

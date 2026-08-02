@@ -84,5 +84,20 @@ describe('analyzeDensityRange (Percentile-Based)', () => {
 
         expect(analysisData[0].tokens).toEqual(['sim', 'ple']);
     });
+
+    it('stops before the next window when the scan is aborted', async () => {
+        vi.mocked(getPromptLogprobs).mockResolvedValue([{ token: 'word', logprob: -1 }]);
+        const controller = new AbortController();
+        const words = new Array(600).fill('word');
+
+        const result = await analyzeDensityRange(words, async () => {
+            controller.abort();
+        }, controller.signal);
+
+        expect(getPromptLogprobs).toHaveBeenCalledTimes(1);
+        expect(result.completed).toBe(false);
+        expect(result.densities).toHaveLength(250);
+        expect(result.analysisData).toHaveLength(250);
+    });
 });
 
