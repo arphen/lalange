@@ -3,7 +3,7 @@ import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 import basicSsl from '@vitejs/plugin-basic-ssl'
 import { execSync } from 'child_process'
-import { PWA_INJECT_REGISTER, PWA_MAX_PRECACHE_FILE_BYTES, PWA_PRECACHE_GLOB_IGNORES } from './pwa.config'
+import { PWA_INJECT_REGISTER, PWA_MAX_PRECACHE_FILE_BYTES, PWA_PRECACHE_GLOB_IGNORES, PWA_PRECACHE_GLOB_PATTERNS } from './pwa.config'
 
 // Cloudflare provides the exact deployed commit; local builds fall back to git.
 let commitHash = process.env.CF_PAGES_COMMIT_SHA?.slice(0, 7) || 'unknown';
@@ -33,6 +33,7 @@ export default defineConfig(() => {
       },
       injectManifest: {
         maximumFileSizeToCacheInBytes: PWA_MAX_PRECACHE_FILE_BYTES,
+        globPatterns: PWA_PRECACHE_GLOB_PATTERNS,
         // Optional AI and TTS runtimes load on demand and manage their own caches.
         globIgnores: PWA_PRECACHE_GLOB_IGNORES,
       },

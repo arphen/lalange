@@ -225,6 +225,69 @@ describe('IngestionScheduler', () => {
         expect(calls[1][0]).toEqual(['text3']);
     });
 
+    it('should not drain stale pending tasks after a far section jump', async () => {
+        let resolveActiveTask: ((value: any) => void) | undefined;
+        let activeTaskSignal: AbortSignal | undefined;
+        (analyzeDensityRange as any).mockImplementationOnce((_words: string[], _callback: any, signal: AbortSignal) => new Promise(resolve => {
+            activeTaskSignal = signal;
+            resolveActiveTask = resolve;
+        }));
+
+        scheduler.setCursor('book1', 'chapter1', 0);
+        scheduler.addTask({
+            id: 'active-old-chapter',
+            bookId: 'book1',
+            chapterId: 'chapter1',
+            chapterIndex: 0,
+            subchapterIndex: 0,
+            startWordIndex: 0,
+            endWordIndex: 100,
+            type: 'DENSITY',
+            text: 'active old chapter',
+        });
+
+        await new Promise(resolve => setTimeout(resolve, 10));
+
+        scheduler.addTask({
+            id: 'queued-old-chapter',
+            bookId: 'book1',
+            chapterId: 'chapter1',
+            chapterIndex: 0,
+            subchapterIndex: 1,
+            startWordIndex: 100,
+            endWordIndex: 200,
+            type: 'DENSITY',
+            text: 'queued old chapter',
+        });
+        scheduler.addTask({
+            id: 'queued-new-chapter',
+            bookId: 'book1',
+            chapterId: 'chapter1',
+            chapterIndex: 0,
+            subchapterIndex: 20,
+            startWordIndex: 2000,
+            endWordIndex: 2100,
+            type: 'DENSITY',
+            text: 'queued new chapter',
+        });
+
+        expect((scheduler as any).tasks.find((task: IngestionTask) => task.id === 'queued-new-chapter')?.status).toBe('dormant');
+
+        scheduler.setCursor('book1', 'chapter1', 2000);
+
+        const queuedTasks = (scheduler as any).tasks;
+        expect(activeTaskSignal?.aborted).toBe(true);
+        expect(queuedTasks.find((task: IngestionTask) => task.id === 'queued-old-chapter')?.status).toBe('dormant');
+        expect(queuedTasks.find((task: IngestionTask) => task.id === 'queued-new-chapter')?.status).toBe('pending');
+
+        resolveActiveTask?.({ densities: [], analysisData: [], completed: false });
+        await new Promise(resolve => setTimeout(resolve, 20));
+
+        const analyzedTexts = (analyzeDensityRange as any).mock.calls.map((call: any) => call[0].join(' '));
+        expect(analyzedTexts).toContain('queued new chapter');
+        expect(analyzedTexts).not.toContain('queued old chapter');
+    });
+
     it('should prioritize density over summary for the same chunk', async () => {
         let resolveTask1: ((v: any) => void) | undefined;
         (analyzeDensityRange as any).mockImplementationOnce(() => new Promise(r => { resolveTask1 = r; }));
@@ -337,7 +400,7 @@ describe('IngestionScheduler', () => {
         ]));
     });
 
-    it('should prioritize current chunk over passed chunks and future chunks', async () => {
+    it('should process the current chunk without draining work outside the lookahead', async () => {
         let resolveTask1: ((v: any) => void) | undefined;
         (analyzeDensityRange as any).mockImplementationOnce(() => new Promise(r => { resolveTask1 = r; }));
 
@@ -400,29 +463,18 @@ describe('IngestionScheduler', () => {
         await new Promise(resolve => setTimeout(resolve, 50));
 
         const calls = (analyzeDensityRange as any).mock.calls;
-        // calls[0] = task1
-        // Expected order: Current, Future, Passed
-        
-        // We need to find the index of each call
-        const callArgs = calls.map((c: any) => c[0][0]); // Get the text argument
-        
+        const callArgs = calls.map((c: any) => c[0][0]);
         const currentIdx = callArgs.indexOf('current');
         const futureIdx = callArgs.indexOf('future');
         const passedIdx = callArgs.indexOf('passed');
 
         expect(currentIdx).toBeGreaterThan(-1);
-        expect(futureIdx).toBeGreaterThan(-1);
-        expect(passedIdx).toBeGreaterThan(-1);
-
-        // Current should be first (after task1)
-        expect(currentIdx).toBeLessThan(futureIdx);
-        expect(currentIdx).toBeLessThan(passedIdx);
-        
-        // Future should be before Passed (based on my logic: Future = 1000 - dist/100, Passed = 100)
-        // Future score: 1000 - (4000/100) = 960.
-        // Passed score: 100.
-        // So Future > Passed.
-        expect(futureIdx).toBeLessThan(passedIdx);
+        expect(futureIdx).toBe(-1);
+        expect(passedIdx).toBe(-1);
+        expect((scheduler as any).tasks).toEqual(expect.arrayContaining([
+            expect.objectContaining({ id: 'task_passed', status: 'dormant' }),
+            expect.objectContaining({ id: 'task_future', status: 'dormant' }),
+        ]));
     });
 
     describe('Summary LLM Response', () => {

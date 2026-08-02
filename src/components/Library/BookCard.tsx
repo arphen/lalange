@@ -154,7 +154,7 @@ export const BookCard: React.FC<BookCardProps> = ({ book, onOpen, onDelete, onSt
                     <img src={book.cover} alt={book.title} className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity grayscale group-hover:grayscale-0" />
                 ) : (
                     <div className="w-full h-full flex flex-col items-center justify-center text-gray-600 font-mono text-xs p-4 text-center border-2 border-dashed border-white/5">
-                        <span className="mb-2 text-2xl opacity-20">EPUB</span>
+                        <span className="mb-2 text-2xl opacity-20">BOOK</span>
                         NO COVER
                     </div>
                 )}

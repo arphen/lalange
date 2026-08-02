@@ -1,4 +1,3 @@
-import JSZip from 'jszip';
 import { initDB, type BookDocType, type ChapterDocType, type ImageDocType, type RawFileDocType } from '../sync/db';
 import { classifyChapter, cleanText } from './cleaning';
 import { normalizeReferenceTokens, tokenizeForRSVP } from '../rsvp/tokenize';
@@ -6,7 +5,7 @@ import { useSettingsStore } from '../store/settings';
 import { generateUUID } from '../../utils/uuid';
 import { scheduler } from './scheduler';
 import { analyzeDensityRange, chunkText } from './analysis';
-import { buildEpubStructurePlan, loadPlannedChapterSources } from './structure';
+import { decodeRawFilePayload, defaultIngestReaderRegistry, encodeRawFilePayload, readFileAsUint8Array } from './readers';
 
 // Job control
 const activeJobs = new Set<string>();
@@ -31,59 +30,59 @@ export interface InitialIngestResult {
     rawFile: RawFileDocType;
 }
 
+const uint8ArrayToBase64 = (data: Uint8Array): string => {
+    let binary = '';
+    const CHUNK_SIZE = 0x8000;
+    for (let i = 0; i < data.length; i += CHUNK_SIZE) {
+        const chunk = data.subarray(i, i + CHUNK_SIZE);
+        binary += String.fromCharCode(...chunk);
+    }
+    return btoa(binary);
+};
+
+const base64ToUint8Array = (base64: string): Uint8Array => {
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes;
+};
+
 export const initialIngest = async (file: File, onProgress?: (msg: string) => void): Promise<InitialIngestResult> => {
     console.log(`[Pipeline] Starting ingestion for file: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`);
+    const reader = defaultIngestReaderRegistry.resolveForFile(file);
+    if (!reader) {
+        const supportedFormats = defaultIngestReaderRegistry.getSupportedExtensionsLabel();
+        throw new Error(`Unsupported file format. Supported formats: ${supportedFormats}`);
+    }
+
+    console.log(`[Pipeline] Selected ingest reader: ${reader.id}`);
     const bookId = generateUUID();
-    const zip = await JSZip.loadAsync(file);
 
     // 1. (Skipped) Health Check - We don't block ingestion on AI readiness anymore.
     // The AI is only needed for background processing (summaries/density).
-    
+
     // 2. Resolve metadata + normalized chapter structure
-    const structure = await buildEpubStructurePlan(zip);
-    const title = structure.title || file.name.replace('.epub', '');
-    const author = structure.author || 'Unknown';
+    const preparedBook = await reader.prepareInitial(file, onProgress);
+    const title = preparedBook.title || file.name;
+    const author = preparedBook.author || 'Unknown';
     console.log(`[Pipeline] Metadata parsed: Title="${title}", Author="${author}"`);
-    console.log(`[Pipeline] Spine contains ${structure.spine.length} linear items.`);
-    console.log(`[Pipeline] Planned chapter count: ${structure.chapters.length}`);
+    console.log(`[Pipeline] Planned chapter count: ${preparedBook.chapters.length}`);
 
     // 3. Extract Images
-    onProgress?.('Extracting images...');
-    const images: ImageDocType[] = [];
-    const imageFiles = Object.keys(zip.files).filter(path => /\.(jpg|jpeg|png|gif|webp)$/i.test(path));
-    console.log(`[Pipeline] Found ${imageFiles.length} images in archive.`);
-
-    for (const imgPath of imageFiles) {
-        const imgData = await zip.file(imgPath)!.async('base64');
-        const filename = imgPath.split('/').pop()!;
-        const ext = filename.split('.').pop()?.toLowerCase();
-        const mimeType = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : `image/${ext}`;
-
-        images.push({
-            id: `${bookId}_img_${filename}`,
-            bookId,
-            filename,
-            data: imgData,
-            mimeType
-        });
-    }
-
-    // Cover
-    let coverBase64 = '';
-    const coverHref = structure.coverManifestId
-        ? structure.manifest[structure.coverManifestId]?.href
-        : undefined;
-    if (coverHref) {
-        const coverFilename = coverHref.split('/').pop();
-        const coverImg = images.find(img => img.filename === coverFilename);
-        if (coverImg) {
-            coverBase64 = `data:${coverImg.mimeType};base64,${coverImg.data}`;
-        }
-    }
+    const images: ImageDocType[] = preparedBook.images.map((img) => ({
+        id: `${bookId}_img_${img.filename}`,
+        bookId,
+        filename: img.filename,
+        data: img.data,
+        mimeType: img.mimeType,
+    }));
+    console.log(`[Pipeline] Found ${images.length} images in source.`);
 
     // 4. Create Placeholder Chapters
     const chapters: ChapterDocType[] = [];
-    for (const [chapterIndex, plannedChapter] of structure.chapters.entries()) {
+    for (const [chapterIndex, plannedChapter] of preparedBook.chapters.entries()) {
         chapters.push({
             id: `${bookId}_${chapterIndex}`,
             bookId,
@@ -98,18 +97,16 @@ export const initialIngest = async (file: File, onProgress?: (msg: string) => vo
     }
 
     // 5. Prepare Raw File
-    const arrayBuffer = await file.arrayBuffer();
-    const base64 = btoa(
-        new Uint8Array(arrayBuffer)
-            .reduce((data, byte) => data + String.fromCharCode(byte), '')
-    );
+    const fileBytes = await readFileAsUint8Array(file);
+    const base64 = uint8ArrayToBase64(fileBytes);
+    const encodedRawPayload = encodeRawFilePayload(base64, reader.id);
 
     return {
         book: {
             id: bookId,
             title,
             author,
-            cover: coverBase64,
+            cover: preparedBook.coverBase64 || '',
             totalWords: 0,
             chapterIds: chapters.map(c => c.id)
         },
@@ -117,7 +114,7 @@ export const initialIngest = async (file: File, onProgress?: (msg: string) => vo
         images,
         rawFile: {
             id: bookId,
-            data: base64
+            data: encodedRawPayload
         }
     };
 };
@@ -140,18 +137,19 @@ export const processChaptersInBackground = async (bookId: string) => {
             return;
         }
 
-        const rawData = atob(rawFileDoc.data);
-        const uint8Array = new Uint8Array(rawData.length);
-        for (let i = 0; i < rawData.length; i++) {
-            uint8Array[i] = rawData.charCodeAt(i);
+        const decodedRawFile = decodeRawFilePayload(rawFileDoc.data);
+        const uint8Array = base64ToUint8Array(decodedRawFile.base64Data);
+        const reader = defaultIngestReaderRegistry.resolveForRaw(uint8Array, decodedRawFile.readerId);
+        if (!reader) {
+            const supportedFormats = defaultIngestReaderRegistry.getSupportedExtensionsLabel();
+            throw new Error(`No ingest reader could process this file. Supported formats: ${supportedFormats}`);
         }
+        console.log(`[Pipeline] Rehydrating with ingest reader: ${reader.id}`);
 
-        const zip = await JSZip.loadAsync(uint8Array);
-
-        const structure = await buildEpubStructurePlan(zip);
+        const plannedChapters = await reader.loadChapters(uint8Array);
 
         let firstContentChapterFound = false;
-        for (const [chapterIndex, plannedChapter] of structure.chapters.entries()) {
+        for (const [chapterIndex, plannedChapter] of plannedChapters.entries()) {
             const chapterId = `${bookId}_${chapterIndex}`;
             const chapterDoc = await db.chapters.findOne(chapterId).exec();
 
@@ -163,12 +161,12 @@ export const processChaptersInBackground = async (bookId: string) => {
 
             // Resume if pending, processing (crashed), or error
             if (chapterDoc && (chapterDoc.status === 'pending' || chapterDoc.status === 'processing' || chapterDoc.status === 'error')) {
-                console.log(`[Pipeline] Processing chapter ${chapterIndex + 1}/${structure.chapters.length}: ${chapterId}`);
+                console.log(`[Pipeline] Processing chapter ${chapterIndex + 1}/${plannedChapters.length}: ${chapterId}`);
                 // Capture the updated document instance to avoid conflict
                 const currentDoc = await chapterDoc.patch({ status: 'processing', progress: 0 });
 
                 try {
-                    const chapterSources = await loadPlannedChapterSources(zip, plannedChapter.slices);
+                    const chapterSources = plannedChapter.slices;
 
                     if (chapterSources.length > 0) {
                         const settings = useSettingsStore.getState();

@@ -104,7 +104,7 @@ describe('Ingestion Scheduling Requirements', () => {
         };
 
         mockRawFile = {
-            data: Buffer.from('mock-zip-data').toString('base64'),
+            data: Buffer.from('PK-mock-zip-data').toString('base64'),
         };
 
         mockDB = {

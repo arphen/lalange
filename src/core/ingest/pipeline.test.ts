@@ -55,7 +55,7 @@ describe('processChaptersInBackground', () => {
         };
 
         mockRawFileDoc = {
-            data: btoa('dummy zip content') // This won't be a valid zip, but we'll mock JSZip load
+            data: btoa('PK dummy zip content') // ZIP signature routes to EPUB reader; JSZip is mocked below.
         };
 
         mockDb = {

@@ -3,6 +3,7 @@ import {
     PWA_INJECT_REGISTER,
     PWA_MAX_PRECACHE_FILE_BYTES,
     PWA_PRECACHE_GLOB_IGNORES,
+    PWA_PRECACHE_GLOB_PATTERNS,
 } from '../../pwa.config';
 
 describe('PWA precache configuration', () => {
@@ -18,5 +19,9 @@ describe('PWA precache configuration', () => {
             '**/assets/transformers.web-*.js',
         ]));
         expect(PWA_MAX_PRECACHE_FILE_BYTES).toBeLessThanOrEqual(2 * 1024 * 1024);
+    });
+
+    it('precaches module workers used by local document readers', () => {
+        expect(PWA_PRECACHE_GLOB_PATTERNS).toContain('**/*.{js,mjs,css,html}');
     });
 });
