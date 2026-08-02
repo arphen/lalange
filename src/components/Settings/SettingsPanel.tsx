@@ -6,7 +6,7 @@ import { useTTSStore, type TTSBackendPreference } from '../../core/store/tts';
 import { getEngine, MODEL_INFO, type ModelTier, isModelCached, deleteModel } from '../../core/ai/webllm';
 import { getAvailableStrategies, type DurationStrategyId } from '../../core/rsvp/duration';
 import { getAllDisplayPlugins, type DisplayPluginId } from '../../core/rsvp/display';
-import { VOICES, initTTS, clearTTSCache, isTTSModelCached } from '../../core/tts';
+import { VOICES, initTTS, clearTTSCache, isTTSModelCached, getVoice, getVoiceEngine, type VoiceInfo } from '../../core/tts';
 import { clsx } from 'clsx';
 import { BrandName } from '../BrandName';
 import { SeoHead } from '../SeoHead';
@@ -685,19 +685,34 @@ const TTSSettings: React.FC = () => {
     const [isCheckingCache, setIsCheckingCache] = useState(true);
     const selectedDevice = backendPreference === 'auto' ? undefined : backendPreference;
 
+    // Each voice's engine keeps its own weights, so model status is per voice.
+    const selectedVoice = getVoice(voice);
+    const selectedEngine = getVoiceEngine(voice);
+
+    const voiceGroups = React.useMemo(() => {
+        const groups = new Map<string, VoiceInfo[]>();
+        for (const entry of VOICES) {
+            if (entry.quality === 'D') continue;
+            const group = groups.get(entry.languageLabel) ?? [];
+            group.push(entry);
+            groups.set(entry.languageLabel, group);
+        }
+        return Array.from(groups, ([label, entries]) => ({ label, voices: entries }));
+    }, []);
+
     const refreshCacheStatus = React.useCallback(async () => {
         setIsCheckingCache(true);
         try {
-            setIsModelCached(await isTTSModelCached(selectedDevice));
+            setIsModelCached(await isTTSModelCached(voice, selectedDevice));
         } finally {
             setIsCheckingCache(false);
         }
-    }, [selectedDevice]);
+    }, [selectedDevice, voice]);
 
     useEffect(() => {
         let cancelled = false;
 
-        void isTTSModelCached(selectedDevice)
+        void isTTSModelCached(voice, selectedDevice)
             .then((cached) => {
                 if (!cancelled) setIsModelCached(cached);
             })
@@ -708,12 +723,12 @@ const TTSSettings: React.FC = () => {
         return () => {
             cancelled = true;
         };
-    }, [selectedDevice]);
-    
+    }, [selectedDevice, voice]);
+
     const handleDownloadModel = async () => {
         setIsDownloading(true);
         try {
-            await initTTS(selectedDevice);
+            await initTTS(voice, selectedDevice);
             await refreshCacheStatus();
         } catch (e) {
             console.error('Failed to download TTS model:', e);
@@ -721,11 +736,11 @@ const TTSSettings: React.FC = () => {
             setIsDownloading(false);
         }
     };
-    
+
     const handleClearCache = async () => {
         setIsClearingCache(true);
         try {
-            await clearTTSCache();
+            await clearTTSCache(voice);
             setIsModelCached(false);
         } catch (e) {
             console.error('Failed to clear TTS cache:', e);
@@ -733,7 +748,7 @@ const TTSSettings: React.FC = () => {
             setIsClearingCache(false);
         }
     };
-    
+
     return (
         <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-300">
             <div>
@@ -753,19 +768,22 @@ const TTSSettings: React.FC = () => {
                 <p className="text-sm text-gray-400 leading-relaxed">
                     Switch between reading and listening at any point. When you pause audio, the reader picks up exactly where you left off. Perfect for commutes—read on the bus, listen while walking.
                 </p>
-                <h4 className="text-purple-400 font-bold uppercase tracking-widest text-xs pt-2">Powered by Kokoro</h4>
+                <h4 className="text-purple-400 font-bold uppercase tracking-widest text-xs pt-2">Two Local Engines</h4>
                 <p className="text-sm text-gray-400 leading-relaxed">
-                    Uses the <span className="text-white font-bold">Kokoro-82M</span> model—a frontier open-weight TTS that runs entirely in your browser. No cloud APIs, no subscription, no data sent anywhere.
+                    English voices use <span className="text-white font-bold">Kokoro-82M</span>; Slovenian uses <span className="text-white font-bold">Piper</span>. Both are open-weight models that run entirely in your browser. No cloud APIs, no subscription, no text sent anywhere.
                 </p>
                 <ul className="space-y-2 text-xs text-gray-500 font-mono border-l-2 border-purple-500/30 pl-4 py-2">
                     <li>
-                        <strong className="text-gray-300">Model:</strong> FP32 on desktop · Q8 on iPhone/iPad
+                        <strong className="text-gray-300">Kokoro:</strong> FP32 on desktop · Q8 on iPhone/iPad · ~92 MB mobile download
                     </li>
                     <li>
-                        <strong className="text-gray-300">Mobile download:</strong> ~92 MB
+                        <strong className="text-gray-300">Piper:</strong> sl_SI-artur-medium · ~63 MB · WASM only
                     </li>
                     <li>
                         <strong className="text-gray-300">Generation:</strong> Runs locally; speed varies by browser, backend, and hardware
+                    </li>
+                    <li>
+                        <strong className="text-gray-300">Switching language</strong> unloads the other engine to keep memory in check
                     </li>
                 </ul>
             </div>
@@ -774,7 +792,9 @@ const TTSSettings: React.FC = () => {
             <div className="bg-white/5 rounded-lg p-6 border border-white/10 space-y-4">
                 <div className="flex items-center justify-between">
                     <div>
-                        <h4 className="text-xs text-purple-400 uppercase tracking-widest font-bold">TTS Model Status</h4>
+                        <h4 className="text-xs text-purple-400 uppercase tracking-widest font-bold">
+                            {selectedEngine === 'piper' ? 'Piper Model Status' : 'Kokoro Model Status'}
+                        </h4>
                         <p className="text-sm text-gray-400 mt-1">
                             {isReady
                                 ? `Loaded in memory · ${loadStatus || 'FP32'}`
@@ -843,33 +863,39 @@ const TTSSettings: React.FC = () => {
             </div>
 
             {/* Voice Selection */}
-            <div className="bg-white/5 rounded-lg p-6 border border-white/10 space-y-4">
+            <div className="bg-white/5 rounded-lg p-6 border border-white/10 space-y-6">
                 <label className="block text-xs text-purple-400 uppercase tracking-widest font-bold">Voice</label>
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                    {VOICES.filter(v => v.quality !== 'D').map(v => (
-                        <button
-                            key={v.id}
-                            onClick={() => setVoice(v.id)}
-                            className={clsx(
-                                "p-4 rounded border text-left transition-all",
-                                voice === v.id
-                                    ? "bg-purple-600 text-white border-purple-400"
-                                    : "bg-black/20 border-white/10 text-gray-400 hover:border-purple-400/50 hover:text-white"
-                            )}
-                        >
-                            <div className="flex items-center gap-2">
-                                <span className="font-bold text-sm">{v.name}</span>
-                                <span className="text-[10px] opacity-60">
-                                    {v.gender === 'female' ? '♀' : '♂'}
-                                </span>
-                            </div>
-                            <div className="text-[10px] opacity-70 mt-1">
-                                {v.accent === 'british' ? '🇬🇧 British' : '🇺🇸 American'}
-                                {v.description && ` · ${v.description}`}
-                            </div>
-                        </button>
-                    ))}
-                </div>
+                {voiceGroups.map(group => (
+                    <div key={group.label} className="space-y-3">
+                        <div className="text-[11px] text-gray-400 uppercase tracking-widest">
+                            {group.voices[0].flag} {group.label}
+                        </div>
+                        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                            {group.voices.map(v => (
+                                <button
+                                    key={v.id}
+                                    onClick={() => setVoice(v.id)}
+                                    className={clsx(
+                                        "p-4 rounded border text-left transition-all",
+                                        voice === v.id
+                                            ? "bg-purple-600 text-white border-purple-400"
+                                            : "bg-black/20 border-white/10 text-gray-400 hover:border-purple-400/50 hover:text-white"
+                                    )}
+                                >
+                                    <div className="flex items-center gap-2">
+                                        <span className="font-bold text-sm">{v.name}</span>
+                                        <span className="text-[10px] opacity-60">
+                                            {v.gender === 'female' ? '♀' : '♂'}
+                                        </span>
+                                    </div>
+                                    <div className="text-[10px] opacity-70 mt-1">
+                                        {v.description ?? v.languageLabel}
+                                    </div>
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                ))}
             </div>
 
             {/* Speed & Volume */}
@@ -889,7 +915,9 @@ const TTSSettings: React.FC = () => {
                         className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-purple-500"
                     />
                     <p className="text-xs text-gray-500 italic">
-                        Slower speeds are more natural, faster speeds help cover more ground.
+                        {selectedEngine === 'piper'
+                            ? 'Piper has no speed setting of its own, so this stretches playback and shifts pitch slightly. Stay near 1x for the most natural voice.'
+                            : 'Slower speeds are more natural, faster speeds help cover more ground.'}
                     </p>
                 </div>
                 
@@ -937,7 +965,9 @@ const TTSSettings: React.FC = () => {
                             ))}
                         </div>
                         <p className="text-xs text-gray-500 italic">
-                            Desktop uses FP32. iPhone and iPad use lower-memory Q8 on WASM.
+                            {selectedEngine === 'piper'
+                                ? `Applies to English voices only — ${selectedVoice?.name ?? 'this voice'} always runs on WASM.`
+                                : 'Desktop uses FP32. iPhone and iPad use lower-memory Q8 on WASM.'}
                         </p>
                     </div>
 

@@ -14,6 +14,7 @@
 
 // Type-only import for the store (avoids circular deps at runtime)
 import type { useTTSStore as TTSStoreType } from '../store/tts';
+import { getTTSAudioValidationError, type TTSAudioResult } from './audio';
 import {
     clearTransformersModelCache,
     isTransformersFileCached,
@@ -32,7 +33,6 @@ async function getTTSStore(): Promise<typeof TTSStoreType> {
 
 // Lazy import to avoid loading the large library until needed
 let KokoroTTS: typeof import('kokoro-js').KokoroTTS | null = null;
-let TextSplitterStream: typeof import('kokoro-js').TextSplitterStream | null = null;
 
 // Singleton instance
 let ttsInstance: InstanceType<typeof import('kokoro-js').KokoroTTS> | null = null;
@@ -58,7 +58,7 @@ const TTS_MODEL_FILENAMES: Record<TTSDtype, string> = {
 };
 
 // Voice definitions with metadata
-export interface VoiceInfo {
+export interface KokoroVoiceInfo {
     id: string;
     name: string;
     gender: 'female' | 'male';
@@ -67,7 +67,7 @@ export interface VoiceInfo {
     description?: string;
 }
 
-export const VOICES: VoiceInfo[] = [
+export const KOKORO_VOICES: KokoroVoiceInfo[] = [
     // American Female
     { id: 'af_heart', name: 'Heart', gender: 'female', accent: 'american', quality: 'A', description: 'Default, warm voice' },
     { id: 'af_bella', name: 'Bella', gender: 'female', accent: 'american', quality: 'A', description: 'Natural, expressive' },
@@ -87,10 +87,10 @@ export const VOICES: VoiceInfo[] = [
     { id: 'bm_lewis', name: 'Lewis', gender: 'male', accent: 'british', quality: 'C' },
 ];
 
-export const DEFAULT_VOICE = 'af_heart';
+export const KOKORO_DEFAULT_VOICE = 'af_heart';
 
-export function resolveVoiceId(voiceId: string | undefined): string {
-    return VOICES.some((voice) => voice.id === voiceId) ? voiceId as string : DEFAULT_VOICE;
+export function resolveKokoroVoiceId(voiceId: string | undefined): string {
+    return KOKORO_VOICES.some((voice) => voice.id === voiceId) ? voiceId as string : KOKORO_DEFAULT_VOICE;
 }
 
 /**
@@ -153,7 +153,7 @@ export function resolveTTSRuntimeConfig(
  * Load the Kokoro TTS library dynamically
  */
 async function loadKokoroLibrary(): Promise<void> {
-    if (KokoroTTS && TextSplitterStream) return;
+    if (KokoroTTS) return;
 
     const [module, transformers] = await Promise.all([
         import('kokoro-js'),
@@ -169,13 +169,12 @@ async function loadKokoroLibrary(): Promise<void> {
     }
 
     KokoroTTS = module.KokoroTTS;
-    TextSplitterStream = module.TextSplitterStream;
 }
 
 /**
  * Initialize the TTS engine
  */
-export async function initTTS(
+export async function initKokoro(
     device?: TTSDevice,
     onProgress?: (progress: number, status: string) => void
 ): Promise<void> {
@@ -203,7 +202,7 @@ export async function initTTS(
     // Serialize config changes so two large model instances are never built at once.
     if (ttsInitPromise) {
         await ttsInitPromise;
-        return initTTS(device, onProgress);
+        return initKokoro(device, onProgress);
     }
 
     const lifecycleGeneration = ttsLifecycleGeneration;
@@ -274,7 +273,7 @@ export async function initTTS(
 /**
  * Unload the TTS engine to free memory
  */
-export async function unloadTTS(): Promise<void> {
+export async function unloadKokoro(): Promise<void> {
     ttsLifecycleGeneration += 1;
     ttsInstance = null;
     currentLoadedConfig = null;
@@ -285,9 +284,9 @@ export async function unloadTTS(): Promise<void> {
 
 /**
  * Check whether the selected model weights are present in browser Cache Storage.
- * This is distinct from `isTTSReady()`, which only describes the in-memory model.
+ * This is distinct from `isKokoroReady()`, which only describes the in-memory model.
  */
-export async function isTTSModelCached(device?: TTSDevice): Promise<boolean> {
+export async function isKokoroModelCached(device?: TTSDevice): Promise<boolean> {
     const detectedDevice = device ?? await getOptimalDevice();
     const runtimeConfig = resolveTTSRuntimeConfig(device, detectedDevice);
     const modelFilename = TTS_MODEL_FILENAMES[runtimeConfig.dtype];
@@ -300,9 +299,9 @@ export async function isTTSModelCached(device?: TTSDevice): Promise<boolean> {
  * This forces a fresh download on next initialization.
  * Useful for fixing corrupted model downloads that cause gibberish output.
  */
-export async function clearTTSCache(): Promise<void> {
+export async function clearKokoroCache(): Promise<void> {
     // First unload the current instance
-    await unloadTTS();
+    await unloadKokoro();
     
     // transformers.js (used by kokoro-js) caches models in the Cache API
     // The cache name is "transformers-cache"
@@ -340,44 +339,8 @@ export async function clearTTSCache(): Promise<void> {
 /**
  * Check if TTS is ready
  */
-export function isTTSReady(): boolean {
+export function isKokoroReady(): boolean {
     return ttsInstance !== null;
-}
-
-/**
- * Audio result from TTS generation
- */
-export interface TTSAudioResult {
-    /** Raw audio samples (Float32Array) */
-    samples: Float32Array;
-    /** Sample rate (24000 Hz) */
-    sampleRate: number;
-    /** Duration in seconds */
-    duration: number;
-    /** Original text */
-    text: string;
-    /** Phonemes used for generation */
-    phonemes?: string;
-}
-
-export function getTTSAudioValidationError(samples: Float32Array): string | null {
-    if (samples.length === 0) return 'empty audio buffer';
-
-    let sumSquares = 0;
-    let peak = 0;
-
-    for (const sample of samples) {
-        if (!Number.isFinite(sample)) return 'audio contains non-finite samples';
-        sumSquares += sample * sample;
-        peak = Math.max(peak, Math.abs(sample));
-    }
-
-    if (peak > 1.5) return `audio peak is out of range (${peak.toFixed(2)})`;
-
-    const rms = Math.sqrt(sumSquares / samples.length);
-    if (rms < 0.00001) return 'audio is effectively silent';
-
-    return null;
 }
 
 async function generateValidatedAudio(
@@ -407,7 +370,7 @@ async function generateValidatedAudio(
         const store = useTTSStore.getState();
         store.setProgress(0, `Invalid ${failedConfig} audio · retrying FP32 / WASM`);
 
-        await initTTS('wasm');
+        await initKokoro('wasm');
 
         if (!ttsInstance) throw new Error('TTS fallback failed to initialize');
 
@@ -434,7 +397,7 @@ async function generateValidatedAudio(
 /**
  * Generate speech for a single text segment
  */
-export async function generateSpeech(
+export async function generateKokoroSpeech(
     text: string,
     options: {
         voice?: string;
@@ -442,7 +405,7 @@ export async function generateSpeech(
     } = {}
 ): Promise<TTSAudioResult> {
     if (!ttsInstance) {
-        await initTTS();
+        await initKokoro();
     }
     
     if (!ttsInstance) {
@@ -450,7 +413,7 @@ export async function generateSpeech(
     }
     
     const { voice: requestedVoice, speed = 1.0 } = options;
-    const voice = resolveVoiceId(requestedVoice);
+    const voice = resolveKokoroVoiceId(requestedVoice);
     
     // Get store using lazy getter
     const useTTSStore = await getTTSStore();
@@ -472,223 +435,4 @@ export async function generateSpeech(
     } finally {
         store.setGenerating(false);
     }
-}
-
-/**
- * Sentence boundary information for sync
- */
-export interface SentenceBoundary {
-    index: number;
-    text: string;
-    startWordIndex: number;
-    endWordIndex: number;
-    audioStartTime?: number;
-    audioEndTime?: number;
-}
-
-/**
- * Split text into sentences for TTS processing
- * This enables smooth reading <-> listening transitions
- */
-export function splitIntoSentences(words: string[]): SentenceBoundary[] {
-    const sentences: SentenceBoundary[] = [];
-    let currentSentence: string[] = [];
-    let sentenceStartIndex = 0;
-    
-    for (let i = 0; i < words.length; i++) {
-        const word = words[i];
-        currentSentence.push(word);
-        
-        // Check for sentence-ending punctuation
-        const isEnd = /[.!?]["']?$/.test(word) || 
-                      /[.!?]$/.test(word) ||
-                      // Also break on very long sentences (for better streaming)
-                      currentSentence.length >= 50;
-        
-        if (isEnd || i === words.length - 1) {
-            sentences.push({
-                index: sentences.length,
-                text: currentSentence.join(' '),
-                startWordIndex: sentenceStartIndex,
-                endWordIndex: i,
-            });
-            currentSentence = [];
-            sentenceStartIndex = i + 1;
-        }
-    }
-    
-    return sentences;
-}
-
-/**
- * Find the sentence containing a given word index
- */
-export function findSentenceForWord(
-    wordIndex: number,
-    sentences: SentenceBoundary[]
-): SentenceBoundary | null {
-    return sentences.find(
-        s => wordIndex >= s.startWordIndex && wordIndex <= s.endWordIndex
-    ) ?? null;
-}
-
-/**
- * Calculate audio timestamp from word index (approximate)
- */
-export function estimateAudioTimeForWord(
-    wordIndex: number,
-    sentences: SentenceBoundary[],
-    totalAudioDuration: number
-): number {
-    const sentence = findSentenceForWord(wordIndex, sentences);
-    if (!sentence || sentence.audioStartTime === undefined) {
-        // Fallback: linear interpolation based on total words
-        const totalWords = sentences[sentences.length - 1]?.endWordIndex ?? 0;
-        return (wordIndex / totalWords) * totalAudioDuration;
-    }
-    
-    // Interpolate within the sentence
-    const sentenceWordCount = sentence.endWordIndex - sentence.startWordIndex + 1;
-    const wordOffsetInSentence = wordIndex - sentence.startWordIndex;
-    const sentenceDuration = (sentence.audioEndTime ?? 0) - sentence.audioStartTime;
-    
-    return sentence.audioStartTime + (wordOffsetInSentence / sentenceWordCount) * sentenceDuration;
-}
-
-/**
- * Find word index from audio timestamp
- */
-export function findWordForAudioTime(
-    audioTime: number,
-    sentences: SentenceBoundary[]
-): number {
-    // Find the sentence containing this timestamp
-    for (const sentence of sentences) {
-        if (
-            sentence.audioStartTime !== undefined &&
-            sentence.audioEndTime !== undefined &&
-            audioTime >= sentence.audioStartTime &&
-            audioTime <= sentence.audioEndTime
-        ) {
-            // Interpolate within sentence
-            const progress = (audioTime - sentence.audioStartTime) / 
-                           (sentence.audioEndTime - sentence.audioStartTime);
-            const sentenceWordCount = sentence.endWordIndex - sentence.startWordIndex + 1;
-            const wordOffset = Math.floor(progress * sentenceWordCount);
-            return Math.min(sentence.startWordIndex + wordOffset, sentence.endWordIndex);
-        }
-    }
-    
-    // Fallback: find closest sentence by time and handle out-of-range audioTime
-    if (sentences.length === 0) {
-        return 0;
-    }
-    
-    let closestSentence: SentenceBoundary | undefined;
-    let maxEndTime = -Infinity;
-    
-    for (const sentence of sentences) {
-        if (sentence.audioStartTime === undefined) {
-            continue;
-        }
-        
-        const endTime = sentence.audioEndTime ?? sentence.audioStartTime;
-        
-        // Track the furthest point in time covered by any sentence
-        if (endTime > maxEndTime) {
-            maxEndTime = endTime;
-        }
-        
-        // Find the last sentence that starts before or at audioTime
-        if (sentence.audioStartTime <= audioTime) {
-            closestSentence = sentence;
-        }
-    }
-    
-    if (!closestSentence) {
-        // No sentences with timing information; fall back to first sentence or index 0
-        return sentences[0]?.startWordIndex ?? 0;
-    }
-    
-    // If audioTime is beyond all sentences, snap to the end of the last sentence
-    if (audioTime > maxEndTime && maxEndTime !== -Infinity) {
-        return closestSentence.endWordIndex;
-    }
-    
-    return closestSentence.startWordIndex;
-}
-
-/**
- * Streaming TTS generator for long texts
- * Yields audio chunks as they're generated
- */
-export async function* streamSpeech(
-    sentences: SentenceBoundary[],
-    options: {
-        voice?: string;
-        speed?: number;
-        onSentenceStart?: (sentence: SentenceBoundary) => void;
-        onSentenceComplete?: (sentence: SentenceBoundary, audio: TTSAudioResult) => void;
-    } = {}
-): AsyncGenerator<{ sentence: SentenceBoundary; audio: TTSAudioResult }> {
-    if (!ttsInstance) {
-        await initTTS();
-    }
-    
-    if (!ttsInstance) {
-        throw new Error('TTS not initialized');
-    }
-    
-    const { voice: requestedVoice, speed = 1.0, onSentenceStart, onSentenceComplete } = options;
-    const voice = resolveVoiceId(requestedVoice);
-    const useTTSStore = await getTTSStore();
-    const store = useTTSStore.getState();
-    
-    let cumulativeTime = 0;
-    
-    for (const sentence of sentences) {
-        onSentenceStart?.(sentence);
-        store.setCurrentSentence(sentence.index);
-        
-        try {
-            const { samples, phonemes } = await generateValidatedAudio(sentence.text, voice, speed);
-            const sampleRate = 24000;
-            const duration = samples.length / sampleRate;
-            
-            // Update sentence timing
-            sentence.audioStartTime = cumulativeTime;
-            sentence.audioEndTime = cumulativeTime + duration;
-            cumulativeTime += duration;
-            
-            const audio: TTSAudioResult = {
-                samples,
-                sampleRate,
-                duration,
-                text: sentence.text,
-                phonemes,
-            };
-            
-            onSentenceComplete?.(sentence, audio);
-            
-            yield { sentence, audio };
-            
-        } catch (error) {
-            console.error(`[TTS] Failed to generate sentence ${sentence.index}:`, error);
-            throw error;
-        }
-    }
-}
-
-/**
- * Get list of available voices
- */
-export function listVoices(): VoiceInfo[] {
-    return VOICES;
-}
-
-/**
- * Get voice info by ID
- */
-export function getVoice(voiceId: string): VoiceInfo | undefined {
-    return VOICES.find(v => v.id === voiceId);
 }
