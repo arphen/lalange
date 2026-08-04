@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router';
 import { startBookSync, type ReplicationState } from '../../core/sync/replication';
 import { initDB } from '../../core/sync/db';
 

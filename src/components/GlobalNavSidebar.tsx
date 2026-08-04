@@ -1,6 +1,6 @@
 import { clsx } from 'clsx';
 import { ScanLine } from 'lucide-react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router';
 import { BrandName } from './BrandName';
 import { AIStatusPanel } from './AIStatusPanel';
 import type { BookDocType } from '../core/sync/db';

@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, Navigate } from 'react-router-dom';
+import { useParams, Navigate } from 'react-router';
 import { useSettingsStore, type PromptFragment } from '../../core/store/settings';
 import { useAIStore } from '../../core/store/ai';
 import { useTTSStore, type TTSBackendPreference } from '../../core/store/tts';
 import { getEngine, MODEL_INFO, type ModelTier, isModelCached, deleteModel } from '../../core/ai/webllm';
 import { getAvailableStrategies, type DurationStrategyId } from '../../core/rsvp/duration';
 import { getAllDisplayPlugins, type DisplayPluginId } from '../../core/rsvp/display';
-import { VOICES, initTTS, clearTTSCache, isTTSModelCached, getVoice, getVoiceEngine, type VoiceInfo } from '../../core/tts';
+import { VOICES, initTTS, clearTTSCache, isTTSModelCached, isTTSReady, getVoice, getVoiceEngine, type VoiceInfo } from '../../core/tts';
 import { clsx } from 'clsx';
 import { BrandName } from '../BrandName';
 import { SeoHead } from '../SeoHead';
@@ -661,7 +661,7 @@ const AgentConfig: React.FC<AgentConfigProps> = ({
 /**
  * TTS Settings Component
  */
-const TTSSettings: React.FC = () => {
+export const TTSSettings: React.FC = () => {
     const {
         voice,
         setVoice,
@@ -673,7 +673,6 @@ const TTSSettings: React.FC = () => {
         setSpeed,
         volume,
         setVolume,
-        isReady,
         isLoading,
         loadProgress,
         loadStatus,
@@ -688,6 +687,7 @@ const TTSSettings: React.FC = () => {
     // Each voice's engine keeps its own weights, so model status is per voice.
     const selectedVoice = getVoice(voice);
     const selectedEngine = getVoiceEngine(voice);
+    const isSelectedEngineReady = isTTSReady(voice);
 
     const voiceGroups = React.useMemo(() => {
         const groups = new Map<string, VoiceInfo[]>();
@@ -796,7 +796,7 @@ const TTSSettings: React.FC = () => {
                             {selectedEngine === 'piper' ? 'Piper Model Status' : 'Kokoro Model Status'}
                         </h4>
                         <p className="text-sm text-gray-400 mt-1">
-                            {isReady
+                            {isSelectedEngineReady
                                 ? `Loaded in memory · ${loadStatus || 'FP32'}`
                                 : isLoading
                                     ? 'Loading model into memory...'
@@ -808,7 +808,7 @@ const TTSSettings: React.FC = () => {
                         </p>
                     </div>
                     <div className="flex gap-2">
-                        {isReady && (
+                        {isSelectedEngineReady && (
                             <button
                                 onClick={handleClearCache}
                                 disabled={isClearingCache}
@@ -823,7 +823,7 @@ const TTSSettings: React.FC = () => {
                                 {isClearingCache ? 'CLEARING...' : 'CLEAR CACHE'}
                             </button>
                         )}
-                        {!isReady && (
+                        {!isSelectedEngineReady && (
                             <button
                                 onClick={handleDownloadModel}
                                 disabled={isLoading || isDownloading}

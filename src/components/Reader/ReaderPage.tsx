@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router';
 import { Reader } from './Reader';
 import { initDB, type BookDocType } from '../../core/sync/db';
 import { SeoHead } from '../SeoHead';

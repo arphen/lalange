@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Routes, Route, useNavigate, useLocation, Navigate } from 'react-router-dom'
+import { Routes, Route, useNavigate, useLocation, Navigate } from 'react-router'
 import { Archive } from './components/Library/Archive'
 import { Librarian } from './components/Library/Librarian'
 import { ReaderPage } from './components/Reader/ReaderPage'

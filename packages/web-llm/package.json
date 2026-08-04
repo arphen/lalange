@@ -29,10 +29,9 @@
   "devDependencies": {
     "@eslint/js": "^9.9.0",
     "@eslint/eslintrc": "^3.3.1",
-    "@mlc-ai/web-runtime": "^0.23.0-dev1",
     "@mlc-ai/web-tokenizers": "^0.1.6",
     "@mlc-ai/web-xgrammar": "0.1.0",
-    "@next/eslint-plugin-next": "^14.2.3",
+    "@next/eslint-plugin-next": "^16.3.0",
     "@rollup/plugin-commonjs": "^29.0.0",
     "@rollup/plugin-node-resolve": "^16.0.3",
     "@types/chrome": "^0.0.266",
@@ -58,7 +57,15 @@
   "dependencies": {
     "loglevel": "^1.9.1"
   },
+  "peerDependencies": {
+    "@mlc-ai/web-runtime": "^0.23.0-dev1"
+  },
   "overrides": {
-    "test-exclude": "^7.0.1"
+    "test-exclude": "^7.0.1",
+    "minimatch@3.1.5": {
+      "brace-expansion": "1.1.18"
+    },
+    "underscore": "1.13.8",
+    "underscore.string": "3.3.6"
   }
 }

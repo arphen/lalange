@@ -28,7 +28,7 @@ if (isExhibition) {
   root.render(<ExhibitionRender />)
 } else {
   Promise.all([
-    import('react-router-dom'),
+    import('react-router'),
     import('./App.tsx'),
     import('./components/ErrorBoundary.tsx'),
   ]).then(([{ BrowserRouter }, { default: App }, { ErrorBoundary }]) => {

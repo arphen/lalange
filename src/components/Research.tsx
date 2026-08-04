@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { clsx } from 'clsx';
 import { ArrowLeft } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import { SeoHead } from './SeoHead';
 
 type Section = 'intro' | 'psychoanalysis' | 'architecture' | 'network' | 'ethics';

@@ -147,6 +147,29 @@ describe('initTTS', () => {
         expect(kokoro.unloadKokoro).not.toHaveBeenCalled();
     });
 
+    it('serializes language switches while an engine is still initializing', async () => {
+        let finishPiper: (() => void) | undefined;
+        piper.initPiper.mockImplementationOnce(() => new Promise<undefined>((resolve) => {
+            finishPiper = () => {
+                piper.isPiperReady.mockReturnValue(true);
+                resolve(undefined);
+            };
+        }));
+
+        const piperInitialization = initTTS(SLOVENIAN_VOICE);
+        await vi.waitFor(() => expect(piper.initPiper).toHaveBeenCalledOnce());
+
+        const kokoroInitialization = initTTS('af_heart');
+        await Promise.resolve();
+        expect(kokoro.initKokoro).not.toHaveBeenCalled();
+
+        finishPiper?.();
+        await Promise.all([piperInitialization, kokoroInitialization]);
+
+        expect(piper.unloadPiper).toHaveBeenCalledOnce();
+        expect(kokoro.initKokoro).toHaveBeenCalledOnce();
+    });
+
     it('falls back to the default engine for an unknown voice', async () => {
         await initTTS('zf_xiaobei');
 

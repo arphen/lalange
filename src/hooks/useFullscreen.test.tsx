@@ -69,21 +69,18 @@ describe('useFullscreen', () => {
         if (originalRequestFullscreen) {
             Object.defineProperty(HTMLElement.prototype, 'requestFullscreen', originalRequestFullscreen);
         } else {
-            // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
             delete (HTMLElement.prototype as Partial<HTMLElement>).requestFullscreen;
         }
 
         if (originalExitFullscreen) {
             Object.defineProperty(document, 'exitFullscreen', originalExitFullscreen);
         } else {
-            // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
             delete (document as Partial<FullscreenTestDocument>).exitFullscreen;
         }
 
         if (originalFullscreenElement) {
             Object.defineProperty(document, 'fullscreenElement', originalFullscreenElement);
         } else {
-            // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
             delete (document as Partial<FullscreenTestDocument>).fullscreenElement;
         }
     });
@@ -110,9 +107,7 @@ describe('useFullscreen', () => {
     });
 
     it('reports unsupported when fullscreen APIs are missing', () => {
-        // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
         delete (HTMLElement.prototype as Partial<HTMLElement>).requestFullscreen;
-        // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
         delete (document as Partial<FullscreenTestDocument>).exitFullscreen;
 
         render(<TestHarness />);

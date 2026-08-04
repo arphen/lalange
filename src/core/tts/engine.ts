@@ -109,6 +109,8 @@ async function unloadOtherEngine(engine: TTSEngineId): Promise<void> {
     }
 }
 
+let initializationChain: Promise<void> = Promise.resolve();
+
 /**
  * Initialize the engine that owns the given voice.
  * `device` only applies to Kokoro; Piper always runs on WASM.
@@ -118,17 +120,23 @@ export async function initTTS(
     device?: TTSDevice,
     onProgress?: (progress: number, status: string) => void,
 ): Promise<void> {
-    const voice = resolveVoiceId(voiceId);
-    const engine = getVoiceEngine(voice);
+    const initialize = async () => {
+        const voice = resolveVoiceId(voiceId);
+        const engine = getVoiceEngine(voice);
 
-    await unloadOtherEngine(engine);
+        await unloadOtherEngine(engine);
 
-    if (engine === 'piper') {
-        await initPiper(voice, onProgress);
-        return;
-    }
+        if (engine === 'piper') {
+            await initPiper(voice, onProgress);
+            return;
+        }
 
-    await initKokoro(device, onProgress);
+        await initKokoro(device, onProgress);
+    };
+
+    const result = initializationChain.then(initialize, initialize);
+    initializationChain = result.catch(() => undefined);
+    return result;
 }
 
 export async function unloadTTS(): Promise<void> {

@@ -159,7 +159,6 @@ function sanitize(rawText) {
   // Normalise unicode whitespace + strip control characters (keep normal ws).
   text = text
     .replace(/\u00A0/g, ' ') // nbsp
-    // eslint-disable-next-line no-control-regex
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, ' ')
     .replace(/[\u200B-\u200D\uFEFF]/g, ''); // zero-width chars
 
