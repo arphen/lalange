@@ -1,6 +1,6 @@
 # XYZ - Free AI Speed Reading App
 
-**Read 3x faster with AI-powered pacing. 100% local, 100% private.**
+**Private, local-first RSVP reading with optional semantic pacing from 50 to 2,000 WPM.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](http://makeapullrequest.com)
@@ -12,7 +12,7 @@ XYZ is a free, open-source speed reading application that runs entirely in your 
 - **🚀 RSVP Technology** - Rapid Serial Visual Presentation displays words at a fixed point, eliminating eye movement
 - **🧠 AI-Powered Pacing** - Local LLM analyzes text complexity and adjusts speed automatically
 - **🔒 100% Private** - Everything runs in your browser. Your books never leave your device
-- **📚 EPUB Support** - Upload any EPUB file from your library
+- **📚 Multi-Format Support** - Upload EPUB, PDF, Markdown, or TXT files from your library
 - **⚡ 50-2000 WPM** - Adjustable reading speed to match your comfort level
 - **📱 Works Offline** - Once loaded, works without internet connection
 - **🔄 P2P Sync** - Sync between devices via QR code (no cloud needed)
@@ -30,7 +30,7 @@ This creates a natural reading rhythm that matches how your brain actually proce
 ## 🚀 Quick Start
 
 1. Visit [xyz.com](https://xyz.com)
-2. Upload an EPUB file (or try the demo)
+2. Upload a supported file: EPUB, PDF, Markdown, or TXT (or try the demo)
 3. Start reading!
 
 No installation, no account, no setup.

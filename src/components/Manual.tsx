@@ -1,14 +1,19 @@
 import { ArrowLeft } from 'lucide-react';
 import { Link } from 'react-router';
 import { SeoHead } from './SeoHead';
+import { getOpenGraphType, getPublicRoute } from '../seo/publicRoutes';
 
 export const Manual = () => {
+  const seo = getPublicRoute('/manual');
+
   return (
     <div className="w-full h-full overflow-y-auto bg-basalt text-gray-300 font-mono p-8 md:p-12 lg:p-16">
       <SeoHead
-          title="Field Manual"
-          description="Operating protocol for high-velocity neuro-semantic ingestion. Learn how to pilot the Arphen engine."
-          canonicalUrl="https://arphen.xyz/manual"
+          title={seo.title}
+          description={seo.description}
+          canonicalUrl={seo.canonicalUrl}
+          openGraphImage={seo.openGraphImage}
+          type={getOpenGraphType(seo)}
       />
       <div className="max-w-3xl mx-auto space-y-12 pb-24">
         {/* Header */}

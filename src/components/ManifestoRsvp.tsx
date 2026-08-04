@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getDisplayPlugin } from '../core/rsvp/display';
-import { getSpeedFactor, getVisualProcessingDelay } from '../core/rsvp/timing';
+import { getTargetInterval, isLikelyProperNoun } from '../core/rsvp/timing';
 import { useSettingsStore } from '../core/store/settings';
 
 const getDensityColor = (score: number) => {
@@ -222,11 +222,9 @@ export function ManifestoRsvp({ words, densities, currentIndex, onJumpToIndex }:
       const density = densities[indexRef.current] ?? 1.0;
       const currentDensity = density > 0 ? density : 1.0;
 
-      const speedFactor = getSpeedFactor(wpmRef.current);
-      const T_floor = 75 * speedFactor;
-      const infoTime = baseInterval * currentDensity;
-      const visualDelay = getVisualProcessingDelay(word, speedFactor);
-      const targetInterval = T_floor + infoTime + visualDelay;
+      const targetInterval = getTargetInterval(word, currentDensity, wpmRef.current, {
+        isLikelyProperNoun: isLikelyProperNoun(word, words[indexRef.current - 1]),
+      });
 
       if (accumulatorRef.current < targetInterval) break;
 

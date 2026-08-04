@@ -1248,6 +1248,16 @@ const filterNonReadingChapters = async (
         skippedChapters.push(...skippedSlices);
 
         if (readableSlices.length === 0) {
+            const imageOnlySlices = skippedSlices.filter((slice) => slice.classificationType === 'image');
+            if (imageOnlySlices.length > 0) {
+                readableChapters.push({
+                    ...chapter,
+                    title: bestTitle || imageOnlySlices[0].title || `Chapter ${readableChapters.length + 1}`,
+                    slices: imageOnlySlices.flatMap((slice) => slice.slices),
+                    estimatedWords: imageOnlySlices.reduce((sum, slice) => sum + slice.estimatedWords, 0),
+                });
+            }
+
             if (skippedSlices.length === 0) {
                 skippedChapters.push({
                     title: bestTitle || `Chapter ${chapterIndex + 1}`,

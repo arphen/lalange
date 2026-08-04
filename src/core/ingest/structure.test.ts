@@ -902,4 +902,34 @@ describe('buildEpubStructurePlan', () => {
         expect(plan.chapters.every((chapter) => chapter.source === 'toc')).toBe(true);
         expect(plan.chapters[0].slices[0].path).toBe('OPS/Text/chapter.xhtml');
     });
+
+    it('preserves image-only spine sections so the reader can cue nearby illustrations', async () => {
+        const zip = new JSZip();
+        zip.file('META-INF/container.xml', containerXml('OPS/content.opf'));
+        zip.file('OPS/content.opf', `
+            <package xmlns:dc="http://purl.org/dc/elements/1.1/">
+                <metadata>
+                    <dc:title>Illustrated Book</dc:title>
+                    <dc:creator>Tester</dc:creator>
+                </metadata>
+                <manifest>
+                    <item id="chap1" href="chap1.xhtml" media-type="application/xhtml+xml" />
+                    <item id="plate" href="plate.xhtml" media-type="application/xhtml+xml" />
+                    <item id="chap2" href="chap2.xhtml" media-type="application/xhtml+xml" />
+                </manifest>
+                <spine>
+                    <itemref idref="chap1" />
+                    <itemref idref="plate" />
+                    <itemref idref="chap2" />
+                </spine>
+            </package>
+        `);
+        zip.file('OPS/chap1.xhtml', xhtml(`<h1>Chapter 1</h1><p>${repeatedWords('opening', 120)}</p>`));
+        zip.file('OPS/plate.xhtml', xhtml('<h1>Plate 1</h1><img src="plate.jpg" alt="Plate 1" />'));
+        zip.file('OPS/chap2.xhtml', xhtml(`<h1>Chapter 2</h1><p>${repeatedWords('closing', 120)}</p>`));
+
+        const plan = await buildEpubStructurePlan(zip);
+
+        expect(plan.chapters.some((chapter) => chapter.title === 'Plate 1')).toBe(true);
+    });
 });

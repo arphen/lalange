@@ -9,12 +9,13 @@
   "scripts": {
     "dev": "vite",
     "dev:https": "VITE_HTTPS=1 vite",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && node scripts/generate-sitemap.mjs && vite build && node scripts/prerender-public-routes.mjs && node scripts/validate-prerendered-routes.mjs",
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest --exclude '**/*.integration.test.ts'",
     "test:integration": "vitest run integration",
     "coverage": "vitest run --coverage",
+    "og:image": "node scripts/generate-og-image.mjs",
     "deploy": "npm run build && wrangler pages deploy dist",
     "prepare": "husky",
     "screenshot": "playwright test"

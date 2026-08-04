@@ -8,6 +8,7 @@ import { useSettingsStore } from '../../core/store/settings';
 import { BookCard } from './BookCard';
 import { ExchangeSheet } from '../Exchange/ExchangeSheet';
 import { SeoHead } from '../SeoHead';
+import { getOpenGraphType, getPublicRoute } from '../../seo/publicRoutes';
 
 interface ArchiveProps {
     onOpenBook: (book: BookDocType) => void;
@@ -17,6 +18,36 @@ interface ArchiveProps {
 const normalizeIdentity = (value?: string) => (value || '').trim().toLowerCase();
 const uploadAccept = defaultIngestReaderRegistry.getAcceptAttribute();
 const supportedFormatsLabel = defaultIngestReaderRegistry.getSupportedExtensionsLabel();
+const HOME_SCHEMA = {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "@id": "https://arphen.xyz/#software",
+    "name": "XYZ",
+    "url": "https://arphen.xyz/",
+    "description": "A private, local-first RSVP speed reader for EPUB, PDF, Markdown, and TXT files.",
+    "applicationCategory": "UtilitiesApplication",
+    "operatingSystem": "Web Browser",
+    "isAccessibleForFree": true,
+    "screenshot": "https://arphen.xyz/og-image.png",
+    "featureList": [
+        "RSVP reading from 50 to 2,000 words per minute",
+        "Optional local AI semantic pacing",
+        "EPUB, PDF, Markdown, and TXT support",
+        "Local reading history and progress",
+        "Peer-to-peer device exchange"
+    ],
+    "publisher": {
+        "@type": "Organization",
+        "@id": "https://arphen.xyz/#publisher",
+        "name": "Arphen",
+        "url": "https://arphen.xyz/"
+    },
+    "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "USD"
+    }
+};
 
 const findDuplicateBook = async (
     db: MyDatabase,
@@ -48,6 +79,7 @@ const findDuplicateBook = async (
 };
 
 export const Archive: React.FC<ArchiveProps> = ({ onOpenBook, onScanHandoff }) => {
+    const seo = getPublicRoute('/');
     const [books, setBooks] = useState<BookDocType[]>([]);
     const [loading, setLoading] = useState(false);
     const [status, setStatus] = useState('');
@@ -216,23 +248,12 @@ export const Archive: React.FC<ArchiveProps> = ({ onOpenBook, onScanHandoff }) =
             onDrop={handleDrop}
         >
             <SeoHead
-                title="XYZ"
-                description="XYZ is a local-first, AI-driven speed reading tool that uses entropy modulation to pace text based on meaning."
-                canonicalUrl="https://arphen.xyz/"
-                schema={{
-                    "@context": "https://schema.org",
-                    "@type": "WebApplication",
-                    "name": "XYZ",
-                    "url": "https://arphen.xyz/",
-                    "description": "Local-first AI-driven speed reading tool.",
-                    "applicationCategory": "UtilitiesApplication",
-                    "operatingSystem": "Web",
-                    "offers": {
-                        "@type": "Offer",
-                        "price": "0",
-                        "priceCurrency": "USD"
-                    }
-                }}
+                title={seo.title}
+                description={seo.description}
+                canonicalUrl={seo.canonicalUrl}
+                openGraphImage={seo.openGraphImage}
+                type={getOpenGraphType(seo)}
+                schema={HOME_SCHEMA}
             />
             <div className="archive-main reader-scroll-surface flex-1 overflow-y-auto">
                 <div className="mx-auto flex w-full max-w-7xl flex-col gap-8 px-4 pb-8 pt-16 md:px-8 md:pt-20">

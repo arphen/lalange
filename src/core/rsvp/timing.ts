@@ -1,4 +1,94 @@
 
+import { getTokenDisplayProps } from './tokenize';
+
+const MIN_DENSITY = 0.5;
+const MAX_DENSITY = 2;
+const DENSITY_INFLUENCE = 0.45;
+const SENTENCE_END_WEIGHT = 0.65;
+const CLAUSE_END_WEIGHT = 0.4;
+const PAUSE_WEIGHT = 0.25;
+const PROPER_NOUN_WEIGHT = 0.2;
+const MIN_DISPLAY_MS = 75;
+
+const getLexicalWord = (word: string): string =>
+    word.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}'’.-]+$/gu, '');
+
+const endsSentence = (word: string): boolean => /[.!?]["'”’)]*$/u.test(word);
+
+export const isLikelyProperNoun = (word: string, previousWord?: string): boolean => {
+    if (!previousWord || endsSentence(previousWord)) {
+        return false;
+    }
+
+    const lexicalWord = getLexicalWord(word);
+    return lexicalWord.length > 1 && /^\p{Lu}[\p{L}\p{M}'’.-]*$/u.test(lexicalWord);
+};
+
+const getPunctuationWeight = (word: string): number => {
+    if (/[.!?]["'”’)]*$/u.test(word)) {
+        return SENTENCE_END_WEIGHT;
+    }
+    if (/[;:]["'”’)]*$/u.test(word)) {
+        return CLAUSE_END_WEIGHT;
+    }
+    if (/,["'”’)]*$/u.test(word)) {
+        return PAUSE_WEIGHT;
+    }
+    return 0;
+};
+
+interface TargetIntervalOptions {
+    isSegmentedToken?: boolean;
+    isLikelyProperNoun?: boolean;
+    minimumDisplayMs?: number;
+}
+
+export interface TargetTiming {
+    duration: number;
+    baseInterval: number;
+    infoTime: number;
+    punctuationTime: number;
+    properNounTime: number;
+    tokenAdjustmentTime: number;
+}
+
+export const calculateTargetTiming = (
+    word: string,
+    density: number,
+    effectiveWpm: number,
+    options: TargetIntervalOptions = {},
+): TargetTiming => {
+    const baseInterval = 60000 / Math.max(1, effectiveWpm);
+    const boundedDensity = Math.min(MAX_DENSITY, Math.max(MIN_DENSITY, density));
+    const densityWeight = 1 + (boundedDensity - 1) * DENSITY_INFLUENCE;
+    const punctuationWeight = options.isSegmentedToken ? 0 : getPunctuationWeight(word);
+    const properNounWeight = options.isLikelyProperNoun ? PROPER_NOUN_WEIGHT : 0;
+    const tokenProps = getTokenDisplayProps(word);
+    const tokenMultiplier = options.isSegmentedToken ? 1.15 : tokenProps.displayTimeMultiplier;
+    const infoTime = baseInterval * densityWeight;
+    const punctuationTime = baseInterval * punctuationWeight;
+    const properNounTime = baseInterval * properNounWeight;
+    const weightedInterval = infoTime + punctuationTime + properNounTime;
+    const flooredInterval = Math.max(options.minimumDisplayMs ?? MIN_DISPLAY_MS, weightedInterval);
+    const duration = flooredInterval * tokenMultiplier;
+
+    return {
+        duration,
+        baseInterval,
+        infoTime,
+        punctuationTime,
+        properNounTime,
+        tokenAdjustmentTime: duration - flooredInterval,
+    };
+};
+
+export const getTargetInterval = (
+    word: string,
+    density: number,
+    effectiveWpm: number,
+    options: TargetIntervalOptions = {},
+): number => calculateTargetTiming(word, density, effectiveWpm, options).duration;
+
 /**
  * Get visual processing delay for a word.
  * 

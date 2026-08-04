@@ -24,6 +24,7 @@ dist-ssr
 *.sw?
 coverage
 local_models/
+.wrangler/
 books/
 
 # Exhibition render pipeline (generated artifacts)

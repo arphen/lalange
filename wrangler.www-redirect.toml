@@ -1,0 +1,8 @@
+name = "arphen-www-redirect"
+main = "src/cloudflare/wwwRedirect.ts"
+compatibility_date = "2026-08-04"
+workers_dev = false
+
+routes = [
+    { pattern = "www.arphen.xyz/*", zone_name = "arphen.xyz" },
+]

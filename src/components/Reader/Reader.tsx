@@ -1,10 +1,10 @@
 import React, { useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { clsx } from 'clsx';
 import { ArrowLeft, Focus, Gauge, Headphones, List, Moon, Play, Share2, Sun, X } from 'lucide-react';
-import { type BookDocType, type ChapterDocType, type ReadingStateDocType, type GlobalSummaryType, initDB } from '../../core/sync/db';
+import { type BookDocType, type ChapterDocType, type ReadingStateDocType, type GlobalSummaryType, type ImageDocType, initDB } from '../../core/sync/db';
 import { getDisplayPlugin, type DisplayPlugin, getVelocireaderORPIndex } from '../../core/rsvp/display';
-import { getVisualProcessingDelay, getSpeedFactor } from '../../core/rsvp/timing';
-import { getTokenDisplayProps, isReferenceToken, splitLongWordForRSVP } from '../../core/rsvp/tokenize';
+import { getTargetInterval, isLikelyProperNoun } from '../../core/rsvp/timing';
+import { isReferenceToken, splitLongWordForRSVP } from '../../core/rsvp/tokenize';
 import { Sidebar } from './Sidebar';
 import { TTSPlayer } from './TTSPlayer';
 import { ExchangeSheet } from '../Exchange/ExchangeSheet';
@@ -19,6 +19,7 @@ import { useSettingsStore } from '../../core/store/settings';
 import { useAIStore } from '../../core/store/ai';
 import { useTTSStore } from '../../core/store/tts';
 import { findNextReadableChapter, findPreviousReadableChapter, getGlobalWordIndex, isReadableChapter } from './readerNavigation';
+import { buildImageCueAssignments, findImageBreakAfterChapter, type ImageBreakCue } from './imageCue';
 
 import { scheduler } from '../../core/ingest/scheduler';
 import { processChaptersInBackground, resumeIncompleteAnalysis } from '../../core/ingest/pipeline';
@@ -101,7 +102,16 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
     const setAiEnabled = useSettingsStore((s) => s.setAiEnabled);
     const aiIsReady = useAIStore((s) => s.isReady);
     const aiIsLoading = useAIStore((s) => s.isLoading);
+    const aiSetupProgress = useAIStore((s) => s.progressValue);
     const requestAiSetup = useAIStore((s) => s.requestSetup);
+    const aiSetupPercent = Math.round(aiSetupProgress * 100);
+    const pacingControlLabel = aiEnabled
+        ? 'Disable adaptive pacing'
+        : aiIsLoading
+            ? `Adaptive pacing setup ${aiSetupPercent}%`
+            : aiIsReady
+                ? 'Enable adaptive pacing'
+                : 'Set up adaptive pacing';
     
     // Get the active display plugin
     const displayPlugin = useMemo(() => getDisplayPlugin(displayPluginId), [displayPluginId]);
@@ -131,6 +141,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
 
     // Sidebar & Chapters
     const [chapters, setChapters] = useState<ChapterDocType[]>([]);
+    const [bookImages, setBookImages] = useState<ImageDocType[]>([]);
     const [globalSummaries, setGlobalSummaries] = useState<GlobalSummaryType[]>([]);
     const [showChapters, setShowChapters] = useState(() => (
         typeof window === 'undefined' || window.innerWidth >= 768
@@ -139,6 +150,8 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
     const [inspectingChapterId, setInspectingChapterId] = useState<string | null>(null);
     const inspectingChapter = chapters.find(c => c.id === inspectingChapterId);
     const [now, setNow] = useState(Date.now()); // Force re-render for live time updates
+    const [activeImageCue, setActiveImageCue] = useState<ImageBreakCue | null>(null);
+    const [showImageCuePreview, setShowImageCuePreview] = useState(false);
 
     // TTS State
     const [showTTSPlayer, setShowTTSPlayer] = useState(false);
@@ -224,8 +237,18 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
     const isSummaryActiveRef = useRef(false);
     const savedChapterIndexRef = useRef(0);
     const summaryWordsRef = useRef<string[]>([]);
+    const activeImageCueRef = useRef<ImageBreakCue | null>(null);
     // Track the last boundary we triggered to prevent re-triggering on restore
     const lastTriggeredBoundaryRef = useRef<number>(-1);
+
+    const imageCueAssignments = useMemo(
+        () => buildImageCueAssignments(chapters, bookImages),
+        [chapters, bookImages],
+    );
+
+    useEffect(() => {
+        activeImageCueRef.current = activeImageCue;
+    }, [activeImageCue]);
 
     const updateProgressMilestone = useCallback((chapterId: string, wordIndex: number, announce: boolean) => {
         const readableChapters = chaptersRef.current.filter(isReadableChapter);
@@ -944,6 +967,21 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
         wpm,
     ]);
 
+    const continueAfterImageCue = useCallback(() => {
+        if (!activeImageCueRef.current) return;
+
+        const nextReadableChapterId = activeImageCueRef.current.nextReadableChapterId;
+        setActiveImageCue(null);
+        setShowImageCuePreview(false);
+
+        if (nextReadableChapterId) {
+            beginChapterTransition(nextReadableChapterId, 0);
+            return;
+        }
+
+        setShowChapters(true);
+    }, [beginChapterTransition]);
+
     const moveToWord = useCallback((wordIndex: number) => {
         if (wordIndex < 0 && currentChapterRef.current) {
             const previousChapter = findPreviousReadableChapter(chaptersRef.current, currentChapterRef.current.id);
@@ -1132,6 +1170,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
 
     const handleRsvpClick = useCallback(() => {
         if (countdown !== null) return;
+        if (activeImageCueRef.current) return;
 
         if (chapterTransitionPhase === 'braking' || chapterTransitionPhase === 'crossing') {
             pauseAfterChapterTransitionRef.current = !pauseAfterChapterTransitionRef.current;
@@ -1245,25 +1284,17 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
     // close to the next word, then use rAF for precise final timing.
     // This reduces CPU wake-ups from ~60/sec to ~5-10/sec (80-90% reduction).
     
-    const calculateTargetInterval = useCallback((displayWord: string, densityFactor: number, isSegmentedToken: boolean) => {
+    const calculateTargetInterval = useCallback((
+        displayWord: string,
+        densityFactor: number,
+        isSegmentedToken: boolean,
+        likelyProperNoun: boolean,
+    ) => {
         const effectiveWpm = Math.max(1, wpmRef.current * playbackMomentumRef.current);
-        const speedFactor = getSpeedFactor(effectiveWpm);
-        const baseInterval = 60000 / effectiveWpm;
-        const tokenProps = getTokenDisplayProps(displayWord);
-
-        const T_floor = 75 * speedFactor;
-        const infoTime = baseInterval * densityFactor;
-        const visualDelay = getVisualProcessingDelay(displayWord, speedFactor);
-
-        if (!isSegmentedToken) {
-            return (T_floor + infoTime + visualDelay) * tokenProps.displayTimeMultiplier;
-        }
-
-        // Segmented tokens need extra dwell for easier reconstruction of long words.
-        const segmentedMultiplier = Math.max(1.15, tokenProps.displayTimeMultiplier);
-        const segmentedBonusMs = 45 * speedFactor;
-
-        return (T_floor + infoTime + visualDelay) * segmentedMultiplier + segmentedBonusMs;
+        return getTargetInterval(displayWord, densityFactor, effectiveWpm, {
+            isSegmentedToken,
+            isLikelyProperNoun: likelyProperNoun,
+        });
     }, []);
 
     const loop = React.useCallback(function loopInternal(time: number) {
@@ -1299,7 +1330,13 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
         const density = activeDensities[indexRef.current];
         const currentDensity = (density !== undefined && density > 0) ? density : 1.0;
         const densityFactor = segmentCount > 1 ? currentDensity / segmentCount : currentDensity;
-        const targetInterval = calculateTargetInterval(displayWord, densityFactor, segmentCount > 1);
+        const likelyProperNoun = isLikelyProperNoun(activeWord, activeWords[indexRef.current - 1]);
+        const targetInterval = calculateTargetInterval(
+            displayWord,
+            densityFactor,
+            segmentCount > 1,
+            likelyProperNoun,
+        );
 
         // Cap accumulator to prevent huge jumps
         if (accumulatorRef.current > Math.max(1000, targetInterval * 10)) {
@@ -1408,6 +1445,18 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                 // End of Chapter - find next
                 const chapters = chaptersRef.current;
                 const currentChapter = currentChapterRef.current;
+                const imageBreak = currentChapter
+                    ? findImageBreakAfterChapter(chapters, currentChapter.id, imageCueAssignments)
+                    : null;
+
+                if (imageBreak) {
+                    isPlayingRef.current = false;
+                    setIsPlaying(false);
+                    setShowImageCuePreview(false);
+                    setActiveImageCue(imageBreak);
+                    return;
+                }
+
                 const nextChapter = currentChapter
                     ? findNextReadableChapter(chapters, currentChapter.id)
                     : null;
@@ -1424,7 +1473,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
 
         // Continue loop - use rAF for precision timing in final approach
         requestRef.current = requestAnimationFrame(loopInternal);
-    }, [wpm, renderWord, beginChapterTransition, summaryWpm, startTransition, calculateTargetInterval, resetDisplaySegments, syncSchedulerCursor, updateProgressMilestone]);
+    }, [wpm, renderWord, beginChapterTransition, summaryWpm, startTransition, calculateTargetInterval, resetDisplaySegments, syncSchedulerCursor, updateProgressMilestone, imageCueAssignments]);
 
     // Sync refs
     useEffect(() => {
@@ -1446,6 +1495,11 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
             updateProgressMilestone(currentChapter.id, indexRef.current, false);
         }
     }, [currentChapter, updateProgressMilestone]);
+
+    useEffect(() => {
+        setActiveImageCue(null);
+        setShowImageCuePreview(false);
+    }, [currentChapter?.id]);
 
     useEffect(() => {
         if (currentChapter) {
@@ -1491,6 +1545,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
             if (e.target instanceof Element && e.target.closest('button, a, input, textarea, select, [role="button"]')) return;
+            if (activeImageCueRef.current) return;
 
             if (e.code === 'Space') {
                 e.preventDefault(); // Prevent scrolling
@@ -1590,6 +1645,13 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                 });
             }
 
+            let imageSub: { unsubscribe: () => void } | null = null;
+            if (db.images) {
+                imageSub = db.images.find({ selector: { bookId: book.id } }).$.subscribe((imageDocs) => {
+                    setBookImages(imageDocs.map((doc) => doc.toJSON() as ImageDocType));
+                });
+            }
+
             // Get reading state
             let state = await db.reading_states.findOne(book.id).exec();
             if (!state) {
@@ -1635,8 +1697,11 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                 }
             }
             
-            // Return cleanup for book subscription
-            return () => bookSub?.unsubscribe();
+            // Return cleanup for book and image subscriptions
+            return () => {
+                bookSub?.unsubscribe();
+                imageSub?.unsubscribe();
+            };
         };
         const bookSubCleanup = loadState();
         return () => {
@@ -1865,6 +1930,60 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                     {progressReminder}% through book
                 </div>
             )}
+            {activeImageCue && (
+                <div className="reader-image-cue" role="status" aria-live="polite">
+                    <div className="reader-image-cue__copy">
+                        <strong>Illustration nearby</strong>
+                        <span>{activeImageCue.imageCount > 1 ? `${activeImageCue.imageCount} images between sections` : 'Image between sections'}</span>
+                    </div>
+                    <div className="reader-image-cue__actions">
+                        <button
+                            type="button"
+                            onClick={() => setShowImageCuePreview(true)}
+                            disabled={!activeImageCue.primaryImage?.src}
+                            className="reader-image-cue__button"
+                        >
+                            View image
+                        </button>
+                        <button
+                            type="button"
+                            onClick={continueAfterImageCue}
+                            className="reader-image-cue__button reader-image-cue__button--primary"
+                        >
+                            Continue reading
+                        </button>
+                    </div>
+                </div>
+            )}
+            {activeImageCue?.primaryImage?.src && showImageCuePreview && (
+                <div className="reader-image-preview" role="dialog" aria-modal="true" aria-label="Illustration preview">
+                    <button
+                        type="button"
+                        onClick={() => setShowImageCuePreview(false)}
+                        className="reader-image-preview__close"
+                        aria-label="Close image preview"
+                    >
+                        <X className="h-4 w-4" />
+                    </button>
+                    <div className="reader-image-preview__frame">
+                        <img
+                            src={activeImageCue.primaryImage.src}
+                            alt={activeImageCue.primaryImage.filename || activeImageCue.primaryImage.chapterTitle || 'Illustration'}
+                            className="reader-image-preview__image"
+                        />
+                    </div>
+                    <p className="reader-image-preview__caption">
+                        {activeImageCue.primaryImage.filename || activeImageCue.primaryImage.chapterTitle || 'Illustration'}
+                    </p>
+                    <button
+                        type="button"
+                        onClick={continueAfterImageCue}
+                        className="reader-image-preview__resume"
+                    >
+                        Resume reading
+                    </button>
+                </div>
+            )}
             {/* Floating Header / Controls */}
             <div className="reader-toolbar absolute top-0 left-0 right-0 z-[90] p-2 md:p-4 flex justify-between items-start pointer-events-none">
                 {onBack ? (
@@ -1912,15 +2031,34 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                             }
                             requestAiSetup('pacing');
                         }}
-                        className={clsx('reader-toolbar-button reader-focus-fade', aiEnabled && 'reader-toolbar-button--active')}
-                        title={aiEnabled ? 'Disable adaptive pacing' : aiIsLoading ? 'Adaptive pacing is loading' : aiIsReady ? 'Enable adaptive pacing' : 'Set up adaptive pacing'}
-                        aria-label={aiEnabled ? 'Disable adaptive pacing' : aiIsLoading ? 'Adaptive pacing is loading' : aiIsReady ? 'Enable adaptive pacing' : 'Set up adaptive pacing'}
+                        className={clsx(
+                            'reader-toolbar-button reader-focus-fade',
+                            aiEnabled && 'reader-toolbar-button--active',
+                            aiIsLoading && 'reader-toolbar-button--loading',
+                        )}
+                        title={pacingControlLabel}
+                        aria-label={pacingControlLabel}
                         aria-pressed={aiEnabled}
                         aria-hidden={focusModeEnabled}
                         tabIndex={focusModeEnabled ? -1 : undefined}
                         disabled={aiIsLoading}
                     >
-                        <Gauge className="reader-toolbar-icon" />
+                        <span className="reader-pacing-icon" aria-hidden="true">
+                            <Gauge className="reader-toolbar-icon" />
+                            {aiIsLoading && (
+                                <svg className="reader-pacing-progress" viewBox="0 0 24 24" data-testid="pacing-setup-progress">
+                                    <circle className="reader-pacing-progress__track" cx="12" cy="12" r="10" pathLength="100" />
+                                    <circle
+                                        className="reader-pacing-progress__value"
+                                        cx="12"
+                                        cy="12"
+                                        r="10"
+                                        pathLength="100"
+                                        style={{ strokeDashoffset: 100 - aiSetupPercent }}
+                                    />
+                                </svg>
+                            )}
+                        </span>
                         <span className="reader-toolbar-label">Pacing</span>
                     </button>
 

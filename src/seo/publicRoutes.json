@@ -1,0 +1,42 @@
+[
+  {
+    "pathname": "/",
+    "title": "Private RSVP Speed Reader for EPUB and PDF",
+    "description": "XYZ is a private, local-first RSVP speed reader for EPUB, PDF, Markdown, and TXT files. No login or tracking required.",
+    "canonicalUrl": "https://arphen.xyz/",
+    "contentType": "WebApplication",
+    "lastmod": "2026-08-04",
+    "openGraphImage": "https://arphen.xyz/og-image.png",
+    "includeInSitemap": true
+  },
+  {
+    "pathname": "/manifesto",
+    "title": "The Local-First Reading Manifesto",
+    "description": "Why XYZ keeps reading, pacing, and local AI processing in the browser without accounts, tracking, or a remote reading server.",
+    "canonicalUrl": "https://arphen.xyz/manifesto",
+    "contentType": "Article",
+    "lastmod": "2026-08-04",
+    "openGraphImage": "https://arphen.xyz/og-image.png",
+    "includeInSitemap": true
+  },
+  {
+    "pathname": "/research",
+    "title": "Adaptive RSVP and Semantic Pacing Research",
+    "description": "Technical and theoretical research behind XYZ: RSVP reading, semantic pacing, local-first AI, and the design of a neuro-semantic reading instrument.",
+    "canonicalUrl": "https://arphen.xyz/research",
+    "contentType": "TechArticle",
+    "lastmod": "2026-08-04",
+    "openGraphImage": "https://arphen.xyz/og-image.png",
+    "includeInSitemap": true
+  },
+  {
+    "pathname": "/manual",
+    "title": "Speed Reading Manual: RSVP, Pacing, and Controls",
+    "description": "Learn how to use XYZ's RSVP reader, visual anchoring, variable pacing, and session controls for focused browser-based reading.",
+    "canonicalUrl": "https://arphen.xyz/manual",
+    "contentType": "HowTo",
+    "lastmod": "2026-08-04",
+    "openGraphImage": "https://arphen.xyz/og-image.png",
+    "includeInSitemap": true
+  }
+]

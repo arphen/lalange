@@ -1,0 +1,9 @@
+/settings /app-shell 200
+/sync /app-shell 200
+/exchange /app-shell 200
+/EXCHANGE /app-shell 200
+/library /app-shell 200
+/reader/* /app-shell 200
+/settings/* /app-shell 200
+/exchange/* /app-shell 200
+/EXCHANGE/* /app-shell 200

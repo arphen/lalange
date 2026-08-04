@@ -17,4 +17,10 @@ describe('index.html prerender fallback', () => {
         expect(indexHtml).not.toMatch(/class="cta"/);
         expect(indexHtml).not.toMatch(/START READING NOW/i);
     });
+
+    it('does not make unsupported speed or comprehension claims', () => {
+        expect(indexHtml).not.toMatch(/read 3x faster/i);
+        expect(indexHtml).not.toMatch(/500-1000\+ words per minute/i);
+        expect(indexHtml).toContain('50 to 2,000 words per minute');
+    });
 });

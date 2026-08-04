@@ -1,6 +1,26 @@
 
 import { describe, it, expect } from 'vitest';
-import { getVisualProcessingDelay } from './timing';
+import { getTargetInterval, getVisualProcessingDelay, isLikelyProperNoun } from './timing';
+
+describe('getTargetInterval', () => {
+    it('should keep punctuation cadence smooth at 500 WPM', () => {
+        expect(getTargetInterval('word', 1, 500)).toBe(120);
+        expect(getTargetInterval('word,', 1, 500)).toBe(150);
+        expect(getTargetInterval('word.', 1, 500)).toBe(198);
+    });
+
+    it('should compress density extremes toward the base cadence', () => {
+        expect(getTargetInterval('word', 0.5, 500)).toBe(93);
+        expect(getTargetInterval('word', 2, 500)).toBe(174);
+    });
+
+    it('should give likely proper nouns extra time', () => {
+        expect(isLikelyProperNoun('Montmorency', 'met')).toBe(true);
+        expect(isLikelyProperNoun('Montmorency', 'arrived.')).toBe(false);
+        expect(getTargetInterval('Montmorency', 1, 500, { isLikelyProperNoun: true }))
+            .toBeGreaterThan(getTargetInterval('montmorency', 1, 500));
+    });
+});
 
 describe('getVisualProcessingDelay', () => {
     it('should return length-based delay for normal words', () => {
