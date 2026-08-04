@@ -9,6 +9,7 @@ import {
     GET_DEPLOYMENT_METADATA,
     type DeploymentMetadata,
 } from './core/pwa/updateProtocol';
+import { fetchNavigationWithFallback } from './core/pwa/navigationFallback';
 
 interface InjectedServiceWorkerScope {
     skipWaiting(): Promise<void>;
@@ -28,7 +29,12 @@ void serviceWorker.skipWaiting();
 clientsClaim();
 precacheAndRoute(self.__WB_MANIFEST);
 cleanupOutdatedCaches();
-registerRoute(new NavigationRoute(createHandlerBoundToURL('index.html')));
+const offlineAppHandler = createHandlerBoundToURL('index.html');
+registerRoute(new NavigationRoute((options) => fetchNavigationWithFallback(
+    options.request,
+    (request) => fetch(request),
+    () => offlineAppHandler(options),
+)));
 registerRoute(
     ({ url }) => url.pathname === '/version.json',
     () => Promise.resolve(new Response(JSON.stringify(deploymentMetadata), {

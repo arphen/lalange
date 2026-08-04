@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Routes, Route, useNavigate, useLocation, Navigate } from 'react-router-dom'
+import { Routes, Route, useNavigate, useLocation, Navigate, Link } from 'react-router-dom'
 import { Archive } from './components/Library/Archive'
 import { Librarian } from './components/Library/Librarian'
 import { ReaderPage } from './components/Reader/ReaderPage'
@@ -17,6 +17,35 @@ import { useSettingsStore } from './core/store/settings'
 import { useAIStore } from './core/store/ai'
 import { clsx } from 'clsx'
 import { GlobalNavSidebar, type ViewState } from './components/GlobalNavSidebar'
+import { SeoHead } from './components/SeoHead'
+
+function NotFound() {
+  return (
+    <>
+      <SeoHead title="Route Not Found" robots="noindex, nofollow" />
+      <main className="flex h-full w-full items-center justify-center bg-basalt px-6 py-16 text-white">
+        <div className="max-w-xl space-y-8 font-mono">
+          <p className="text-xs uppercase tracking-[0.3em] text-lacan-red">404 / signal absent</p>
+          <h1 className="text-4xl font-bold tracking-tight md:text-6xl">This route does not exist.</h1>
+          <p className="max-w-lg leading-relaxed text-white/60">
+            The requested address is not part of the public instrument. Return to the archive or inspect the operating notes.
+          </p>
+          <nav className="flex flex-wrap gap-4 text-xs uppercase tracking-widest">
+            <Link to="/" className="border border-dune-gold/60 px-4 py-3 text-dune-gold transition-colors hover:bg-dune-gold hover:text-black">
+              Open archive
+            </Link>
+            <Link to="/manual" className="border border-white/20 px-4 py-3 text-white/70 transition-colors hover:border-white hover:text-white">
+              Read manual
+            </Link>
+            <Link to="/research" className="border border-white/20 px-4 py-3 text-white/70 transition-colors hover:border-white hover:text-white">
+              View research
+            </Link>
+          </nav>
+        </div>
+      </main>
+    </>
+  );
+}
 
 function App() {
   const { theme, setTheme, navSidebarCollapsed } = useSettingsStore()
@@ -61,10 +90,20 @@ function App() {
 
   // Sync page bypasses onboarding and all app chrome
   if (isSyncPage) {
-    return <SyncPage />;
+    return (
+      <>
+        <SeoHead title="Device Sync" robots="noindex, nofollow" />
+        <SyncPage />
+      </>
+    );
   }
   if (isExchangePage) {
-    return <ExchangePage />;
+    return (
+      <>
+        <SeoHead title="Device Exchange" robots="noindex, nofollow" />
+        <ExchangePage />
+      </>
+    );
   }
 
   return (
@@ -142,9 +181,12 @@ function App() {
           <Route path="/exchange" element={<ExchangePage />} />
           <Route path="/reader/:bookId" element={<ReaderPage />} />
           <Route path="/library" element={
-            <div className="w-full h-full max-w-4xl pt-16 px-4 pb-4 md:p-4 flex flex-col">
-              <Librarian />
-            </div>
+            <>
+              <SeoHead title="Librarian" robots="noindex, nofollow" />
+              <div className="w-full h-full max-w-4xl pt-16 px-4 pb-4 md:p-4 flex flex-col">
+                <Librarian />
+              </div>
+            </>
           } />
           <Route path="/settings" element={<Navigate to="/settings/pacing" replace />} />
           <Route path="/settings/:tab" element={<SettingsPanel onClose={() => navigate(-1)} />} />
@@ -159,7 +201,7 @@ function App() {
               <Research />
             </div>
           } />
-          <Route path="*" element={<Navigate to="/" replace />} />
+          <Route path="*" element={<NotFound />} />
         </Routes>
       </div>
 

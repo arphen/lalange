@@ -3,6 +3,7 @@ import { SeoHead } from './SeoHead';
 import { BrandName } from './BrandName';
 import { MANIFESTO_DENSITIES, MANIFESTO_PARAGRAPHS, MANIFESTO_WORDS } from '../content/manifesto';
 import { ManifestoRsvp } from './ManifestoRsvp';
+import { getOpenGraphType, getPublicRoute } from '../seo/publicRoutes';
 
 const getDensityColor = (score: number) => {
     if (score === 0) return 'text-gray-700 opacity-50';
@@ -16,6 +17,7 @@ const getDensityColor = (score: number) => {
 };
 
 export const Manifesto: React.FC<{ onBack: () => void }> = ({ onBack }) => {
+    const seo = getPublicRoute('/manifesto');
     const [currentIndex, setCurrentIndex] = useState(0);
     const [pauseEpoch, setPauseEpoch] = useState(0);
 
@@ -42,9 +44,11 @@ export const Manifesto: React.FC<{ onBack: () => void }> = ({ onBack }) => {
     return (
         <div className="w-full h-full min-h-0 overflow-hidden font-mono">
             <SeoHead
-                title="Manifesto"
-                description="XYZ represents a shift towards local-only usage of LLMs. Experience high-velocity data ingestion with complete digital sovereignty."
-                canonicalUrl="https://arphen.xyz/manifesto"
+                title={seo.title}
+                description={seo.description}
+                canonicalUrl={seo.canonicalUrl}
+                openGraphImage={seo.openGraphImage}
+                type={getOpenGraphType(seo)}
             />
             <div className="w-full h-full min-h-0 flex flex-col lg:flex-row">
                 {/* Left: Regular reading */}

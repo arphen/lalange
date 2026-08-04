@@ -1,6 +1,6 @@
 # XYZ - Free AI Speed Reading App
 
-**Read 3x faster with AI-powered pacing. 100% local, 100% private.**
+**Private, local-first RSVP reading with optional semantic pacing from 50 to 2,000 WPM.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](http://makeapullrequest.com)

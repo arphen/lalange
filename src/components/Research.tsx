@@ -3,6 +3,7 @@ import { clsx } from 'clsx';
 import { ArrowLeft } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { SeoHead } from './SeoHead';
+import { getOpenGraphType, getPublicRoute } from '../seo/publicRoutes';
 
 type Section = 'intro' | 'psychoanalysis' | 'architecture' | 'network' | 'ethics';
 
@@ -22,15 +23,18 @@ const NavButton = ({ section, label, active, onClick }: { section: Section; labe
 
 export const Research = () => {
   const [activeSection, setActiveSection] = useState<Section>('intro');
+    const seo = getPublicRoute('/research');
 
 
 
   return (
     <div className="w-full h-full overflow-hidden bg-basalt text-gray-300 font-mono flex flex-col md:flex-row">
       <SeoHead
-          title="Research"
-          description="Technical and theoretical analysis of Arphen: The Neuro-Semantic Scansion Engine."
-          canonicalUrl="https://arphen.xyz/research"
+          title={seo.title}
+          description={seo.description}
+          canonicalUrl={seo.canonicalUrl}
+          openGraphImage={seo.openGraphImage}
+          type={getOpenGraphType(seo)}
       />
         
       {/* Sidebar Navigation */}
@@ -63,8 +67,7 @@ export const Research = () => {
                 </p>
             </div>
 
-            {activeSection === 'intro' && (
-                <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+            <div hidden={activeSection !== 'intro'} className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
                     <section className="space-y-4">
                         <h2 className="text-xl font-bold text-dune-gold uppercase tracking-wider">1. The Neuro-Semantic Intervention</h2>
                         <p className="leading-relaxed text-lg">
@@ -91,11 +94,9 @@ export const Research = () => {
                             "It does not ask the user to read; it reads for the user, projecting the semantic content directly onto the retina."
                         </blockquote>
                     </section>
-                </div>
-            )}
+            </div>
 
-            {activeSection === 'psychoanalysis' && (
-                <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+            <div hidden={activeSection !== 'psychoanalysis'} className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
                     <section className="space-y-4">
                         <h2 className="text-xl font-bold text-dune-gold uppercase tracking-wider">2. The Psychoanalysis of Interface</h2>
                         <p className="leading-relaxed text-lg">
@@ -132,11 +133,9 @@ export const Research = () => {
                             The reader is not a consumer, but a "pilot" navigating a high-speed information stream.
                         </p>
                     </section>
-                </div>
-            )}
+            </div>
 
-            {activeSection === 'architecture' && (
-                 <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+            <div hidden={activeSection !== 'architecture'} className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
                     <section className="space-y-4">
                         <h2 className="text-xl font-bold text-dune-gold uppercase tracking-wider">3. The Exegete: Local-First AI</h2>
                         <p className="leading-relaxed text-lg">
@@ -167,11 +166,9 @@ export const Research = () => {
                             (formatting, CSS) to reduce the text to a pure stream of tokens.
                         </p>
                     </section>
-                </div>
-            )}
+            </div>
 
-            {activeSection === 'network' && (
-                <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+            <div hidden={activeSection !== 'network'} className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
                     <section className="space-y-4">
                         <h2 className="text-xl font-bold text-dune-gold uppercase tracking-wider">4. The Synapse: Peer-to-Peer</h2>
                         <p className="leading-relaxed text-lg">
@@ -193,11 +190,9 @@ export const Research = () => {
                             <li>Direct P2P tunnel established over LAN.</li>
                         </ul>
                     </section>
-                </div>
-            )}
+            </div>
 
-            {activeSection === 'ethics' && (
-                <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+            <div hidden={activeSection !== 'ethics'} className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
                     <section className="space-y-4">
                         <h2 className="text-xl font-bold text-dune-gold uppercase tracking-wider">5. The Librarian</h2>
                         <p className="leading-relaxed text-lg">
@@ -220,8 +215,7 @@ export const Research = () => {
                              (e.g., <em>The Whale</em>) to generate affiliate revenue via client-side link generation, operating in a complex regulatory grey area.
                         </p>
                     </section>
-                </div>
-            )}
+            </div>
 
             <div className="pt-12 border-t border-white/10 mt-12">
                 <p className="text-xs text-center text-gray-600 uppercase tracking-widest">
