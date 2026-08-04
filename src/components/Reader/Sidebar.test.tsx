@@ -151,7 +151,7 @@ describe('Sidebar Component', () => {
             expect(screen.getByTestId('chapter-progress-chapter-1')).toHaveAttribute('aria-valuenow', '60');
             expect(screen.getByRole('progressbar', { name: 'Book progress' })).toHaveAttribute('aria-valuenow', '60');
             expect(screen.getAllByText('60%')).toHaveLength(2);
-            expect(screen.getByText('Here · 20%')).toBeInTheDocument();
+            expect(screen.getByText('20%')).toBeInTheDocument();
         });
 
         it('does not infer progress for non-current chapters', () => {
@@ -215,7 +215,10 @@ describe('Sidebar Component', () => {
             render(<Sidebar {...defaultProps} chapters={[chapter]} />);
 
             expect(screen.getByTestId('chapter-structure-chapter-1')).toHaveTextContent('Document heading');
-            expect(screen.getByText('XYZ-created sections')).toBeInTheDocument();
+            expect(screen.getByLabelText('About XYZ-created sections')).toBeInTheDocument();
+            expect(screen.getByRole('tooltip')).toHaveTextContent(
+                'XYZ-created sections are generated from headings or recovered structure so long chapters are easier to navigate.',
+            );
             expect(screen.getByTestId('subchapter-btn-0')).toHaveTextContent('Hello world this is a...');
         });
     });

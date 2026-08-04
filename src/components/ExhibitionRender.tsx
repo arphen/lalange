@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { getSpeedFactor, getVisualProcessingDelay } from '../core/rsvp/timing';
+import { getTargetInterval, isLikelyProperNoun } from '../core/rsvp/timing';
 import { getVelocireaderORPIndex, getLuminance, getFontWeight } from '../core/rsvp/display/velocireader';
 import {
   getFocusCharWidth,
@@ -333,9 +333,7 @@ export function ExhibitionRender() {
       // Paint the first frame before recording starts (avoid a black lead-in).
       drawWord(words[index] || '');
 
-      const speedFactor = getSpeedFactor(wpm);
       const baseInterval = 60000 / wpm;
-      const tFloor = 75 * speedFactor;
 
       let accumulator = 0;
       let lastTime = performance.now();
@@ -362,8 +360,9 @@ export function ExhibitionRender() {
         // Loop back to the start when the book ends so the full duration fills.
         while (true) {
           const word = words[index] || '';
-          const visualDelay = getVisualProcessingDelay(word, speedFactor);
-          const targetInterval = tFloor + baseInterval + visualDelay;
+          const targetInterval = getTargetInterval(word, 1, wpm, {
+            isLikelyProperNoun: isLikelyProperNoun(word, words[index - 1]),
+          });
           if (accumulator < targetInterval) break;
           accumulator -= targetInterval;
           index = (index + 1) % words.length;

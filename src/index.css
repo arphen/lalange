@@ -1214,10 +1214,49 @@ body.theme-ash {
     opacity: 0.32;
   }
 
+  .reader-toolbar-button--loading:disabled {
+    color: var(--reader-accent-green);
+    opacity: 1;
+  }
+
   .reader-toolbar-icon {
     width: 1.125rem;
     height: 1.125rem;
     stroke-width: 1.75;
+  }
+
+  .reader-pacing-icon {
+    position: relative;
+    display: grid;
+    width: 1.375rem;
+    height: 1.375rem;
+    place-items: center;
+  }
+
+  .reader-pacing-progress {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+    transform: rotate(-90deg);
+  }
+
+  .reader-pacing-progress circle {
+    fill: none;
+    stroke-width: 1.5;
+  }
+
+  .reader-pacing-progress__track {
+    stroke: currentColor;
+    opacity: 0.2;
+  }
+
+  .reader-pacing-progress__value {
+    stroke: currentColor;
+    stroke-dasharray: 100;
+    stroke-linecap: round;
+    transition: stroke-dashoffset 300ms ease;
   }
 
   .reader-toolbar-label {
@@ -1289,6 +1328,164 @@ body.theme-ash {
     transform: translateX(-50%);
     animation: readerProgressReminder 3500ms var(--ease-swell) both;
     pointer-events: none;
+  }
+
+  .reader-image-cue {
+    position: absolute;
+    left: 50%;
+    bottom: 1.1rem;
+    z-index: 96;
+    display: flex;
+    width: min(32rem, calc(100% - 2rem));
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.85rem;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 0.85rem;
+    padding: 0.7rem 0.85rem;
+    background: rgba(8, 10, 12, 0.84);
+    backdrop-filter: blur(8px);
+    transform: translateX(-50%);
+    box-shadow: 0 10px 36px rgba(0, 0, 0, 0.35);
+  }
+
+  .reader-image-cue__copy {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    gap: 0.18rem;
+    color: rgba(255, 255, 255, 0.82);
+    font-family: 'Roboto Mono', monospace;
+    font-size: 0.62rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  .reader-image-cue__copy strong {
+    color: rgba(94, 234, 212, 0.9);
+    font-size: 0.66rem;
+  }
+
+  .reader-image-cue__copy span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .reader-image-cue__actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+  }
+
+  .reader-image-cue__button {
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    border-radius: 999px;
+    padding: 0.38rem 0.68rem;
+    background: rgba(255, 255, 255, 0.02);
+    color: rgba(255, 255, 255, 0.75);
+    font-size: 0.65rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    transition: background 180ms ease, color 180ms ease, border-color 180ms ease;
+  }
+
+  .reader-image-cue__button:hover:not(:disabled),
+  .reader-image-cue__button:focus-visible {
+    border-color: rgba(99, 179, 237, 0.7);
+    background: rgba(99, 179, 237, 0.14);
+    color: #fff;
+    outline: none;
+  }
+
+  .reader-image-cue__button:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
+  .reader-image-cue__button--primary {
+    border-color: rgba(94, 234, 212, 0.52);
+    color: rgba(196, 250, 245, 0.94);
+  }
+
+  .reader-image-preview {
+    position: absolute;
+    inset: 0;
+    z-index: 120;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.8rem;
+    padding: 1.2rem;
+    background: rgba(2, 4, 7, 0.86);
+    backdrop-filter: blur(6px);
+  }
+
+  .reader-image-preview__close {
+    position: absolute;
+    top: 1rem;
+    right: 1rem;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 999px;
+    padding: 0.42rem;
+    background: rgba(255, 255, 255, 0.06);
+    color: rgba(255, 255, 255, 0.78);
+  }
+
+  .reader-image-preview__frame {
+    max-width: min(90vw, 56rem);
+    max-height: min(72vh, 46rem);
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    border-radius: 0.75rem;
+    overflow: hidden;
+    background: rgba(0, 0, 0, 0.25);
+  }
+
+  .reader-image-preview__image {
+    display: block;
+    width: 100%;
+    height: auto;
+    max-height: min(72vh, 46rem);
+    object-fit: contain;
+  }
+
+  .reader-image-preview__caption {
+    max-width: min(80vw, 42rem);
+    color: rgba(255, 255, 255, 0.66);
+    font-family: 'Roboto Mono', monospace;
+    font-size: 0.66rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    text-align: center;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .reader-image-preview__resume {
+    border: 1px solid rgba(94, 234, 212, 0.52);
+    border-radius: 999px;
+    padding: 0.5rem 0.95rem;
+    background: rgba(94, 234, 212, 0.08);
+    color: rgba(212, 255, 250, 0.95);
+    font-family: 'Roboto Mono', monospace;
+    font-size: 0.68rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  @media (max-width: 640px) {
+    .reader-image-cue {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 0.55rem;
+    }
+
+    .reader-image-cue__actions {
+      justify-content: flex-end;
+      flex-wrap: wrap;
+    }
   }
 
   .reader-river-marker {
