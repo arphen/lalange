@@ -17,6 +17,9 @@ describe('PWA precache configuration', () => {
             '**/assets/web-llm-*.js',
             '**/assets/kokoro-*.js',
             '**/assets/transformers.web-*.js',
+            '**/assets/piper-*.js',
+            '**/assets/voices_static-*.js',
+            '**/assets/ort.min-*.js',
         ]));
         expect(PWA_MAX_PRECACHE_FILE_BYTES).toBeLessThanOrEqual(2 * 1024 * 1024);
     });

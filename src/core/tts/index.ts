@@ -3,42 +3,57 @@
  */
 
 export {
-    // Core TTS functions
+    // Engine routing
     initTTS,
     unloadTTS,
     clearTTSCache,
     isTTSModelCached,
     isTTSReady,
     generateSpeech,
-    getTTSAudioValidationError,
     streamSpeech,
-    
+
+    // Voice registry
+    listVoices,
+    getVoice,
+    getVoiceEngine,
+    resolveVoiceId,
+    VOICES,
+    DEFAULT_VOICE,
+
+    // Types
+    type TTSEngineId,
+    type VoiceInfo,
+} from './engine';
+
+export {
     // Sentence utilities
     splitIntoSentences,
     findSentenceForWord,
     estimateAudioTimeForWord,
     findWordForAudioTime,
-    
-    // Voice utilities
-    listVoices,
-    getVoice,
-    resolveVoiceId,
-    VOICES,
-    DEFAULT_VOICE,
-    
+    type SentenceBoundary,
+} from './sentences';
+
+export {
+    getTTSAudioValidationError,
+    type TTSAudioResult,
+} from './audio';
+
+export {
     // Device utilities
     isWebGPUAvailable,
     getOptimalDevice,
-    
+
     // Constants
     TTS_MODEL_ID,
-    
+
     // Types
     type TTSDevice,
-    type TTSAudioResult,
-    type SentenceBoundary,
-    type VoiceInfo,
 } from './kokoro';
+
+export {
+    PIPER_VOICES,
+} from './piper';
 
 export {
     ttsPlayer,

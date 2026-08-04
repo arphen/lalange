@@ -5,7 +5,8 @@
  * No complex time-based seeking - just sentence-by-sentence playback.
  */
 
-import { type TTSAudioResult, type SentenceBoundary } from './kokoro';
+import { type TTSAudioResult } from './audio';
+import { type SentenceBoundary } from './sentences';
 import { useTTSStore } from '../store/tts';
 
 // Configuration
@@ -93,7 +94,9 @@ export interface AudioPlayerOptions {
 interface QueuedAudio {
     buffer: AudioBuffer;
     sentence: SentenceBoundary;
+    /** Audible duration, i.e. the buffer length already divided by playbackRate */
     duration: number;
+    playbackRate: number;
 }
 
 class TTSAudioPlayer {
@@ -170,6 +173,7 @@ class TTSAudioPlayer {
             buffer,
             sentence,
             duration: result.duration,
+            playbackRate: result.playbackRate ?? 1,
         });
         
         console.log(`[TTS Player] Queued sentence ${sentence.index} (${result.duration.toFixed(2)}s), queue: ${this.audioQueue.size}`);
@@ -283,8 +287,8 @@ class TTSAudioPlayer {
         this.waitingForSentenceIndex = null;
         this.startupBufferTarget = 1;
         
-        const { buffer, sentence, duration } = queueItem;
-        
+        const { buffer, sentence, duration, playbackRate } = queueItem;
+
         console.log(`[TTS Player] Playing sentence ${sentence.index}: "${sentence.text.slice(0, 40)}..."`);
         useTTSStore.getState().setPlaybackState('playing');
         
@@ -301,8 +305,13 @@ class TTSAudioPlayer {
         // Create and play new source
         const source = this.audioContext.createBufferSource();
         source.buffer = buffer;
+        // Engines without a speed parameter deliver samples at their natural
+        // rate and ask the player to stretch them instead.
+        if (playbackRate !== 1 && source.playbackRate) {
+            source.playbackRate.value = playbackRate;
+        }
         source.connect(this.gainNode);
-        
+
         this.currentSource = source;
         this.sentenceStartTime = this.audioContext.currentTime;
         this.currentSentenceDuration = duration;

@@ -8,4 +8,8 @@ export const PWA_PRECACHE_GLOB_IGNORES = [
   '**/assets/web-llm-*.js',
   '**/assets/kokoro-*.js',
   '**/assets/transformers.web-*.js',
+  // Piper (Slovenian TTS) and its ONNX Runtime, pulled in only on first use.
+  '**/assets/piper-*.js',
+  '**/assets/voices_static-*.js',
+  '**/assets/ort.min-*.js',
 ];

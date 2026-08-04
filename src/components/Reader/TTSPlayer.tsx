@@ -11,10 +11,12 @@ import {
     initTTS,
     streamSpeech,
     splitIntoSentences,
+    getVoice,
     listVoices,
     resolveVoiceId,
     type SentenceBoundary,
     type TTSAudioResult,
+    type VoiceInfo,
 } from '../../core/tts';
 import { ttsPlayer } from '../../core/tts/player';
 import { persistListeningHandoff } from '../../core/exchange/handoff';
@@ -247,7 +249,7 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
     // Initialize TTS engine
     const handleInit = useCallback(async (): Promise<boolean> => {
         try {
-            await initTTS(selectedDevice, (progress, status) => {
+            await initTTS(effectiveVoice, selectedDevice, (progress, status) => {
                 console.log(`[TTS UI] ${status} (${Math.round(progress * 100)}%)`);
             });
             return true;
@@ -259,7 +261,7 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
             store.setPlaybackState('idle');
             return false;
         }
-    }, [selectedDevice]);
+    }, [effectiveVoice, selectedDevice]);
     
     // Cleanup on unmount
     useEffect(() => {
@@ -493,10 +495,19 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
         console.log('[TTS UI] Stopped and cleared all resources');
     }, []);
     
-    // Voice options
-    const voices = listVoices();
-    const currentVoice = voices.find(v => v.id === effectiveVoice);
-    
+    // Voice options, grouped by language so the Slovenian voice is easy to find
+    const voiceGroups = useMemo(() => {
+        const groups = new Map<string, VoiceInfo[]>();
+        for (const voice of listVoices()) {
+            if (voice.quality === 'D') continue;
+            const group = groups.get(voice.languageLabel) ?? [];
+            group.push(voice);
+            groups.set(voice.languageLabel, group);
+        }
+        return Array.from(groups, ([label, groupVoices]) => ({ label, voices: groupVoices }));
+    }, []);
+    const currentVoice = getVoice(effectiveVoice);
+
     // Button content
     const getButtonContent = () => {
         if (isLoading) return <LoadingSpinner />;
@@ -609,27 +620,36 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
                             className="w-full px-3 py-2.5 bg-white/5 hover:bg-white/10 rounded-lg border border-white/10 text-left transition-colors"
                         >
                             <span className="text-[10px] text-cyan-200/50 uppercase tracking-[0.16em] block">Voice</span>
-                            <span className="text-sm text-white">{currentVoice?.name ?? 'Default'}</span>
+                            <span className="text-sm text-white">
+                                {currentVoice ? `${currentVoice.flag} ${currentVoice.name}` : 'Default'}
+                            </span>
                         </button>
-                        
+
                         {showVoiceMenu && (
                             <div className="absolute bottom-full left-0 right-0 mb-2 bg-[#05080f]/95 border border-cyan-200/15 rounded-lg shadow-2xl max-h-56 overflow-y-auto z-30">
-                                {voices.filter(v => v.quality !== 'D').map(v => (
-                                    <button
-                                        key={v.id}
-                                        onClick={() => {
-                                            setVoice(v.id);
-                                            setShowVoiceMenu(false);
-                                        }}
-                                        className={`w-full px-3 py-2 text-left text-sm hover:bg-cyan-300/10 transition-colors flex items-center justify-between ${
-                                            v.id === effectiveVoice ? 'bg-cyan-300/20 text-cyan-100' : 'text-white/80'
-                                        }`}
-                                    >
-                                        <span>{v.name}</span>
-                                        <span className="text-[10px] text-white/40">
-                                            {v.gender === 'female' ? '♀' : '♂'} {v.accent === 'british' ? '🇬🇧' : '🇺🇸'}
-                                        </span>
-                                    </button>
+                                {voiceGroups.map(group => (
+                                    <div key={group.label}>
+                                        <div className="px-3 pt-2 pb-1 text-[10px] text-cyan-200/45 uppercase tracking-[0.16em] sticky top-0 bg-[#05080f]/95">
+                                            {group.voices[0].flag} {group.label}
+                                        </div>
+                                        {group.voices.map(v => (
+                                            <button
+                                                key={v.id}
+                                                onClick={() => {
+                                                    setVoice(v.id);
+                                                    setShowVoiceMenu(false);
+                                                }}
+                                                className={`w-full px-3 py-2 text-left text-sm hover:bg-cyan-300/10 transition-colors flex items-center justify-between ${
+                                                    v.id === effectiveVoice ? 'bg-cyan-300/20 text-cyan-100' : 'text-white/80'
+                                                }`}
+                                            >
+                                                <span>{v.name}</span>
+                                                <span className="text-[10px] text-white/40">
+                                                    {v.gender === 'female' ? '♀' : '♂'}
+                                                </span>
+                                            </button>
+                                        ))}
+                                    </div>
                                 ))}
                             </div>
                         )}

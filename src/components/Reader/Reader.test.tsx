@@ -240,6 +240,27 @@ describe('Reader Component', () => {
         });
     });
 
+    it('pauses RSVP while the listen panel is open', async () => {
+        render(<Reader book={mockBook} />);
+
+        await waitFor(() => {
+            expect(screen.getByTestId('play-overlay')).toBeInTheDocument();
+        });
+
+        fireEvent.click(screen.getByTestId('rsvp-container'));
+        await waitFor(() => {
+            expect(screen.queryByTestId('play-overlay')).not.toBeInTheDocument();
+        });
+
+        fireEvent.click(screen.getByRole('button', { name: 'Listen' }));
+        await waitFor(() => {
+            expect(screen.getByTestId('play-overlay')).toBeInTheDocument();
+        });
+
+        fireEvent.keyDown(window, { code: 'Space' });
+        expect(screen.getByTestId('play-overlay')).toBeInTheDocument();
+    });
+
     it('should toggle play/pause', async () => {
         render(<Reader book={mockBook} />);
         await waitFor(() => {

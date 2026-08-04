@@ -48,16 +48,20 @@ vi.mock('../../core/store/tts', () => ({
     useFormattedTime: () => ({ current: '0:00', duration: '0:00' }),
 }));
 
+const VOICES = vi.hoisted(() => [
+    { id: 'af_heart', name: 'Heart', engine: 'kokoro', gender: 'female', quality: 'A', language: 'en-US', languageLabel: 'American English', flag: '🇺🇸' },
+    { id: 'am_adam', name: 'Adam', engine: 'kokoro', gender: 'male', quality: 'A', language: 'en-US', languageLabel: 'American English', flag: '🇺🇸' },
+    { id: 'sl_SI-artur-medium', name: 'Artur', engine: 'piper', gender: 'male', quality: 'B', language: 'sl-SI', languageLabel: 'Slovenian', flag: '🇸🇮' },
+]);
+
 vi.mock('../../core/tts', () => ({
     initTTS: vi.fn(),
     isTTSReady: vi.fn(() => true),
     streamSpeech: vi.fn(),
     splitIntoSentences: vi.fn(() => mocks.sentences),
-    listVoices: vi.fn(() => [
-        { id: 'af_heart', name: 'Heart', gender: 'female', accent: 'american', quality: 'A' },
-        { id: 'am_adam', name: 'Adam', gender: 'male', accent: 'american', quality: 'A' },
-    ]),
-    resolveVoiceId: vi.fn((voice: string) => voice === 'af_heart' || voice === 'am_adam' ? voice : 'af_heart'),
+    listVoices: vi.fn(() => VOICES),
+    getVoice: vi.fn((voiceId: string) => VOICES.find((voice) => voice.id === voiceId)),
+    resolveVoiceId: vi.fn((voice: string) => VOICES.some((entry) => entry.id === voice) ? voice : 'af_heart'),
 }));
 
 vi.mock('../../core/tts/player', () => ({
@@ -85,14 +89,26 @@ describe('TTSPlayer voice changes', () => {
         vi.clearAllMocks();
     });
 
-    it('initializes the fp32-only TTS runtime', async () => {
+    it('initializes the fp32-only TTS runtime for the selected voice', async () => {
         vi.mocked(streamSpeech).mockReturnValue((async function* () {})());
 
         const { container } = render(<TTSPlayer words={['Hello', 'world.']} currentWordIndex={0} />);
         fireEvent.click(container.querySelector('button')!);
 
         await waitFor(() => {
-            expect(initTTS).toHaveBeenCalledWith(undefined, expect.any(Function));
+            expect(initTTS).toHaveBeenCalledWith('af_heart', undefined, expect.any(Function));
+        });
+    });
+
+    it('initializes the Piper engine when a Slovenian voice is selected', async () => {
+        mocks.voice = 'sl_SI-artur-medium';
+        vi.mocked(streamSpeech).mockReturnValue((async function* () {})());
+
+        const { container } = render(<TTSPlayer words={['Hello', 'world.']} currentWordIndex={0} />);
+        fireEvent.click(container.querySelector('button')!);
+
+        await waitFor(() => {
+            expect(initTTS).toHaveBeenCalledWith('sl_SI-artur-medium', undefined, expect.any(Function));
         });
     });
 
@@ -104,7 +120,7 @@ describe('TTSPlayer voice changes', () => {
         fireEvent.click(container.querySelector('button')!);
 
         await waitFor(() => {
-            expect(initTTS).toHaveBeenCalledWith('wasm', expect.any(Function));
+            expect(initTTS).toHaveBeenCalledWith('af_heart', 'wasm', expect.any(Function));
         });
     });
 

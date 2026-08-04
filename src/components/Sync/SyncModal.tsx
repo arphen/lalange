@@ -39,12 +39,13 @@ export const SyncModal: React.FC<SyncModalProps> = ({ isOpen, onClose, book }) =
     const [currentChapter, setCurrentChapter] = useState<string>('');
     const replicationStatesRef = useRef<ReplicationState[]>([]);
     const preparingBookIdRef = useRef<string | null>(null);
+    const bookId = book?.id;
     
     // Generate stable room/secret IDs per book session
     const syncIds = useMemo(() => {
-        if (!book) return null;
+        if (!bookId) return null;
         return { roomId: generateUUID(), secret: generateUUID() };
-    }, [book?.id]);
+    }, [bookId]);
     
     // Compute QR URL without setState
     const qrUrl = useMemo(() => {

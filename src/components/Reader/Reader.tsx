@@ -183,6 +183,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
     const indexRef = useRef(0);
     const wpmRef = useRef(wpm);
     const isPlayingRef = useRef(isPlaying);
+    const showTTSPlayerRef = useRef(showTTSPlayer);
     const wordsRef = useRef<string[]>([]);
     const densitiesRef = useRef<number[]>([]);
     const chaptersRef = useRef(chapters);
@@ -1181,6 +1182,8 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
             return;
         }
 
+        if (showTTSPlayerRef.current) return;
+
         setIsPlaying(!isPlayingRef.current);
     }, [countdown, chapterTransitionPhase]);
 
@@ -1211,7 +1214,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                 if (!isNaN(newIndex)) {
                     // If clicking the current word, toggle play/pause
                     if (newIndex === indexRef.current) {
-                        setIsPlaying(!isPlayingRef.current);
+                        if (!showTTSPlayerRef.current) setIsPlaying(!isPlayingRef.current);
                     } else {
                         // Jump to new word while preserving current playback state.
                         indexRef.current = newIndex;
@@ -1504,6 +1507,17 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
         }
     }, [chapters, currentChapter, currentWordIndex, syncSchedulerCursor]);
 
+    // Suspend RSVP auto-advance while the TTS listen panel is open. Both the
+    // wpm-paced RSVP loop and the audio-timed TTS callback write currentWordIndex
+    // independently; without this, the highlight races ahead of speech on its own
+    // clock and keeps getting snapped back by the TTS position sync.
+    useEffect(() => {
+        showTTSPlayerRef.current = showTTSPlayer;
+        if (showTTSPlayer && isPlaying) {
+            setIsPlaying(false);
+        }
+    }, [showTTSPlayer, isPlaying]);
+
     useEffect(() => {
         isPlayingRef.current = isPlaying;
         if (!isPlaying) {
@@ -1535,7 +1549,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
 
             if (e.code === 'Space') {
                 e.preventDefault(); // Prevent scrolling
-                setIsPlaying(prev => !prev);
+                if (!showTTSPlayerRef.current) setIsPlaying(prev => !prev);
             }
         };
 
@@ -2050,7 +2064,11 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
 
                     {/* TTS / Listen Button */}
                     <button
-                        onClick={() => setShowTTSPlayer(!showTTSPlayer)}
+                        onClick={() => {
+                            const next = !showTTSPlayer;
+                            setShowTTSPlayer(next);
+                            if (next) setIsPlaying(false);
+                        }}
                         className={clsx(
                             'reader-toolbar-button reader-focus-fade',
                             (showTTSPlayer || ttsPlaybackState === 'playing') && 'reader-toolbar-button--active',
