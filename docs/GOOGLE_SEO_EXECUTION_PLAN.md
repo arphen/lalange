@@ -1,10 +1,34 @@
 # Google SEO Execution Plan for XYZ / arphen.xyz
 
-Status: execution brief  
+Status: Phase 1 complete; Phase 2 queued
 Baseline date: 2026-08-04  
 Primary market: English-language Google Search  
 Product: XYZ, a free local-first RSVP and adaptive speed-reading application  
 Canonical origin: `https://arphen.xyz`
+
+## Current Status
+
+### Completed on 2026-08-04
+
+- [x] Tickets 1-5: route manifest, deterministic public-route prerendering, status and indexing policy, metadata and structured-data audit, and existing-content discoverability.
+- [x] Production deployment through GitHub Actions and Cloudflare Pages at commit `602134a`.
+- [x] Production smoke checks: public routes return `200`, unknown routes return `404`, private routes return `X-Robots-Tag: noindex, nofollow`, and `www` redirects to the apex host.
+- [x] Discovery assets verified in production: `robots.txt`, `sitemap.xml`, Open Graph image, and PWA icons.
+- [x] CI regression coverage includes lint, 593 tests, TypeScript/build validation, Playwright browser installation, prerender validation, and deployment.
+
+### Pending external action
+
+- [ ] Sign in to the verified Search Console property and submit `https://arphen.xyz/sitemap.xml`.
+- [ ] Use URL Inspection and request indexing for `/`, `/manifesto`, `/research`, and `/manual` once the Search Console session is authenticated.
+- [ ] Export the preceding 90-day Search Console baseline outside the repository.
+
+### Next implementation sequence
+
+1. Complete the Search Console release procedure above and record the submission date.
+2. Create `/rsvp-reader` as the first new search-intent page, with a real bounded RSVP demonstration and no unsupported speed or comprehension claims.
+3. Run the Section 8 quality gate, add the route to the manifest and sitemap, deploy through CI, and inspect its raw HTML before starting another page.
+4. Use Search Console query data to choose the next page: `/epub-speed-reader`, `/pdf-speed-reader`, `/privacy`, or `/how-it-works`.
+5. Review indexing and query data at 3, 14, and 28 days; do not multiply pages before the first new page has evidence of value.
 
 ## 1. Purpose
 
@@ -169,6 +193,8 @@ git diff --check
 Use non-interactive test commands only.
 
 ## 6. Phase 1: Make the Existing Site Reliably Indexable
+
+Status: complete and deployed on 2026-08-04.
 
 Complete this phase before creating new search pages.
 
@@ -350,6 +376,8 @@ For `robots.txt`:
 - Coordinate Cloudflare Managed Robots settings so the deployed file is intentional.
 
 ## 7. Phase 2: Build a Focused Search-Intent Architecture
+
+Status: queued. Start with `/rsvp-reader` only after the Search Console release procedure and baseline export are complete.
 
 Do not target the broad phrase "speed reading" first. Establish authority in narrower areas where the product has a genuine differentiator.
 
@@ -642,13 +670,13 @@ Add a Googlebot-smartphone user-agent smoke test because the historical failure 
 
 After each production SEO release:
 
-1. Run production smoke tests.
-2. Inspect `/`, one modified editorial page, and one noindex route.
-3. Submit or resubmit `https://arphen.xyz/sitemap.xml` only when its URL set changes or Search Console reports a problem.
-4. Use URL Inspection and `Test live URL` for a small number of important changed URLs.
-5. Request indexing once per important changed URL. Repeated requests do not increase priority.
-6. Record the deployment date and affected URLs.
-7. Check results after 3 days, 14 days, and 28 days.
+1. [x] Run production smoke tests on 2026-08-04.
+2. [x] Inspect `/`, `/research`, and `/settings/pacing` in production.
+3. [ ] Submit or resubmit `https://arphen.xyz/sitemap.xml` only when its URL set changes or Search Console reports a problem. The current browser session is signed out.
+4. [ ] Use URL Inspection and `Test live URL` for the four public URLs after authentication.
+5. [ ] Request indexing once per important changed URL. Repeated requests do not increase priority.
+6. [x] Record the 2026-08-04 deployment and affected URLs: `/`, `/manifesto`, `/research`, `/manual`.
+7. [ ] Check results after 3 days, 14 days, and 28 days.
 
 Do not treat stale report labels as live failures when the live test passes. Compare the report's last-crawl date with the deployment date.
 
@@ -656,7 +684,7 @@ Do not treat stale report labels as live failures when the live test passes. Com
 
 The implementation agent should execute these tickets in order.
 
-### Ticket 1: SEO route manifest and tests
+### Ticket 1: SEO route manifest and tests [complete]
 
 Deliver:
 
@@ -666,7 +694,7 @@ Deliver:
 
 Stop condition: tests and build pass; no visual changes.
 
-### Ticket 2: Per-route static HTML
+### Ticket 2: Per-route static HTML [complete]
 
 Deliver:
 
@@ -676,7 +704,7 @@ Deliver:
 
 Stop condition: raw local HTTP responses show unique metadata, headings, and body content without JavaScript.
 
-### Ticket 3: Status and indexing policy
+### Ticket 3: Status and indexing policy [complete]
 
 Deliver:
 
@@ -687,7 +715,7 @@ Deliver:
 
 Stop condition: status/header matrix passes locally and on preview deployment.
 
-### Ticket 4: Metadata and structured-data audit
+### Ticket 4: Metadata and structured-data audit [complete]
 
 Deliver:
 
@@ -699,7 +727,7 @@ Deliver:
 
 Stop condition: built HTML tests and schema validation pass.
 
-### Ticket 5: Existing-content discoverability
+### Ticket 5: Existing-content discoverability [complete]
 
 Deliver:
 
@@ -709,7 +737,7 @@ Deliver:
 
 Stop condition: all important content and links are present in static HTML and mobile screenshots remain coherent.
 
-### Ticket 6: First search-intent page
+### Ticket 6: First search-intent page [next]
 
 Deliver only `/rsvp-reader` first.
 
@@ -720,7 +748,7 @@ Deliver only `/rsvp-reader` first.
 
 Stop condition: passes every quality gate in Section 8. Review results before reusing any pattern.
 
-### Ticket 7: Format and trust pages
+### Ticket 7: Format and trust pages [queued]
 
 Deliver one page per change:
 
@@ -731,13 +759,13 @@ Deliver one page per change:
 
 Stop condition for each: the promised product flow is tested and the page contains unique proof.
 
-### Ticket 8: Linkable guide/tool
+### Ticket 8: Linkable guide/tool [queued]
 
 Choose `/speed-test` or `/guides/what-is-rsvp` based on Search Console queries and editorial readiness.
 
 Stop condition: useful without signup, technically accurate, mobile tested, and suitable for genuine community sharing.
 
-### Ticket 9: Performance pass
+### Ticket 9: Performance pass [queued]
 
 Deliver:
 
@@ -748,7 +776,7 @@ Deliver:
 
 Stop condition: no regression in reader behavior; public page budgets improve or remain within target.
 
-### Ticket 10: Distribution package
+### Ticket 10: Distribution package [queued]
 
 Deliver:
 
