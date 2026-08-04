@@ -621,6 +621,16 @@ describe('Reader Component', () => {
         expect(useAIStore.getState().isSetupOpen).toBe(true);
     });
 
+    it('should show pacing setup progress in the toolbar icon', async () => {
+        useSettingsStore.getState().aiEnabled = false;
+        useAIStore.setState({ isReady: false, isLoading: true, progressValue: 0.42, isSetupOpen: false });
+        render(<Reader book={mockBook} />);
+
+        const pacingButton = await screen.findByRole('button', { name: 'Adaptive pacing setup 42%' });
+        expect(pacingButton).toBeDisabled();
+        expect(screen.getByTestId('pacing-setup-progress')).toBeInTheDocument();
+    });
+
     it('should save progress when pausing', async () => {
         const { container } = render(<Reader book={mockBook} />);
         await waitFor(() => {

@@ -62,29 +62,23 @@ describe('Legacy Duration Strategy', () => {
 
     it('should calculate duration for normal word', () => {
         const result = strategy.calculateDuration(createMeta('hello'), context);
-        // T_floor (75) + baseInterval*1.0 (200) + visual (25*sqrt(5) ≈ 56) = ~331
-        expect(result.duration).toBeGreaterThan(300);
-        expect(result.duration).toBeLessThan(400);
+        expect(result.duration).toBe(200);
     });
 
     it('should add extra time for sentence-ending punctuation', () => {
         const normalResult = strategy.calculateDuration(createMeta('word'), context);
         const periodResult = strategy.calculateDuration(createMeta('word.'), context);
         
-        // Period should add ~300ms (plus a small amount for the extra character length)
         const diff = periodResult.duration - normalResult.duration;
-        expect(diff).toBeGreaterThan(295);
-        expect(diff).toBeLessThan(320);
+        expect(diff).toBe(130);
     });
 
     it('should add extra time for commas', () => {
         const normalResult = strategy.calculateDuration(createMeta('word'), context);
         const commaResult = strategy.calculateDuration(createMeta('word,'), context);
         
-        // Comma should add ~150ms (plus a small amount for the extra character length)
         const diff = commaResult.duration - normalResult.duration;
-        expect(diff).toBeGreaterThan(145);
-        expect(diff).toBeLessThan(170);
+        expect(diff).toBe(50);
     });
 
     it('should increase duration for high-density words', () => {
@@ -106,8 +100,30 @@ describe('Legacy Duration Strategy', () => {
         const result = strategy.calculateDuration(createMeta('test.'), context);
         
         expect(result.breakdown).toBeDefined();
-        expect(result.breakdown!.base).toBe(75);
-        expect(result.breakdown!.punctuation).toBe(300);
+        expect(result.breakdown!.base).toBe(200);
+        expect(result.breakdown!.punctuation).toBe(130);
+    });
+
+    it('should keep punctuation cadence smooth at 500 WPM', () => {
+        const fastContext: DurationContext = { wpm: 500, tFloor: 75 };
+        const normal = strategy.calculateDuration(createMeta('word'), fastContext).duration;
+        const comma = strategy.calculateDuration(createMeta('word,'), fastContext).duration;
+        const period = strategy.calculateDuration(createMeta('word.'), fastContext).duration;
+
+        expect(normal).toBe(120);
+        expect(comma).toBe(150);
+        expect(period).toBe(198);
+    });
+
+    it('should add time for likely proper nouns away from sentence starts', () => {
+        const lowerCase = createMeta('montmorency');
+        const properNoun = { ...createMeta('Montmorency'), sentenceIndex: 3 };
+        const sentenceOpener = createMeta('Montmorency');
+
+        expect(strategy.calculateDuration(properNoun, context).duration)
+            .toBeGreaterThan(strategy.calculateDuration(lowerCase, context).duration);
+        expect(strategy.calculateDuration(sentenceOpener, context).duration)
+            .toBe(strategy.calculateDuration(lowerCase, context).duration);
     });
 });
 
@@ -285,9 +301,8 @@ describe('Dash Token Handling', () => {
             const normalResult = strategy.calculateDuration(createMeta('word'), context);
             const dashResult = strategy.calculateDuration(createMeta('—'), context);
             
-            // Dash should have substantial extra time (~400ms)
             expect(dashResult.duration).toBeGreaterThan(normalResult.duration);
-            expect(dashResult.duration).toBeGreaterThanOrEqual(475); // tFloor + 400ms dash delay
+            expect(dashResult.duration).toBe(normalResult.duration * 1.5);
         });
 
         it('should give similar time to en-dash and em-dash', () => {
@@ -300,7 +315,7 @@ describe('Dash Token Handling', () => {
         it('should treat double-hyphen as dash token', () => {
             const doubleDash = strategy.calculateDuration(createMeta('--'), context);
             
-            expect(doubleDash.duration).toBeGreaterThanOrEqual(475);
+            expect(doubleDash.duration).toBe(300);
         });
 
         it('should NOT add info time for dash tokens (no semantic content)', () => {

@@ -1,7 +1,8 @@
 import PQueue from 'p-queue';
 import { getPromptLogprobs } from '../ai/service';
-import { useSettingsStore } from '../store/settings';
+import { PACING_MODEL_TIER } from '../ai/webllm';
 import { useAIStore } from '../store/ai';
+import { useSettingsStore } from '../store/settings';
 
 // Queue for LLM processing (concurrency: 1)
 export const analysisQueue = new PQueue({ concurrency: 1 });
@@ -33,10 +34,9 @@ export const analyzeDensityRange = async (
     onWindowComplete?: OnWindowComplete,
     signal?: AbortSignal,
 ): Promise<AnalysisResult> => {
-    const { pacingModelTier } = useSettingsStore.getState();
     const WINDOW_SIZE = 250;
 
-    console.log(`[Analysis] analyzeDensityRange called for ${words.length} words. Tier: ${pacingModelTier}. Window: ${WINDOW_SIZE}`);
+    console.log(`[Analysis] analyzeDensityRange called for ${words.length} words. Tier: ${PACING_MODEL_TIER}. Window: ${WINDOW_SIZE}`);
 
     try {
         const rawSurprisals: number[] = [];
@@ -59,11 +59,11 @@ export const analyzeDensityRange = async (
             const logprobs = await analysisQueue.add(async () => {
                 const chunkNum = Math.floor(i / WINDOW_SIZE) + 1;
                 const totalChunks = Math.ceil(words.length / WINDOW_SIZE);
-                useAIStore.getState().setActivity(`Scanning Density (Window ${chunkNum}/${totalChunks})`, pacingModelTier);
+                useAIStore.getState().setActivity(`Scanning Density (Window ${chunkNum}/${totalChunks})`, PACING_MODEL_TIER);
                 // Update progress with words processed so far
                 useAIStore.getState().updateTaskProgress(i, words.length);
                 console.log(`[Analysis] Analyzing density for chunk ${i}-${i + chunkWords.length} (${chunkWords.length} words)...`);
-                return await getPromptLogprobs(chunkText, pacingModelTier);
+                return await getPromptLogprobs(chunkText, PACING_MODEL_TIER);
             });
 
             if (!logprobs || logprobs.length === 0) {

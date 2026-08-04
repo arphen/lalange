@@ -24,6 +24,7 @@ vi.mock('../core/store/settings', () => ({
         setLibrarianModelTier: mocks.setLibrarianModelTier,
         setPacingModelTier: mocks.setPacingModelTier,
         setSummariesEnabled: mocks.setSummariesEnabled,
+        summarizerModel: 'tiny',
         setSummarizerModel: mocks.setSummarizerModel,
     }),
 }));
@@ -43,7 +44,11 @@ vi.mock('../core/ai/webllm', () => ({
         WEBGPU_LIMIT_UNSUPPORTED: 'WEBGPU_LIMIT_UNSUPPORTED',
         WEBGPU_UNAVAILABLE: 'WEBGPU_UNAVAILABLE',
     },
-    MODEL_INFO: { tiny: { name: 'Tiny', size: '700 MB', description: 'Local AI' } },
+    MODEL_INFO: {
+        tiny: { name: 'Tiny', size: '700 MB', description: 'Local AI' },
+        qwen: { name: 'Qwen', size: '980 MB', description: 'Larger local AI' },
+    },
+    PACING_MODEL_TIER: 'tiny',
     isModelCached: vi.fn().mockResolvedValue(false),
     getEngine: vi.fn().mockResolvedValue(undefined),
 }));
@@ -69,6 +74,8 @@ describe('AISetupWizard', () => {
         render(<AISetupWizard />);
 
         expect(screen.getByRole('heading', { name: 'Set up adaptive pacing' })).toBeInTheDocument();
+        expect(screen.getByText('Tiny')).toBeInTheDocument();
+        expect(screen.queryByText('Qwen')).not.toBeInTheDocument();
         fireEvent.click(screen.getByRole('button', { name: 'Keep reading' }));
 
         expect(mocks.closeSetup).toHaveBeenCalled();
@@ -84,7 +91,7 @@ describe('AISetupWizard', () => {
         mocks.isSetupOpen = true;
         render(<AISetupWizard />);
 
-        fireEvent.click(screen.getByRole('button', { name: 'Set up in background' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Download & enable pacing' }));
 
         expect(mocks.closeSetup).toHaveBeenCalled();
         expect(getEngine).toHaveBeenCalledWith('tiny');
@@ -92,6 +99,7 @@ describe('AISetupWizard', () => {
 
         finishSetup?.();
         await waitFor(() => expect(mocks.setAiEnabled).toHaveBeenCalledWith(true));
+        expect(mocks.setPacingModelTier).toHaveBeenCalledWith('tiny');
         expect(mocks.setSummariesEnabled).not.toHaveBeenCalled();
     });
 
@@ -100,7 +108,7 @@ describe('AISetupWizard', () => {
         mocks.setupIntent = 'summaries';
         render(<AISetupWizard />);
 
-        fireEvent.click(screen.getByRole('button', { name: 'Set up in background' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Download & enable summaries' }));
 
         await waitFor(() => expect(mocks.setSummariesEnabled).toHaveBeenCalledWith(true));
         expect(mocks.setAiEnabled).toHaveBeenCalledWith(true);
@@ -111,7 +119,7 @@ describe('AISetupWizard', () => {
         vi.mocked(getEngine).mockRejectedValueOnce(new Error('WEBGPU_LIMIT_UNSUPPORTED'));
         render(<AISetupWizard />);
 
-        fireEvent.click(screen.getByRole('button', { name: 'Set up in background' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Download & enable pacing' }));
 
         await waitFor(() => expect(mocks.setAiEnabled).toHaveBeenCalledWith(false));
         expect(mocks.requestSetup).toHaveBeenCalledWith('pacing');

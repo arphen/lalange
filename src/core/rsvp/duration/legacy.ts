@@ -1,13 +1,14 @@
 /**
  * Legacy Duration Strategy
  * 
- * The original per-word calculation approach. Uses additive delays for
- * punctuation and visual processing on top of the surprisal-based timing.
+ * The original strategy identifier, updated to use a speed-relative cadence.
+ * Punctuation, visual complexity, and surprisal adjust the base interval
+ * without stacking large fixed delays on every word.
  * 
- * Formula: T_display = T_floor + (baseInterval * density) + visualDelay
+ * Formula: T_display = max(T_floor, baseInterval * cadenceWeight)
  * 
- * This approach tends to run slower than the target WPM because every
- * cognitive factor adds time, never subtracts it.
+ * This keeps timing differences perceptible while preventing punctuation and
+ * density from dominating the rhythm at high WPM.
  */
 
 import type { 
@@ -16,6 +17,7 @@ import type {
     DurationContext, 
     DurationResult 
 } from './types';
+import { calculateTargetTiming, isLikelyProperNoun as detectLikelyProperNoun } from '../timing';
 
 /**
  * Delay for standalone dash tokens.
@@ -47,6 +49,10 @@ const LONG_WORD_THRESHOLD = 10;
  * Extra milliseconds per character beyond the threshold.
  */
 const LONG_WORD_MS_PER_CHAR = 15;
+
+export const isLikelyProperNoun = (word: string, sentenceIndex: number): boolean => {
+    return sentenceIndex > 0 && detectLikelyProperNoun(word, 'previous');
+};
 
 /**
  * Calculate visual processing delay based on word characteristics.
@@ -114,50 +120,27 @@ export const calculateVisualDelay = (word: string, isDashToken: boolean = false)
  */
 export class LegacyDurationStrategy implements DurationStrategy {
     readonly id = 'legacy' as const;
-    readonly name = 'Legacy (Additive)';
-    readonly description = 'Original per-word calculation. Adds extra time for ' +
-        'punctuation and word complexity. Effective WPM will be lower than the dial setting.';
+    readonly name = 'Adaptive Cadence';
+    readonly description = 'Smooth, speed-relative timing with extra space for punctuation, ' +
+        'complex words, and likely names.';
 
     calculateDuration(meta: WordMeta, context: DurationContext): DurationResult {
         const { wpm, tFloor } = context;
-        const { word, density, isDashToken } = meta;
-
-        // Base interval from WPM setting (ms per word at nominal speed)
-        const baseInterval = 60000 / wpm;
-
-        // For dash tokens, use minimal info time (they have no semantic content)
-        // The pause comes from the visual delay instead
-        const infoTime = isDashToken ? 0 : baseInterval * density;
-
-        // Visual & punctuation component (extracted from original timing.ts)
-        const visualDelay = calculateVisualDelay(word, isDashToken);
-
-        // Total duration = floor + info + visual
-        const duration = tFloor + infoTime + visualDelay;
+        const { word, density, isDashToken, sentenceIndex } = meta;
+        const timing = calculateTargetTiming(word, density, wpm, {
+            isLikelyProperNoun: isLikelyProperNoun(word, sentenceIndex),
+            minimumDisplayMs: tFloor,
+        });
 
         return {
-            duration,
+            duration: timing.duration,
             breakdown: {
-                base: tFloor,
-                info: infoTime,
-                visual: isDashToken ? DASH_TOKEN_DELAY : visualDelay - this.getPunctuationDelay(word),
-                punctuation: isDashToken ? 0 : this.getPunctuationDelay(word),
+                base: Math.min(timing.duration, timing.baseInterval),
+                info: isDashToken ? 0 : timing.infoTime,
+                visual: timing.properNounTime + timing.tokenAdjustmentTime,
+                punctuation: timing.punctuationTime,
             }
         };
-    }
-
-    private getPunctuationDelay(word: string): number {
-        const lastChar = word.slice(-1);
-        const lastTwoChars = word.slice(-2);
-
-        if (['.', '!', '?'].includes(lastChar) || ['."', '!"', '?"'].includes(lastTwoChars)) {
-            return 300;
-        } else if ([';', ':'].includes(lastChar)) {
-            return 200;
-        } else if ([',', '—', '-'].includes(lastChar)) {
-            return 150;
-        }
-        return 0;
     }
 }
 

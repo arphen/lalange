@@ -3,8 +3,14 @@ import { Check, Download, Gauge, Lock, X } from 'lucide-react';
 import { clsx } from 'clsx';
 import { useSettingsStore } from '../core/store/settings';
 import { useAIStore } from '../core/store/ai';
-import { MODEL_INFO, type ModelTier, isModelCached, getEngine, WEBLLM_ERROR_CODES } from '../core/ai/webllm';
-import { BrandName } from './BrandName';
+import {
+    MODEL_INFO,
+    PACING_MODEL_TIER,
+    type ModelTier,
+    isModelCached,
+    getEngine,
+    WEBLLM_ERROR_CODES,
+} from '../core/ai/webllm';
 
 /**
  * Intent-driven local AI setup. It never blocks navigation or reading, and AI
@@ -12,16 +18,14 @@ import { BrandName } from './BrandName';
  */
 export const AISetupWizard: React.FC = () => {
     const {
-        pacingModelTier,
         setAiEnabled,
-        setEditorModel,
-        setLibrarianModelTier,
         setPacingModelTier,
         setSummariesEnabled,
+        summarizerModel,
         setSummarizerModel,
     } = useSettingsStore();
     const { isSetupOpen, setupIntent, closeSetup, requestSetup } = useAIStore();
-    const [selectedTier, setSelectedTier] = useState<ModelTier>(pacingModelTier);
+    const [selectedTier, setSelectedTier] = useState<ModelTier>(summarizerModel);
     const [cachedModels, setCachedModels] = useState<Partial<Record<ModelTier, boolean>>>({});
     const [error, setError] = useState<string | null>(null);
     const [isInitializing, setIsInitializing] = useState(false);
@@ -30,8 +34,11 @@ export const AISetupWizard: React.FC = () => {
         if (!isSetupOpen) return;
 
         const checkCaches = async () => {
+            const tiers = setupIntent === 'pacing'
+                ? [PACING_MODEL_TIER]
+                : Object.keys(MODEL_INFO) as ModelTier[];
             const entries = await Promise.all(
-                (Object.keys(MODEL_INFO) as ModelTier[]).map(async (tier) => (
+                tiers.map(async (tier) => (
                     [tier, await isModelCached(tier)] as const
                 )),
             );
@@ -39,20 +46,19 @@ export const AISetupWizard: React.FC = () => {
         };
 
         checkCaches().catch(() => setCachedModels({}));
-    }, [isSetupOpen]);
+    }, [isSetupOpen, setupIntent]);
 
     const handleSetup = async () => {
         const intent = setupIntent;
-        setEditorModel(selectedTier);
-        setLibrarianModelTier(selectedTier);
-        setPacingModelTier(selectedTier);
-        setSummarizerModel(selectedTier);
+        const setupTier = intent === 'pacing' ? PACING_MODEL_TIER : selectedTier;
+        if (intent === 'pacing') setPacingModelTier(setupTier);
+        else setSummarizerModel(setupTier);
         setError(null);
         setIsInitializing(true);
         closeSetup();
 
         try {
-            await getEngine(selectedTier);
+            await getEngine(setupTier);
             setAiEnabled(true);
             if (intent === 'summaries') setSummariesEnabled(true);
         } catch (setupError) {
@@ -85,7 +91,9 @@ export const AISetupWizard: React.FC = () => {
     if (!isSetupOpen) return null;
 
     const isSummarySetup = setupIntent === 'summaries';
-    const selectedIsCached = cachedModels[selectedTier] === true;
+    const setupTier = isSummarySetup ? selectedTier : PACING_MODEL_TIER;
+    const selectedIsCached = cachedModels[setupTier] === true;
+    const pacingModel = MODEL_INFO[PACING_MODEL_TIER];
 
     return (
         <section
@@ -99,19 +107,16 @@ export const AISetupWizard: React.FC = () => {
                     {isSummarySetup ? <Download className="h-5 w-5" /> : <Gauge className="h-5 w-5" />}
                 </div>
                 <div className="min-w-0 flex-1">
-                    <div className="mb-1 flex items-center gap-2">
-                        <span className="rounded border border-canarian-pine/30 bg-canarian-pine/10 px-2 py-0.5 text-[9px] font-bold uppercase tracking-widest text-canarian-pine">
-                            Optional
-                        </span>
-                        <span className="flex items-center gap-1 text-[9px] uppercase tracking-widest text-white/40">
-                            <Lock className="h-3 w-3" /> On device
-                        </span>
-                    </div>
                     <h2 id="ai-setup-title" className="text-base font-bold text-white">
                         {isSummarySetup ? 'Set up automatic summaries' : 'Set up adaptive pacing'}
                     </h2>
-                    <p className="mt-1 text-xs leading-relaxed text-white/50">
-                        Reading stays available. <BrandName /> downloads one model to this browser, then enables the feature when it is ready.
+                    <p className="mt-1 flex items-center gap-1 text-[10px] uppercase tracking-widest text-white/40">
+                        <Lock className="h-3 w-3" /> Optional · runs on this device
+                    </p>
+                    <p className="mt-2 text-xs leading-relaxed text-white/50">
+                        {isSummarySetup
+                            ? "Downloads a small language model to this browser. Reading stays available while it prepares, and summaries turn on automatically once it's ready."
+                            : "Downloads a small language model to this browser. Reading stays available while it prepares, and pacing turns on automatically once it's ready."}
                     </p>
                 </div>
                 <button
@@ -131,7 +136,8 @@ export const AISetupWizard: React.FC = () => {
                     </div>
                 )}
 
-                <div className="grid gap-2">
+                {isSummarySetup ? (
+                    <div className="grid gap-2">
                     {(Object.entries(MODEL_INFO) as [ModelTier, typeof MODEL_INFO[ModelTier]][]).map(([tier, info]) => {
                         const isSelected = selectedTier === tier;
                         const isCached = cachedModels[tier] === true;
@@ -165,10 +171,25 @@ export const AISetupWizard: React.FC = () => {
                             </button>
                         );
                     })}
-                </div>
+                    </div>
+                ) : (
+                    <div className="flex min-h-16 items-center gap-3 rounded border border-white/10 bg-black/20 p-3">
+                        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-dune-gold/15 text-dune-gold">
+                            <Gauge className="h-4 w-4" />
+                        </span>
+                        <span className="min-w-0 flex-1">
+                            <span className="block text-xs font-bold text-white">{pacingModel.name}</span>
+                            <span className="mt-0.5 block text-[10px] text-white/45">The only model here that supports pacing's log-probability analysis.</span>
+                        </span>
+                        <span className="shrink-0 text-right text-[10px] text-white/45">
+                            <span className="block text-dune-gold">{pacingModel.size}</span>
+                            <span className="block">{selectedIsCached ? 'Already on device' : 'One-time download'}</span>
+                        </span>
+                    </div>
+                )}
 
                 <div className="rounded border border-white/10 bg-black/20 px-3 py-2 text-[10px] leading-relaxed text-white/45">
-                    AI is currently off. No book text leaves this device, and setup will continue in the background if you return to reading.
+                    Your book text never leaves this device. Close this and setup continues in the background.
                 </div>
 
                 <div className="flex items-center justify-end gap-2 pt-1">
@@ -186,7 +207,11 @@ export const AISetupWizard: React.FC = () => {
                         disabled={isInitializing}
                         className="rounded bg-dune-gold px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-black hover:bg-white disabled:cursor-wait disabled:opacity-50"
                     >
-                        {isInitializing ? 'Starting...' : selectedIsCached ? 'Enable model' : 'Set up in background'}
+                        {isInitializing
+                            ? 'Starting\u2026'
+                            : selectedIsCached
+                                ? (isSummarySetup ? 'Enable summaries' : 'Enable pacing')
+                                : (isSummarySetup ? 'Download & enable summaries' : 'Download & enable pacing')}
                     </button>
                 </div>
             </div>

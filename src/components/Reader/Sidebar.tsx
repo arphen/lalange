@@ -41,7 +41,36 @@ export const Sidebar: React.FC<SidebarProps> = ({
     chapterHandoffActive = false,
 }) => {
     const [showRecaps, setShowRecaps] = React.useState(false);
+    const latestWordIndexRef = React.useRef(currentWordIndex ?? 0);
+    const [sampledProgress, setSampledProgress] = React.useState({
+        chapterId: currentChapter?.id,
+        wordIndex: currentWordIndex ?? 0,
+    });
     const recapsExpanded = Boolean(activeSummaryId) || showRecaps;
+    const sectionInfoLabel = 'XYZ-created sections are generated from headings or recovered structure so long chapters are easier to navigate.';
+
+    React.useEffect(() => {
+        latestWordIndexRef.current = currentWordIndex ?? 0;
+    }, [currentWordIndex]);
+
+    React.useEffect(() => {
+        const chapterId = currentChapter?.id;
+
+        if (chapterId == null) return;
+
+        const interval = window.setInterval(() => {
+            setSampledProgress({
+                chapterId,
+                wordIndex: latestWordIndexRef.current,
+            });
+        }, 2000);
+
+        return () => window.clearInterval(interval);
+    }, [currentChapter?.id]);
+
+    const displayWordIndex = sampledProgress.chapterId === currentChapter?.id
+        ? sampledProgress.wordIndex
+        : currentWordIndex ?? 0;
 
     // Filter out image chapters
     const displayChapters = chapters.filter(isReadingChapter);
@@ -217,7 +246,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                 <div className="reader-section-list pl-3 ml-2 mb-2 space-y-1">
                                     <div className="flex items-center gap-1.5 px-3 pt-2 pb-1 text-[9px] uppercase text-white/35">
                                         <ListTree className="w-3 h-3" aria-hidden="true" />
-                                        <span>XYZ-created sections</span>
+                                        <span className="group/section-info relative inline-flex">
+                                            <button
+                                                type="button"
+                                                className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-white/15 bg-white/5 text-[9px] font-bold leading-none text-white/60 transition-colors hover:border-cyan-400/35 hover:bg-cyan-400/10 hover:text-cyan-200 focus:outline-none focus:ring-1 focus:ring-cyan-300/40"
+                                                aria-label="About XYZ-created sections"
+                                                aria-describedby="xyz-created-sections-help"
+                                            >
+                                                i
+                                            </button>
+                                            <span
+                                                id="xyz-created-sections-help"
+                                                role="tooltip"
+                                                className="pointer-events-none absolute left-full top-1/2 z-20 ml-2 -translate-y-1/2 rounded border border-white/15 bg-black/90 px-2 py-1 text-[10px] normal-case tracking-normal text-white/85 opacity-0 shadow-lg transition-opacity duration-100 group-hover/section-info:opacity-100 group-focus-within/section-info:opacity-100"
+                                            >
+                                                {sectionInfoLabel}
+                                            </span>
+                                        </span>
                                     </div>
                                     {chapter.subchapters.map((sub, idx) => {
                                         // Check if we have ANY content for this subchapter (start index exists in content array)
@@ -228,8 +273,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                             currentWordIndex >= sub.startWordIndex &&
                                             (currentWordIndex < sub.endWordIndex || (idx === chapter.subchapters!.length - 1 && currentWordIndex >= sub.startWordIndex));
                                         const sectionLength = Math.max(1, sub.endWordIndex - sub.startWordIndex);
-                                        const sectionProgress = isCurrent && currentWordIndex !== undefined
-                                            ? Math.min(1, Math.max(0, (currentWordIndex - sub.startWordIndex) / sectionLength))
+                                        const sectionProgress = isCurrent && displayWordIndex !== undefined
+                                            ? Math.min(1, Math.max(0, (displayWordIndex - sub.startWordIndex) / sectionLength))
                                             : 0;
                                         const isHandoffSelection = chapterHandoffActive
                                             && chapterHandoffSelection?.chapterId === chapter.id
@@ -258,7 +303,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                                         <span className="truncate text-xs">{getSubchapterDisplayName(sub, chapter.content)}</span>
                                                         {isActive && (
                                                             <span className="ml-auto text-[9px] uppercase tracking-wide text-emerald-300">
-                                                                Here · {Math.round(sectionProgress * 100)}%
+                                                                {Math.round(sectionProgress * 100)}%
                                                             </span>
                                                         )}
                                                     </span>

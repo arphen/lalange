@@ -3,6 +3,7 @@ import { useAIStore } from '../store/ai';
 import { initDB, type GlobalSummaryType } from '../sync/db';
 import { analyzeDensityRange, type WindowResult } from './analysis';
 import { generateUnifiedCompletion } from '../ai/service';
+import { PACING_MODEL_TIER } from '../ai/webllm';
 
 export type TaskType = 'DENSITY' | 'SUMMARY' | 'GLOBAL_SUMMARY';
 
@@ -479,8 +480,6 @@ export class IngestionScheduler {
         // console.log(`[Scheduler] Executing ${task.type} for ${task.chapterId} sub ${task.subchapterIndex}`);
 
         if (task.type === 'DENSITY') {
-            const { pacingModelTier } = settings;
-            
             // Set current task for progress tracking
             const words = task.text.trim().split(/\s+/);
             aiState.setCurrentTask({
@@ -490,7 +489,7 @@ export class IngestionScheduler {
                 wordsProcessed: 0,
                 totalWords: words.length,
             });
-            aiState.setActivity(`Scanning Density (Chunk ${task.subchapterIndex + 1})`, pacingModelTier);
+            aiState.setActivity(`Scanning Density (Chunk ${task.subchapterIndex + 1})`, PACING_MODEL_TIER);
             
             try {
                 // Incremental save callback - saves densities to DB after each 250-word window

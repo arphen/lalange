@@ -198,6 +198,8 @@ export const MODEL_MAPPING = {
 
 export type ModelTier = keyof typeof MODEL_MAPPING;
 
+export const PACING_MODEL_TIER: ModelTier = 'tiny';
+
 let engineInstance: MLCEngine | null = null;
 let currentLoadedModel: string | null = null;
 

@@ -3,7 +3,7 @@ import { useParams, Navigate } from 'react-router-dom';
 import { useSettingsStore, type PromptFragment } from '../../core/store/settings';
 import { useAIStore } from '../../core/store/ai';
 import { useTTSStore, type TTSBackendPreference } from '../../core/store/tts';
-import { getEngine, MODEL_INFO, type ModelTier, isModelCached, deleteModel } from '../../core/ai/webllm';
+import { getEngine, MODEL_INFO, PACING_MODEL_TIER, type ModelTier, isModelCached, deleteModel } from '../../core/ai/webllm';
 import { getAvailableStrategies, type DurationStrategyId } from '../../core/rsvp/duration';
 import { getAllDisplayPlugins, type DisplayPluginId } from '../../core/rsvp/display';
 import { VOICES, initTTS, clearTTSCache, isTTSModelCached } from '../../core/tts';
@@ -282,8 +282,8 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                             <Toggle
                                 label="Adaptive AI Pacing"
                                 description={aiState.isLoading
-                                    ? 'Local model setup is running in the background. Reading remains available.'
-                                    : 'Uses local logprobs to speed up predictable words and slow down surprising or dense passages. Setup is optional and stays on this device.'}
+                                    ? 'Preparing the on-device model \u2014 reading remains available while this finishes.'
+                                    : 'Speeds through predictable words and slows for dense or surprising passages, using a small model that runs entirely on this device.'}
                                 checked={settings.aiEnabled}
                                 onChange={(enabled) => {
                                     if (!enabled) settings.setAiEnabled(false);
@@ -293,51 +293,36 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
 
                             {/* Pacing Engine Explanation */}
                             <div className="bg-white/5 rounded-lg border border-white/10 p-6 space-y-4">
-                                <h4 className="text-dune-gold font-bold uppercase tracking-widest text-xs">The Problem with Speed Reading</h4>
+                                <h4 className="text-dune-gold font-bold uppercase tracking-widest text-xs">How It Works</h4>
                                 <p className="text-sm text-gray-400 leading-relaxed">
-                                    Traditional RSVP (Rapid Serial Visual Presentation) readers feel unnatural because they force you to process a simple "hello" at the same speed as a complex philosophical concept. Your brain doesn't work that way.
+                                    Fixed-speed RSVP treats every word the same, whether it's "the" or a dense clause packed with new information. <BrandName /> instead runs a small model on this device that estimates how predictable each upcoming word is, then adjusts its display time to match.
                                 </p>
-                                <h4 className="text-dune-gold font-bold uppercase tracking-widest text-xs pt-2 flex items-center gap-2">The <BrandName /> Solution</h4>
-                                <p className="text-sm text-gray-400 leading-relaxed">
-                                    This engine uses a local AI to "read ahead" of you. It measures how surprising or dense the upcoming text is, creating a <span className="text-white font-bold">biological rhythm</span>:
-                                </p>
-                                <ul className="space-y-2 text-xs text-gray-500 font-mono border-l-2 border-white/10 pl-4 py-2">
+                                <ul className="space-y-2 text-xs text-gray-500 border-l-2 border-white/10 pl-4 py-2">
                                     <li>
-                                        <strong className="text-gray-300">Complexity Brakes:</strong> When ideas get deep, the reader slows down automatically to let you absorb the meaning.
+                                        <strong className="text-gray-300">Dense or unexpected text</strong> slows down so it has time to land.
                                     </li>
                                     <li>
-                                        <strong className="text-gray-300">Flow Acceleration:</strong> When the text is simple or repetitive, it speeds up to keep you in the flow state.
+                                        <strong className="text-gray-300">Predictable or repetitive text</strong> speeds up to keep the flow going.
                                     </li>
                                 </ul>
-                                <p className="text-xs text-gray-500 italic">
-                                    Use the "Sensitivity Dial" below to tune this effect. It turns reading into something that feels more like downloading information directly into your mind.
+                                <p className="text-xs text-gray-500">
+                                    Use Sensitivity below to control how strongly pacing reacts to text density.
                                 </p>
                             </div>
 
-                            {/* Pacing Engine Model Selection */}
-                            <div className="bg-white/5 rounded-lg p-8 border border-white/10 space-y-8">
+                            {/* Pacing Engine Model */}
+                            <div className="bg-white/5 rounded-lg p-8 border border-white/10">
                                 <div>
-                                    <label className="block text-xs text-dune-gold mb-4 uppercase tracking-widest font-bold">Analysis Model</label>
-                                    <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                                        {(Object.keys(MODEL_INFO) as ModelTier[]).map(tier => (
-                                            <button
-                                                key={tier}
-                                                onClick={() => settings.setPacingModelTier(tier)}
-                                                className={clsx(
-                                                    "p-4 rounded border text-left transition-all",
-                                                    settings.pacingModelTier === tier
-                                                        ? "bg-dune-gold text-black border-dune-gold"
-                                                        : "bg-black/20 border-white/10 text-gray-400 hover:border-white/30 hover:text-white"
-                                                )}
-                                            >
-                                                <div className="font-bold uppercase text-sm">{MODEL_INFO[tier].name}</div>
-                                                <div className="text-[10px] opacity-70 mt-1">{MODEL_INFO[tier].size}</div>
-                                            </button>
-                                        ))}
+                                    <label className="block text-xs text-dune-gold mb-4 uppercase tracking-widest font-bold">Pacing Model</label>
+                                    <div className="flex items-center justify-between gap-4 rounded border border-white/10 bg-black/20 p-4">
+                                        <div>
+                                            <div className="font-bold uppercase text-sm text-white">{MODEL_INFO[PACING_MODEL_TIER].name}</div>
+                                            <div className="mt-1 text-[10px] text-gray-500">Optimized for adaptive pacing</div>
+                                        </div>
+                                        <div className="shrink-0 text-xs text-dune-gold">{MODEL_INFO[PACING_MODEL_TIER].size}</div>
                                     </div>
-                                    <p className="text-xs text-gray-500 mt-4 italic">
-                                        Note: The pacing engine requires a model capable of returning log-probabilities (logprobs). 
-                                        Standard chat models may not work efficiently.
+                                    <p className="text-xs text-gray-500 mt-4">
+                                        Fixed automatically — pacing needs log-probability output, which only this model provides here.
                                     </p>
                                 </div>
                             </div>

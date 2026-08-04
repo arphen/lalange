@@ -47,6 +47,14 @@ describe('analyzeDensityRange (Percentile-Based)', () => {
         expect(analysisData[2].tokens[0]).toBe(' ephemeral');
     });
 
+    it('always uses the dedicated pacing model', async () => {
+        vi.mocked(getPromptLogprobs).mockResolvedValue([{ token: 'hello', logprob: -1 }]);
+
+        await analyzeDensityRange(['hello']);
+
+        expect(getPromptLogprobs).toHaveBeenCalledWith('hello', 'tiny');
+    });
+
     it('should NOT apply structural multipliers in analysis phase', async () => {
         // Two words with same surprisal but different lengths
         // NOTE: Structural/Visual penalties are now applied in the Reader/Timing engine, not here.
