@@ -1,5 +1,5 @@
 export const bookSchema = {
-    version: 0,
+    version: 1,
     primaryKey: 'id',
     type: 'object',
     properties: {
@@ -79,7 +79,7 @@ export const imageSchema = {
 } as const;
 
 export const chapterSchema = {
-    version: 0,
+    version: 1,
     primaryKey: 'id',
     type: 'object',
     properties: {

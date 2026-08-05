@@ -1,4 +1,5 @@
 import { createRxDatabase, addRxPlugin, type RxDatabase, type RxCollection, type RxStorage } from 'rxdb';
+import { RxDBMigrationSchemaPlugin } from 'rxdb/plugins/migration-schema';
 import { getRxStorageDexie } from 'rxdb/plugins/storage-dexie';
 import { bookSchema, chapterSchema, readingStateSchema, imageSchema, rawFileSchema } from './schema';
 import type {
@@ -7,6 +8,8 @@ import type {
     SectionOwnership,
     StructureMode,
 } from '../ingest/structure';
+
+addRxPlugin(RxDBMigrationSchemaPlugin);
 
 // Define types for the database
 export type GlobalSummaryType = {
@@ -136,6 +139,14 @@ export type MyDatabaseCollections = {
 
 export type MyDatabase = RxDatabase<MyDatabaseCollections>;
 
+export const bookMigrationStrategies = {
+    1: (document: BookDocType): BookDocType => document,
+};
+
+export const chapterMigrationStrategies = {
+    1: (document: ChapterDocType): ChapterDocType => document,
+};
+
 let dbPromise: Promise<MyDatabase> | null = null;
 
 export const initDB = async (): Promise<MyDatabase> => {
@@ -169,10 +180,12 @@ export const initDB = async (): Promise<MyDatabase> => {
 
         await db.addCollections({
             books: {
-                schema: bookSchema
+                schema: bookSchema,
+                migrationStrategies: bookMigrationStrategies,
             },
             chapters: {
-                schema: chapterSchema
+                schema: chapterSchema,
+                migrationStrategies: chapterMigrationStrategies,
             },
             reading_states: {
                 schema: readingStateSchema
