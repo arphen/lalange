@@ -61,10 +61,20 @@ export default defineConfig(() => {
       entries: ['index.html'],      // Only scan the root index.html, ignoring examples in packages/
     },
     build: {
+      chunkSizeWarningLimit: 6000,
       rollupOptions: {
+        onwarn(warning, warn) {
+          if (warning.code === 'EVAL' && warning.id?.includes('/node_modules/onnxruntime-web/')) {
+            return;
+          }
+          warn(warning);
+        },
         output: {
           manualChunks: {
             'web-llm': ['@mlc-ai/web-llm'],
+            'vendor-ui': ['react', 'react-dom', 'react-router', 'framer-motion', 'zustand', 'lucide-react', 'clsx', 'tailwind-merge'],
+            'vendor-data': ['rxdb', 'dexie', 'rxjs'],
+            'vendor-onnx': ['onnxruntime-web'],
           },
         },
       },
