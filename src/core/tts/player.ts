@@ -109,6 +109,7 @@ class TTSAudioPlayer {
     
     // State
     private isPlaying = false;
+    private playbackRequestId = 0;
     private currentSentenceIndex = 0;
     private waitingForSentenceIndex: number | null = null; // Track which sentence we're waiting for
     private startupBufferTarget = 1;
@@ -242,7 +243,12 @@ class TTSAudioPlayer {
      * Start playback from a specific sentence index
      */
     async play(fromSentenceIndex?: number, startupBufferTarget: number = 1): Promise<void> {
+        const playbackRequestId = ++this.playbackRequestId;
         await this.ensureContext();
+
+        if (playbackRequestId !== this.playbackRequestId) {
+            return;
+        }
         
         if (fromSentenceIndex !== undefined) {
             this.currentSentenceIndex = fromSentenceIndex;
@@ -427,6 +433,8 @@ class TTSAudioPlayer {
     }
     
     pause(): void {
+        this.playbackRequestId += 1;
+
         if (!this.isPlaying) {
             console.log('[TTS Player] Already paused');
             return;

@@ -372,12 +372,43 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
         });
     }, [safeBufferAhead, sentences, onPositionChange, generateFrom, playbackState]);
     
+    // Handle stop - full reset of all TTS resources
+    const handleStop = useCallback(() => {
+        console.log('[TTS UI] Full stop - clearing all resources');
+
+        generationIdRef.current += 1;
+
+        // Abort any ongoing generation
+        if (abortControllerRef.current) {
+            abortControllerRef.current.abort();
+            abortControllerRef.current = null;
+        }
+
+        // Reset all generation state
+        isGeneratingRef.current = false;
+        generatorRef.current = null;
+        hasStartedPlaybackRef.current = false;
+        startSentenceIndexRef.current = 0;
+        useTTSStore.getState().setGenerating(false);
+
+        // Full player reset
+        ttsPlayer.stop();
+        ttsPlayer.clearQueue();
+
+        console.log('[TTS UI] Stopped and cleared all resources');
+    }, []);
+
     // Handle play/pause toggle - PAUSE MUST BE INSTANT
     const handleToggle = useCallback(async () => {
         // PAUSE PATH - synchronous, instant response
-        if (playbackState === 'playing' || playbackState === 'generating') {
+        if (playbackState === 'playing') {
             ttsPlayer.pause();
             return; // Exit immediately, no async operations
+        }
+
+        if (playbackState === 'preparing' || playbackState === 'generating') {
+            handleStop();
+            return;
         }
 
         try {
@@ -385,7 +416,7 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
             // changes are applied before speaking.
             if (!await handleInit()) return;
 
-            if (playbackState === 'idle' || playbackState === 'preparing') {
+            if (playbackState === 'idle') {
                 // Find sentence containing current word
                 const sentenceIndex = sentences.findIndex(
                     s => currentWordIndex >= s.startWordIndex && currentWordIndex <= s.endWordIndex
@@ -467,33 +498,7 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
             store.setError(message);
             ttsPlayer.stop();
         }
-    }, [playbackState, sentences, currentWordIndex, handleInit, generateFrom, safeBufferAhead]);
-    
-    // Handle stop - full reset of all TTS resources
-    const handleStop = useCallback(() => {
-        console.log('[TTS UI] Full stop - clearing all resources');
-
-        generationIdRef.current += 1;
-        
-        // Abort any ongoing generation
-        if (abortControllerRef.current) {
-            abortControllerRef.current.abort();
-            abortControllerRef.current = null;
-        }
-        
-        // Reset all generation state
-        isGeneratingRef.current = false;
-        generatorRef.current = null;
-        hasStartedPlaybackRef.current = false;
-        startSentenceIndexRef.current = 0;
-        useTTSStore.getState().setGenerating(false);
-        
-        // Full player reset
-        ttsPlayer.stop();
-        ttsPlayer.clearQueue();
-        
-        console.log('[TTS UI] Stopped and cleared all resources');
-    }, []);
+    }, [playbackState, sentences, currentWordIndex, handleInit, generateFrom, safeBufferAhead, handleStop]);
     
     // Voice options, grouped by language so the Slovenian voice is easy to find
     const voiceGroups = useMemo(() => {

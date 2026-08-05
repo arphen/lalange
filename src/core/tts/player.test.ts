@@ -20,11 +20,13 @@ class FakeAudioContext {
     static supportsCopyToChannel = true;
     static supportsResume = true;
     static supportsSourceStart = true;
+    static initialState: AudioContextState = 'running';
+    static resumePromise: Promise<void> | null = null;
     static channelData = new Float32Array();
     static noteOn = vi.fn();
 
     currentTime = 0;
-    state: AudioContextState = 'running';
+    state: AudioContextState = FakeAudioContext.initialState;
     destination = {} as AudioDestinationNode;
 
     constructor() {
@@ -62,7 +64,7 @@ class FakeAudioContext {
     }
 
     resume(): Promise<void> {
-        return Promise.resolve();
+        return FakeAudioContext.resumePromise ?? Promise.resolve();
     }
 
     close(): Promise<void> {
@@ -85,6 +87,8 @@ describe('TTSAudioPlayer word tracking', () => {
         FakeAudioContext.supportsCopyToChannel = true;
         FakeAudioContext.supportsResume = true;
         FakeAudioContext.supportsSourceStart = true;
+        FakeAudioContext.initialState = 'running';
+        FakeAudioContext.resumePromise = null;
         FakeAudioContext.channelData = new Float32Array();
         FakeAudioContext.noteOn.mockReset();
         nextAnimationFrame = null;
@@ -181,6 +185,24 @@ describe('TTSAudioPlayer word tracking', () => {
         await ttsPlayer.play(0);
 
         expect(FakeAudioContext.noteOn).toHaveBeenCalledWith(0);
+    });
+
+    it('does not restart playback when stop interrupts audio context resume', async () => {
+        let finishResume: (() => void) | undefined;
+        FakeAudioContext.initialState = 'suspended';
+        FakeAudioContext.resumePromise = new Promise<void>((resolve) => {
+            finishResume = resolve;
+        });
+
+        const playPromise = ttsPlayer.play(0);
+        await vi.waitFor(() => expect(FakeAudioContext.current).not.toBeNull());
+
+        ttsPlayer.stop();
+        finishResume?.();
+        await playPromise;
+
+        expect(ttsPlayer.getState().isPlaying).toBe(false);
+        expect(ttsState.setPlaybackState).not.toHaveBeenCalledWith('playing');
     });
 });
 

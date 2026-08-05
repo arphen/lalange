@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
     setGenerating: vi.fn(),
     setError: vi.fn(),
     setPlaybackState: vi.fn(),
+    playbackState: 'idle' as 'idle' | 'preparing' | 'playing' | 'paused' | 'generating',
     sentences: [{ index: 0, text: 'Hello world.', startWordIndex: 0, endWordIndex: 1 }],
 }));
 
@@ -23,7 +24,7 @@ vi.mock('../../core/store/tts', () => ({
             isLoading: false,
             isGenerating: false,
             error: null,
-            playbackState: 'idle',
+            playbackState: mocks.playbackState,
             loadProgress: 0,
             loadStatus: '',
             volume: 1,
@@ -84,6 +85,7 @@ describe('TTSPlayer voice changes', () => {
         mocks.voice = 'af_heart';
         mocks.backendPreference = 'auto';
         mocks.bufferAhead = 5;
+        mocks.playbackState = 'idle';
         mocks.sentences = [{ index: 0, text: 'Hello world.', startWordIndex: 0, endWordIndex: 1 }];
         mocks.setSpeed.mockReset();
         vi.clearAllMocks();
@@ -133,6 +135,18 @@ describe('TTSPlayer voice changes', () => {
         await waitFor(() => {
             expect(ttsPlayer.play).toHaveBeenCalledWith(0, 1);
         });
+    });
+
+    it('stops pending playback when the main control is clicked while preparing', () => {
+        mocks.playbackState = 'preparing';
+
+        const { container } = render(<TTSPlayer words={['Hello', 'world.']} currentWordIndex={0} />);
+        fireEvent.click(container.querySelector('button')!);
+
+        expect(ttsPlayer.stop).toHaveBeenCalled();
+        expect(ttsPlayer.clearQueue).toHaveBeenCalled();
+        expect(ttsPlayer.pause).not.toHaveBeenCalled();
+        expect(initTTS).not.toHaveBeenCalled();
     });
 
     it('stops before playback when TTS initialization fails', async () => {
