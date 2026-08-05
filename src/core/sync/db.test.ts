@@ -1,5 +1,56 @@
 import { describe, it, expect } from 'vitest';
-import { initDB } from './db';
+import { createRxDatabase } from 'rxdb';
+import { getRxStorageDexie } from 'rxdb/plugins/storage-dexie';
+import { wrappedValidateAjvStorage } from 'rxdb/plugins/validate-ajv';
+import {
+    bookMigrationStrategies,
+    chapterMigrationStrategies,
+    initDB,
+} from './db';
+import { bookSchema, chapterSchema } from './schema';
+
+const previousBookSchema = {
+    version: 0,
+    primaryKey: 'id',
+    type: 'object',
+    properties: {
+        id: { type: 'string', maxLength: 100 },
+        title: { type: 'string' },
+        author: { type: 'string' },
+        totalWords: { type: 'number' },
+        chapterIds: { type: 'array', items: { type: 'string' } },
+    },
+    required: ['id', 'title'],
+} as const;
+
+const previousChapterSchema = {
+    version: 0,
+    primaryKey: 'id',
+    type: 'object',
+    properties: {
+        id: { type: 'string', maxLength: 100 },
+        bookId: { type: 'string', maxLength: 100 },
+        index: { type: 'number' },
+        title: { type: 'string' },
+        status: {
+            type: 'string',
+            enum: ['pending', 'processing', 'ready', 'error'],
+        },
+        content: { type: 'array', items: { type: 'string' } },
+        metadata: {
+            type: 'object',
+            properties: {
+                classificationReason: { type: 'string' },
+            },
+        },
+    },
+    required: ['id', 'bookId', 'index', 'content'],
+    indexes: ['bookId'],
+} as const;
+
+const createTestStorage = () => wrappedValidateAjvStorage({
+    storage: getRxStorageDexie(),
+});
 
 describe('Database Initialization', () => {
     describe('ignoreDuplicate configuration', () => {
@@ -137,5 +188,74 @@ describe('Database Initialization', () => {
             // Clean up
             await insertedDoc.remove();
         });
+    });
+
+    it('reopens and migrates persisted version-zero books and chapters', async () => {
+        const databaseName = `xyz_migration_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+        const oldDatabase = await createRxDatabase({
+            name: databaseName,
+            storage: createTestStorage(),
+            multiInstance: false,
+        });
+        await oldDatabase.addCollections({
+            books: { schema: previousBookSchema },
+            chapters: { schema: previousChapterSchema },
+        });
+        await oldDatabase.books.insert({
+            id: 'old-book',
+            title: 'Existing Book',
+            author: 'Existing Author',
+            totalWords: 2,
+            chapterIds: ['old-chapter'],
+        });
+        await oldDatabase.chapters.insert({
+            id: 'old-chapter',
+            bookId: 'old-book',
+            index: 0,
+            title: 'Existing Chapter',
+            status: 'ready',
+            content: ['still', 'here'],
+            metadata: { classificationReason: 'existing metadata' },
+        });
+        await oldDatabase.close();
+
+        const migratedDatabase = await createRxDatabase({
+            name: databaseName,
+            storage: createTestStorage(),
+            multiInstance: false,
+        });
+
+        try {
+            await migratedDatabase.addCollections({
+                books: {
+                    schema: bookSchema,
+                    migrationStrategies: bookMigrationStrategies,
+                },
+                chapters: {
+                    schema: chapterSchema,
+                    migrationStrategies: chapterMigrationStrategies,
+                },
+            });
+
+            const migratedBook = await migratedDatabase.books.findOne('old-book').exec();
+            const migratedChapter = await migratedDatabase.chapters.findOne('old-chapter').exec();
+
+            expect(migratedBook?.toJSON()).toMatchObject({
+                id: 'old-book',
+                title: 'Existing Book',
+                author: 'Existing Author',
+                totalWords: 2,
+                chapterIds: ['old-chapter'],
+            });
+            expect(migratedChapter?.toJSON()).toMatchObject({
+                id: 'old-chapter',
+                bookId: 'old-book',
+                title: 'Existing Chapter',
+                content: ['still', 'here'],
+                metadata: { classificationReason: 'existing metadata' },
+            });
+        } finally {
+            await migratedDatabase.remove();
+        }
     });
 });
