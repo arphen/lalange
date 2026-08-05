@@ -1173,7 +1173,12 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
         if (activeImageCueRef.current) return;
 
         if (chapterTransitionPhase === 'braking' || chapterTransitionPhase === 'crossing') {
-            pauseAfterChapterTransitionRef.current = !pauseAfterChapterTransitionRef.current;
+            const shouldPauseAfterTransition = !pauseAfterChapterTransitionRef.current;
+            pauseAfterChapterTransitionRef.current = shouldPauseAfterTransition;
+            if (shouldPauseAfterTransition) {
+                isPlayingRef.current = false;
+                setIsPlaying(false);
+            }
             return;
         }
 
@@ -1184,7 +1189,9 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
 
         if (showTTSPlayerRef.current) return;
 
-        setIsPlaying(!isPlayingRef.current);
+        const shouldPlay = !isPlayingRef.current;
+        isPlayingRef.current = shouldPlay;
+        setIsPlaying(shouldPlay);
     }, [countdown, chapterTransitionPhase]);
 
     const handleRsvpKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
@@ -2257,7 +2264,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                         {/* This allows the playback loop to update the display at 60fps without React re-renders */}
                             <div 
                                 ref={rsvpRef} 
-                                className={`${rsvpTypographyClass} font-mono tracking-tight whitespace-nowrap ${displayPlugin.getContainerClass()} ${isSummaryActive ? 'text-cyan-300 italic opacity-80' : 'text-white'}`}
+                                className={`${rsvpTypographyClass} pointer-events-none font-mono tracking-tight whitespace-nowrap ${displayPlugin.getContainerClass()} ${isSummaryActive ? 'text-cyan-300 italic opacity-80' : 'text-white'}`}
                                 style={rsvpContainerStyle}
                             />
                         </div>

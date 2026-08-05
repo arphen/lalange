@@ -284,6 +284,15 @@ describe('Reader Component', () => {
         });
     });
 
+    it('keeps rapidly replaced word markup out of pointer hit-testing', async () => {
+        render(<Reader book={mockBook} />);
+
+        const rsvpContainer = await screen.findByTestId('rsvp-container');
+        const wordDisplay = rsvpContainer.querySelector('.reader-focus-lane > div');
+
+        expect(wordDisplay).toHaveClass('pointer-events-none');
+    });
+
     it('should ignore ghost click after touch drag on RSVP lane', async () => {
         render(<Reader book={mockBook} />);
         await waitFor(() => {
@@ -390,7 +399,7 @@ describe('Reader Component', () => {
             expect(rsvpContainer).toHaveTextContent('Hello');
             expect(screen.getByTestId('sidebar-container')).toHaveClass('translate-x-0');
             fireEvent.click(rsvpContainer);
-            expect(rsvpContainer).toHaveAttribute('aria-pressed', 'true');
+            expect(rsvpContainer).toHaveAttribute('aria-pressed', 'false');
 
             await act(async () => {
                 await vi.advanceTimersByTimeAsync(760);
