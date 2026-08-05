@@ -5,6 +5,16 @@ import { classifyChapter, type ChapterClassification } from './cleaning';
 
 export type ChapterSource = 'toc' | 'heading' | 'spine' | 'merged';
 
+export type BoundaryEvidence = 'publisher-toc' | 'document-heading' | 'source-spine';
+export type SectionOwnership = 'authored' | 'xyz';
+export type ReformationReason =
+    | 'authored-boundary'
+    | 'page-sequence'
+    | 'long-section-split'
+    | 'short-section-merge'
+    | 'format-fallback';
+export type StructureMode = 'authored' | 'hybrid' | 'generated';
+
 interface ManifestItem {
     id: string;
     href: string;
@@ -44,8 +54,43 @@ export interface ChapterSlice {
 export interface PlannedChapter {
     title: string;
     slices: ChapterSlice[];
+    sliceEstimatedWords?: number[];
     estimatedWords: number;
     source: ChapterSource;
+    structureOwnership?: SectionOwnership;
+    reformationReason?: ReformationReason;
+    boundaryEvidence?: BoundaryEvidence[];
+    authoredGroupTitle?: string;
+    originalTitles?: string[];
+}
+
+export interface SourceUnit {
+    ordinal: number;
+    slices: ChapterSlice[];
+    sliceEstimatedWords?: number[];
+    estimatedWords: number;
+    title?: string;
+    boundaryEvidence: BoundaryEvidence;
+    authoredGroupTitle?: string;
+}
+
+export interface ReadingSectionPlan {
+    title: string;
+    slices: ChapterSlice[];
+    estimatedWords: number;
+    source: ChapterSource;
+    ownership: SectionOwnership;
+    reason: ReformationReason;
+    boundaryEvidence: BoundaryEvidence[];
+    authoredGroupTitle?: string;
+    originalTitles: string[];
+}
+
+export interface NormalizedBookStructure {
+    version: 1;
+    sourceUnits: SourceUnit[];
+    sections: ReadingSectionPlan[];
+    mode: StructureMode;
 }
 
 export interface SkippedPlannedChapter {
@@ -72,6 +117,8 @@ export interface EpubStructurePlan {
     spine: SpineItem[];
     chapters: PlannedChapter[];
     skippedChapters: SkippedPlannedChapter[];
+    structureVersion: 1;
+    structureMode: StructureMode;
 }
 
 const MARKER_START = '__XYZ_CHAPTER_START__';
@@ -357,22 +404,7 @@ const resolveTocEntryToIndex = (
     return null;
 };
 
-const isGenericChapterTitle = (title: string): boolean => /^(?:chapter|section|part|book)\s+(?:\d{1,4}|[ivxlcdm]+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty)[.:-]?$/i.test(normalizeWhitespace(title));
-
-const mergeChapterPair = (left: PlannedChapter, right: PlannedChapter): PlannedChapter => {
-    const leftTitle = normalizeWhitespace(left.title);
-    const rightTitle = normalizeWhitespace(right.title);
-
-    const keepRightTitle = isGenericChapterTitle(leftTitle) && rightTitle && !isGenericChapterTitle(rightTitle);
-    const mergedTitle = keepRightTitle ? rightTitle : (leftTitle || rightTitle);
-
-    return {
-        title: mergedTitle,
-        slices: [...left.slices, ...right.slices],
-        estimatedWords: left.estimatedWords + right.estimatedWords,
-        source: 'merged',
-    };
-};
+const isGenericChapterTitle = (title: string): boolean => /^(?:(?:chapter|section|part|book|page|p\.?)[\s_-]*(?:\d{1,5}|[ivxlcdm]+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty)|\d{1,5})[.:-]?$/i.test(normalizeWhitespace(title));
 
 const ensureChapterTitles = (chapters: PlannedChapter[]): PlannedChapter[] => chapters.map((chapter, index) => {
     const title = normalizeWhitespace(chapter.title);
@@ -382,78 +414,285 @@ const ensureChapterTitles = (chapters: PlannedChapter[]): PlannedChapter[] => ch
     };
 });
 
-const median = (values: number[]): number => {
-    if (values.length === 0) return 0;
-    const sorted = [...values].sort((a, b) => a - b);
-    const midpoint = Math.floor(sorted.length / 2);
-    if (sorted.length % 2 === 0) {
-        return (sorted[midpoint - 1] + sorted[midpoint]) / 2;
-    }
-    return sorted[midpoint];
+export const READING_SECTION_TARGET_WORDS = 3_500;
+export const READING_SECTION_SOFT_MIN_WORDS = 2_000;
+export const READING_SECTION_HARD_MAX_WORDS = 5_000;
+export const AUTHORED_SECTION_SPLIT_THRESHOLD_WORDS = 10_000;
+
+const boundaryEvidenceForSource = (source: ChapterSource): BoundaryEvidence => {
+    if (source === 'toc') return 'publisher-toc';
+    if (source === 'heading') return 'document-heading';
+    return 'source-spine';
 };
 
-const normalizeChapterGranularity = (chapters: PlannedChapter[]): PlannedChapter[] => {
-    if (chapters.length < 8) {
-        return ensureChapterTitles(chapters);
+const genericSourcePath = /(?:^|\/)(?:page|p)[\s_-]*\d{1,5}\.(?:x?html?|xml)$/i;
+const numericSourcePath = /(?:^|\/)\d{1,5}\.(?:x?html?|xml)$/i;
+
+const isGenericSourceUnit = (unit: SourceUnit, repeatedTitles: Set<string>): boolean => {
+    const title = normalizeWhitespace(unit.title || '');
+    const pageLikeTitle = /^(?:(?:page|p\.?)[\s_-]*\d{1,5}|\d{1,5})[.:-]?$/i.test(title);
+    if (unit.boundaryEvidence === 'document-heading') return false;
+    if (unit.boundaryEvidence === 'publisher-toc') return pageLikeTitle;
+    if (isGenericChapterTitle(title)) return true;
+    if (repeatedTitles.has(title.toLowerCase())) return true;
+
+    return unit.slices.some((slice) => {
+        const path = normalizeArchivePath(slice.path);
+        return genericSourcePath.test(path) || numericSourcePath.test(path);
+    });
+};
+
+const uniqueValues = <T,>(values: T[]): T[] => [...new Set(values)];
+
+const toSourceUnits = (chapters: PlannedChapter[]): SourceUnit[] => chapters.map((chapter, ordinal) => ({
+    ordinal,
+    slices: [...chapter.slices],
+    sliceEstimatedWords: chapter.sliceEstimatedWords || chapter.slices.map(() => (
+        chapter.slices.length > 0 ? chapter.estimatedWords / chapter.slices.length : 0
+    )),
+    estimatedWords: chapter.estimatedWords,
+    title: normalizeWhitespace(chapter.title) || undefined,
+    boundaryEvidence: boundaryEvidenceForSource(chapter.source),
+    authoredGroupTitle: chapter.authoredGroupTitle,
+}));
+
+const mergeSourceUnits = (units: SourceUnit[]): Pick<ReadingSectionPlan, 'slices' | 'estimatedWords' | 'boundaryEvidence' | 'originalTitles'> => ({
+    slices: units.flatMap((unit) => unit.slices),
+    estimatedWords: units.reduce((total, unit) => total + unit.estimatedWords, 0),
+    boundaryEvidence: uniqueValues(units.map((unit) => unit.boundaryEvidence)),
+    originalTitles: units.map((unit) => unit.title).filter((title): title is string => Boolean(title)),
+});
+
+const makeAuthoredSection = (unit: SourceUnit): ReadingSectionPlan => ({
+    title: unit.title || 'Untitled section',
+    slices: [...unit.slices],
+    estimatedWords: unit.estimatedWords,
+    source: unit.boundaryEvidence === 'publisher-toc'
+        ? 'toc'
+        : unit.boundaryEvidence === 'document-heading' ? 'heading' : 'spine',
+    ownership: unit.boundaryEvidence === 'source-spine' ? 'xyz' : 'authored',
+    reason: unit.boundaryEvidence === 'source-spine' ? 'format-fallback' : 'authored-boundary',
+    boundaryEvidence: [unit.boundaryEvidence],
+    authoredGroupTitle: unit.authoredGroupTitle || (unit.boundaryEvidence === 'source-spine' ? undefined : unit.title),
+    originalTitles: unit.title ? [unit.title] : [],
+});
+
+const makeLongAuthoredSections = (unit: SourceUnit): ReadingSectionPlan[] => {
+    if (
+        unit.estimatedWords <= AUTHORED_SECTION_SPLIT_THRESHOLD_WORDS
+        || unit.slices.length < 2
+    ) {
+        return [makeAuthoredSection(unit)];
     }
 
-    const pageLikeTitle = /^(?:(?:page|p\.?)[\s_-]*)?\d{1,5}$/i;
-    const pageLikeTocEntries = chapters.filter((chapter) => (
-        chapter.source === 'toc' && pageLikeTitle.test(normalizeWhitespace(chapter.title))
-    )).length;
-    const tocChapters = chapters.filter((chapter) => chapter.source === 'toc').length;
-    const tocLooksPageBased = tocChapters > 0 && pageLikeTocEntries / tocChapters >= 0.35;
+    const sections: ReadingSectionPlan[] = [];
+    let sectionSlices: ChapterSlice[] = [];
+    let sectionWords = 0;
+    let partNumber = 1;
 
-    if (tocChapters > 0 && !tocLooksPageBased) {
-        return ensureChapterTitles(chapters);
+    const flush = () => {
+        if (sectionSlices.length === 0) return;
+        sections.push({
+            ...makeAuthoredSection({
+                ...unit,
+                slices: sectionSlices,
+                estimatedWords: sectionWords,
+            }),
+            title: `${unit.title || 'Untitled section'} - Part ${partNumber}`,
+            reason: 'long-section-split',
+            authoredGroupTitle: unit.title || undefined,
+            originalTitles: unit.title ? [unit.title] : [],
+        });
+        partNumber += 1;
+        sectionSlices = [];
+        sectionWords = 0;
+    };
+
+    for (const [sliceIndex, slice] of unit.slices.entries()) {
+        const sliceWords = unit.sliceEstimatedWords?.[sliceIndex] || 0;
+        const nextWords = sectionWords + sliceWords;
+        const shouldClose = sectionSlices.length > 0 && (
+            nextWords > READING_SECTION_HARD_MAX_WORDS
+            || (sectionWords >= READING_SECTION_SOFT_MIN_WORDS && nextWords > READING_SECTION_TARGET_WORDS)
+        );
+        if (shouldClose) flush();
+        sectionSlices.push(slice);
+        sectionWords += sliceWords;
     }
+    flush();
 
-    const wordCounts = chapters.map((chapter) => chapter.estimatedWords);
-    const medianWords = median(wordCounts);
-    const tinyThreshold = medianWords < 180 ? 260 : 140;
-    const tinyCount = wordCounts.filter((count) => count > 0 && count < tinyThreshold).length;
-    const tinyRatio = tinyCount / Math.max(1, chapters.length);
-
-    if (tinyRatio < 0.35) {
-        return ensureChapterTitles(chapters);
-    }
-
-    const targetWords = Math.max(700, Math.min(2400, Math.round(medianWords * 5)));
-    const merged: PlannedChapter[] = [];
-    let bucket: PlannedChapter | null = null;
-
-    for (const chapter of chapters) {
-        if (!bucket) {
-            bucket = { ...chapter, slices: [...chapter.slices] };
+    let sectionIndex = 0;
+    while (sectionIndex < sections.length) {
+        const current = sections[sectionIndex];
+        if (current.estimatedWords >= READING_SECTION_SOFT_MIN_WORDS) {
+            sectionIndex += 1;
             continue;
         }
 
-        const shouldMerge = bucket.estimatedWords < tinyThreshold
-            || chapter.estimatedWords < tinyThreshold
-            || bucket.estimatedWords < targetWords;
+        const previous = sections[sectionIndex - 1];
+        const next = sections[sectionIndex + 1];
+        const mergeSections = (left: ReadingSectionPlan, right: ReadingSectionPlan): ReadingSectionPlan => ({
+            ...left,
+            slices: [...left.slices, ...right.slices],
+            estimatedWords: left.estimatedWords + right.estimatedWords,
+            boundaryEvidence: uniqueValues([...left.boundaryEvidence, ...right.boundaryEvidence]),
+            originalTitles: uniqueValues([...left.originalTitles, ...right.originalTitles]),
+        });
 
-        if (shouldMerge) {
-            bucket = mergeChapterPair(bucket, chapter);
+        if (previous) {
+            const combinedWords = previous.estimatedWords + current.estimatedWords;
+            const canMerge = combinedWords <= READING_SECTION_HARD_MAX_WORDS
+                || (previous.slices.length === 1 && previous.estimatedWords > READING_SECTION_HARD_MAX_WORDS);
+            if (canMerge) {
+                sections.splice(sectionIndex - 1, 2, mergeSections(previous, current));
+                sectionIndex = Math.max(0, sectionIndex - 1);
+                continue;
+            }
+        }
+
+        if (next) {
+            const combinedWords = current.estimatedWords + next.estimatedWords;
+            const canMerge = combinedWords <= READING_SECTION_HARD_MAX_WORDS
+                || (next.slices.length === 1 && next.estimatedWords > READING_SECTION_HARD_MAX_WORDS);
+            if (canMerge) {
+                sections.splice(sectionIndex, 2, mergeSections(current, next));
+                continue;
+            }
+        }
+
+        sectionIndex += 1;
+    }
+
+    return sections.map((section, index) => ({
+        ...section,
+        title: `${unit.title || 'Untitled section'} - Part ${index + 1}`,
+    }));
+};
+
+const makeGeneratedSection = (
+    units: SourceUnit[],
+    title: string,
+    reason: ReformationReason = 'page-sequence',
+): ReadingSectionPlan => ({
+    ...mergeSourceUnits(units),
+    title,
+    source: 'merged',
+    ownership: 'xyz',
+    reason,
+    authoredGroupTitle: undefined,
+});
+
+const rebalanceFinalGeneratedSection = (sections: ReadingSectionPlan[]): ReadingSectionPlan[] => {
+    if (sections.length < 2) return sections;
+
+    const last = sections[sections.length - 1];
+    const previous = sections[sections.length - 2];
+    const combinedWords = previous.estimatedWords + last.estimatedWords;
+    if (
+        last.reason !== 'page-sequence'
+        || last.estimatedWords >= READING_SECTION_SOFT_MIN_WORDS
+        || previous.reason !== 'page-sequence'
+        || combinedWords > READING_SECTION_HARD_MAX_WORDS
+    ) {
+        return sections;
+    }
+
+    const merged = makeGeneratedSection(
+        [{
+            ordinal: 0,
+            slices: previous.slices,
+            estimatedWords: previous.estimatedWords,
+            title: previous.originalTitles.join(' '),
+            boundaryEvidence: previous.boundaryEvidence[0] || 'source-spine',
+        }, {
+            ordinal: 1,
+            slices: last.slices,
+            estimatedWords: last.estimatedWords,
+            title: last.originalTitles.join(' '),
+            boundaryEvidence: last.boundaryEvidence[0] || 'source-spine',
+        }],
+        previous.title,
+        'short-section-merge',
+    );
+    return [...sections.slice(0, -2), merged];
+};
+
+export const normalizeReadingSections = (chapters: PlannedChapter[]): NormalizedBookStructure => {
+    const titledChapters = ensureChapterTitles(chapters);
+    const sourceUnits = toSourceUnits(titledChapters);
+    const titleCounts = new Map<string, number>();
+    for (const unit of sourceUnits) {
+        const title = normalizeWhitespace(unit.title || '').toLowerCase();
+        if (title) titleCounts.set(title, (titleCounts.get(title) || 0) + 1);
+    }
+    const repeatedTitles = new Set(
+        [...titleCounts.entries()]
+            .filter(([, count]) => count >= 3 && count / Math.max(1, sourceUnits.length) >= 0.5)
+            .map(([title]) => title),
+    );
+    const genericUnits = sourceUnits.filter((unit) => isGenericSourceUnit(unit, repeatedTitles));
+    const generatedRatio = genericUnits.length / Math.max(1, sourceUnits.length);
+    const shouldGenerate = genericUnits.length >= 2 && generatedRatio >= 0.5;
+    const mode: StructureMode = shouldGenerate
+        ? genericUnits.length === sourceUnits.length ? 'generated' : 'hybrid'
+        : 'authored';
+
+    if (!shouldGenerate) {
+        const authoredSections = sourceUnits.flatMap(makeLongAuthoredSections);
+        return {
+            version: 1,
+            sourceUnits,
+            sections: authoredSections,
+            mode: authoredSections.length > sourceUnits.length ? 'hybrid' : mode,
+        };
+    }
+
+    const sections: ReadingSectionPlan[] = [];
+    let splitAuthoredSection = false;
+    let generatedBucket: SourceUnit[] = [];
+    let sectionNumber = 1;
+
+    const flushGeneratedBucket = () => {
+        if (generatedBucket.length === 0) return;
+        sections.push(makeGeneratedSection(generatedBucket, `Section ${sectionNumber}`));
+        sectionNumber += 1;
+        generatedBucket = [];
+    };
+
+    for (const unit of sourceUnits) {
+        if (!isGenericSourceUnit(unit, repeatedTitles)) {
+            flushGeneratedBucket();
+            const authoredSections = makeLongAuthoredSections(unit);
+            splitAuthoredSection ||= authoredSections.length > 1;
+            sections.push(...authoredSections);
             continue;
         }
 
-        merged.push(bucket);
-        bucket = { ...chapter, slices: [...chapter.slices] };
+        const currentWords = generatedBucket.reduce((total, bucketUnit) => total + bucketUnit.estimatedWords, 0);
+        const nextWords = currentWords + unit.estimatedWords;
+        const shouldClose = generatedBucket.length > 0 && (
+            nextWords > READING_SECTION_HARD_MAX_WORDS
+            || (currentWords >= READING_SECTION_SOFT_MIN_WORDS && nextWords > READING_SECTION_TARGET_WORDS)
+        );
+        if (shouldClose) flushGeneratedBucket();
+        generatedBucket.push(unit);
     }
+    flushGeneratedBucket();
 
-    if (bucket) {
-        merged.push(bucket);
-    }
+        const rebalancedSections = rebalanceFinalGeneratedSection(sections);
+        let generatedSectionNumber = 0;
+        const renamedSections = rebalancedSections.map((section) => {
+            if (section.ownership !== 'xyz' || section.source !== 'merged') return section;
+            generatedSectionNumber += 1;
+            return { ...section, title: `Section ${generatedSectionNumber}` };
+        });
 
-    if (merged.length > 1) {
-        const last = merged[merged.length - 1];
-        if (last.estimatedWords > 0 && last.estimatedWords < tinyThreshold) {
-            const previous = merged[merged.length - 2];
-            merged.splice(merged.length - 2, 2, mergeChapterPair(previous, last));
-        }
-    }
-
-    return ensureChapterTitles(merged);
+    return {
+        version: 1,
+        sourceUnits,
+        sections: renamedSections,
+        mode: splitAuthoredSection && mode === 'authored' ? 'hybrid' : mode,
+    };
 };
 
 const buildChaptersFromBoundaries = (
@@ -1184,6 +1423,7 @@ const filterNonReadingChapters = async (
 
     for (const [chapterIndex, chapter] of chapters.entries()) {
         const readableSlices: ChapterSlice[] = [];
+        const readableSliceEstimates: number[] = [];
         const readableSources: { html: string; text: string }[] = [];
         const skippedSlices: SkippedPlannedChapter[] = [];
         let bestTitle = normalizeWhitespace(chapter.title);
@@ -1239,6 +1479,7 @@ const filterNonReadingChapters = async (
             }
 
             readableSlices.push(slice);
+            readableSliceEstimates.push(estimatedWords);
             readableSources.push({ html: readableHtml, text });
             if (!bestTitle || isGenericChapterTitle(bestTitle) || bestTitle === 'Front Matter' || bestTitle === 'Opening') {
                 bestTitle = sliceTitle || bestTitle;
@@ -1274,6 +1515,7 @@ const filterNonReadingChapters = async (
             ...chapter,
             title: bestTitle || `Chapter ${readableChapters.length + 1}`,
             slices: readableSlices,
+            sliceEstimatedWords: readableSliceEstimates,
             estimatedWords: readableSources.reduce((sum, source) => sum + countWords(source.text), 0),
         };
 
@@ -1402,7 +1644,18 @@ export const buildEpubStructurePlan = async (zip: JSZip): Promise<EpubStructureP
         throw new Error('Invalid EPUB: No readable content remains after excluding publication matter');
     }
 
-    const normalizedChapters = normalizeChapterGranularity(filtered.chapters);
+    const normalizedStructure = normalizeReadingSections(filtered.chapters);
+    const normalizedChapters = normalizedStructure.sections.map((section) => ({
+        title: section.title,
+        slices: section.slices,
+        estimatedWords: section.estimatedWords,
+        source: section.source,
+        structureOwnership: section.ownership,
+        reformationReason: section.reason,
+        boundaryEvidence: section.boundaryEvidence,
+        authoredGroupTitle: section.authoredGroupTitle,
+        originalTitles: section.originalTitles,
+    }));
 
     return {
         opfPath,
@@ -1414,6 +1667,8 @@ export const buildEpubStructurePlan = async (zip: JSZip): Promise<EpubStructureP
         spine,
         chapters: normalizedChapters,
         skippedChapters: filtered.skippedChapters,
+        structureVersion: normalizedStructure.version,
+        structureMode: normalizedStructure.mode,
     };
 };
 

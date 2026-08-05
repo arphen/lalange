@@ -1,4 +1,10 @@
-import type { ChapterSource } from '../structure';
+import type {
+    BoundaryEvidence,
+    ChapterSource,
+    ReformationReason,
+    SectionOwnership,
+    StructureMode,
+} from '../structure';
 
 export interface ReaderImageAsset {
     filename: string;
@@ -6,7 +12,15 @@ export interface ReaderImageAsset {
     mimeType: string;
 }
 
-export interface ReaderPlannedChapter {
+export interface ReaderStructureMetadata {
+    structureOwnership?: SectionOwnership;
+    reformationReason?: ReformationReason;
+    boundaryEvidence?: BoundaryEvidence[];
+    authoredGroupTitle?: string;
+    originalTitles?: string[];
+}
+
+export interface ReaderPlannedChapter extends ReaderStructureMetadata {
     title: string;
     source: ChapterSource;
 }
@@ -16,7 +30,7 @@ export interface ReaderChapterSlice {
     html: string;
 }
 
-export interface ReaderResolvedChapter {
+export interface ReaderResolvedChapter extends ReaderStructureMetadata {
     title: string;
     source: ChapterSource;
     slices: ReaderChapterSlice[];
@@ -28,6 +42,8 @@ export interface ReaderPreparedBook {
     coverBase64?: string;
     images: ReaderImageAsset[];
     chapters: ReaderPlannedChapter[];
+    structureVersion?: 1;
+    structureMode?: StructureMode;
 }
 
 export interface IngestReaderPlugin {

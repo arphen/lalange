@@ -6,6 +6,7 @@ import { generateUUID } from '../../utils/uuid';
 import { scheduler } from './scheduler';
 import { analyzeDensityRange, chunkText } from './analysis';
 import { decodeRawFilePayload, defaultIngestReaderRegistry, encodeRawFilePayload, readFileAsUint8Array } from './readers';
+import type { ReaderStructureMetadata } from './readers';
 
 // Job control
 const activeJobs = new Set<string>();
@@ -48,6 +49,14 @@ const base64ToUint8Array = (base64: string): Uint8Array => {
     }
     return bytes;
 };
+
+const getStructureMetadata = (chapter: ReaderStructureMetadata) => ({
+    ...(chapter.structureOwnership ? { structureOwnership: chapter.structureOwnership } : {}),
+    ...(chapter.reformationReason ? { reformationReason: chapter.reformationReason } : {}),
+    ...(chapter.boundaryEvidence ? { boundaryEvidence: chapter.boundaryEvidence } : {}),
+    ...(chapter.authoredGroupTitle ? { authoredGroupTitle: chapter.authoredGroupTitle } : {}),
+    ...(chapter.originalTitles ? { originalTitles: chapter.originalTitles } : {}),
+});
 
 export const initialIngest = async (file: File, onProgress?: (msg: string) => void): Promise<InitialIngestResult> => {
     console.log(`[Pipeline] Starting ingestion for file: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`);
@@ -92,6 +101,7 @@ export const initialIngest = async (file: File, onProgress?: (msg: string) => vo
             content: [],
             metadata: {
                 structureSource: plannedChapter.source,
+                ...getStructureMetadata(plannedChapter),
             },
         });
     }
@@ -108,7 +118,9 @@ export const initialIngest = async (file: File, onProgress?: (msg: string) => vo
             author,
             cover: preparedBook.coverBase64 || '',
             totalWords: 0,
-            chapterIds: chapters.map(c => c.id)
+            chapterIds: chapters.map(c => c.id),
+            structureVersion: preparedBook.structureVersion || 1,
+            structureMode: preparedBook.structureMode || 'authored',
         },
         chapters,
         images,
@@ -210,6 +222,7 @@ export const processChaptersInBackground = async (bookId: string) => {
                                         classificationType: classification.type,
                                         classificationReason: classification.reason,
                                         structureSource: plannedChapter.source,
+                                        ...getStructureMetadata(plannedChapter),
                                         licenseInfo: classification.licenseInfo,
                                         tocEntries: classification.tocEntries,
                                     }
@@ -355,6 +368,7 @@ export const processChaptersInBackground = async (bookId: string) => {
                                     ...finalDoc.metadata,
                                     classificationType: 'content',
                                     structureSource: plannedChapter.source,
+                                    ...getStructureMetadata(plannedChapter),
                                 },
                             });
                         }

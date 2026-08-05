@@ -30,3 +30,6 @@ books/
 # Exhibition render pipeline (generated artifacts)
 renders/
 public/exhibition-texts/
+
+# Downloaded EPUB corpus for structure and TOC integration checks
+test-fixtures/gutenberg/

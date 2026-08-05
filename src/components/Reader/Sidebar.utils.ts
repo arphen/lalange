@@ -17,23 +17,6 @@ export const getSubchapterDisplayName = (
     return sub.title;
 };
 
-export const getChapterStructureLabel = (
-    source: 'toc' | 'heading' | 'spine' | 'merged' | undefined,
-): string | null => {
-    switch (source) {
-        case 'toc':
-            return 'Publisher contents';
-        case 'heading':
-            return 'Document heading';
-        case 'spine':
-            return 'Recovered';
-        case 'merged':
-            return 'Combined by XYZ';
-        default:
-            return null;
-    }
-};
-
 /**
  * Calculate summary progress for a subchapter
  * Returns: 0 = not started, 0.5 = in progress (density done, no summary), 1 = complete

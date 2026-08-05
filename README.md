@@ -54,6 +54,9 @@ VITE_WEBRTC_ICE_SERVERS='[{"urls":"turns:relay.example.com:5349","username":"app
 # Run tests
 npm test -- --run
 
+# Download a small deterministic Gutenberg EPUB corpus and run structure/TOC checks
+npm run gutenberg:corpus -- --count=6 --seed=xyz-epub-corpus --clean
+
 # Build for production
 npm run build
 ```

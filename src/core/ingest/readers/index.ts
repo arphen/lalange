@@ -56,5 +56,6 @@ export type {
     ReaderPlannedChapter,
     ReaderChapterSlice,
     ReaderImageAsset,
+    ReaderStructureMetadata,
 } from './types';
 export type { ParsedPdfDocument, ParsedPdfPage, PdfReaderDependencies } from './pdfReader';

@@ -1,9 +1,10 @@
 import React from 'react';
 import { type ChapterDocType, type GlobalSummaryType } from '../../core/sync/db';
 import { formatReadingTime } from '../../hooks/useReadingTimeEstimate';
+import type { StructureMode } from '../../core/ingest/structure';
 import { clsx } from 'clsx';
 import { BookOpen, ChevronRight, ListTree, MapPin, X } from 'lucide-react';
-import { getChapterStructureLabel, getSubchapterDisplayName } from './Sidebar.utils';
+import { getSubchapterDisplayName } from './Sidebar.utils';
 import { isReadingChapter } from './readerNavigation';
 
 interface SidebarProps {
@@ -16,6 +17,7 @@ interface SidebarProps {
     now: number;
     activeSummaryId?: string | null;
     globalSummaries?: GlobalSummaryType[];
+    structureMode?: StructureMode;
     onPlayGlobalSummary?: (summary: GlobalSummaryType) => void;
     onClose?: () => void;
     chapterHandoffSelection?: {
@@ -35,6 +37,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     now,
     activeSummaryId,
     globalSummaries = [],
+    structureMode,
     onPlayGlobalSummary,
     onClose,
     chapterHandoffSelection = null,
@@ -47,7 +50,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
         wordIndex: currentWordIndex ?? 0,
     });
     const recapsExpanded = Boolean(activeSummaryId) || showRecaps;
-    const sectionInfoLabel = 'XYZ-created sections are generated from headings or recovered structure so long chapters are easier to navigate.';
+    const sectionInfoLabel = 'Analysis ranges are generated inside each reading section for density work and recaps.';
+    const isReformattedStructure = structureMode === 'generated' || structureMode === 'hybrid';
+    const structureCountLabel = isReformattedStructure ? 'section' : 'chapter';
 
     React.useEffect(() => {
         latestWordIndexRef.current = currentWordIndex ?? 0;
@@ -74,6 +79,21 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
     // Filter out image chapters
     const displayChapters = chapters.filter(isReadingChapter);
+    const readingSectionNoun = displayChapters.length === 1 ? 'section' : 'sections';
+    const hasPageGrouping = displayChapters.some((chapter) => (
+        chapter.metadata?.reformationReason === 'page-sequence'
+        || chapter.metadata?.reformationReason === 'short-section-merge'
+    ));
+    const hasLongSectionSplits = displayChapters.some((chapter) => (
+        chapter.metadata?.reformationReason === 'long-section-split'
+    ));
+    const structureNotice = structureMode === 'generated'
+        ? `This edition used page-based structure. XYZ grouped it into ${displayChapters.length} reading ${readingSectionNoun}.`
+        : structureMode === 'hybrid'
+            ? hasLongSectionSplits && !hasPageGrouping
+                ? `This edition uses mixed structure. XYZ split long authored sections into ${displayChapters.length} reading ${readingSectionNoun}.`
+                : `This edition uses mixed structure. XYZ grouped page-like passages into ${displayChapters.length} reading ${readingSectionNoun}.`
+            : null;
 
     // Calculate total stats
     const totalWords = displayChapters.reduce((acc, c) => acc + (c.content?.length || 0), 0);
@@ -124,9 +144,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <div className="min-w-0 flex-1">
                     <h3 className="text-white font-bold tracking-wide mb-1">Contents</h3>
                     <div className="flex justify-between text-gray-500">
-                        <span>{displayChapters.length} {displayChapters.length === 1 ? 'chapter' : 'chapters'}</span>
+                        <span>{displayChapters.length} {displayChapters.length === 1 ? structureCountLabel : `${structureCountLabel}s`}</span>
                         <span>{timeBank} total</span>
                     </div>
+                    {structureNotice && (
+                        <p className="mt-2 text-[10px] leading-relaxed text-cyan-200/65" data-testid="structure-notice">
+                            {structureNotice}
+                        </p>
+                    )}
                     <div
                         className="reader-contents-progress mt-3"
                         role="progressbar"
@@ -169,8 +194,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         : 0;
                     const chapterProgressPercent = Math.round(chapterProgress * 100);
                     const chapterIsHandoffTarget = chapterHandoffActive && chapterHandoffSelection?.chapterId === chapter.id;
-                    const chapterStructureLabel = getChapterStructureLabel(chapter.metadata?.structureSource);
-
                     return (
                         <div key={chapter.id} className="relative group flex flex-col">
                             <div className="relative flex items-stretch">
@@ -194,14 +217,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                         <div className="flex justify-between items-center gap-2 w-full mb-1">
                                             <span className="min-w-0 flex-1">
                                                 <span className="block truncate font-bold text-sm">{chapter.title}</span>
-                                                {chapterStructureLabel && (
-                                                    <span
-                                                        className="block mt-0.5 text-[9px] font-normal uppercase text-white/35"
-                                                        data-testid={`chapter-structure-${chapter.id}`}
-                                                    >
-                                                        {chapterStructureLabel}
-                                                    </span>
-                                                )}
                                             </span>
                                             {isProcessing && (
                                                 <span className="w-1.5 h-1.5 bg-cyan-400 rounded-full animate-pulse" />

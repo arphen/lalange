@@ -1,6 +1,12 @@
 import { createRxDatabase, addRxPlugin, type RxDatabase, type RxCollection, type RxStorage } from 'rxdb';
 import { getRxStorageDexie } from 'rxdb/plugins/storage-dexie';
 import { bookSchema, chapterSchema, readingStateSchema, imageSchema, rawFileSchema } from './schema';
+import type {
+    BoundaryEvidence,
+    ReformationReason,
+    SectionOwnership,
+    StructureMode,
+} from '../ingest/structure';
 
 // Define types for the database
 export type GlobalSummaryType = {
@@ -20,6 +26,8 @@ export type BookDocType = {
     cover?: string;
     totalWords: number;
     chapterIds: string[];
+    structureVersion?: number;
+    structureMode?: StructureMode;
     globalSummaries?: GlobalSummaryType[];  // Book-level summaries every X words
 };
 
@@ -63,6 +71,11 @@ export type ChapterDocType = {
         classificationType?: 'content' | 'license' | 'toc' | 'cover' | 'frontmatter' | 'backmatter' | 'image';
         classificationReason?: string;
         structureSource?: 'toc' | 'heading' | 'spine' | 'merged';
+        structureOwnership?: SectionOwnership;
+        reformationReason?: ReformationReason;
+        boundaryEvidence?: BoundaryEvidence[];
+        authoredGroupTitle?: string;
+        originalTitles?: string[];
         licenseInfo?: {
             publisher: string;
             text: string;

@@ -86,7 +86,14 @@ export class EpubIngestReader implements IngestReaderPlugin {
             chapters: structure.chapters.map((chapter) => ({
                 title: chapter.title,
                 source: chapter.source,
+                structureOwnership: chapter.structureOwnership,
+                reformationReason: chapter.reformationReason,
+                boundaryEvidence: chapter.boundaryEvidence,
+                authoredGroupTitle: chapter.authoredGroupTitle,
+                originalTitles: chapter.originalTitles,
             })),
+            structureVersion: structure.structureVersion,
+            structureMode: structure.structureMode,
         };
     }
 
@@ -100,6 +107,11 @@ export class EpubIngestReader implements IngestReaderPlugin {
             chapters.push({
                 title: chapter.title,
                 source: chapter.source,
+                structureOwnership: chapter.structureOwnership,
+                reformationReason: chapter.reformationReason,
+                boundaryEvidence: chapter.boundaryEvidence,
+                authoredGroupTitle: chapter.authoredGroupTitle,
+                originalTitles: chapter.originalTitles,
                 slices: chapterSources.map((source) => ({
                     text: source.text,
                     html: source.html,
