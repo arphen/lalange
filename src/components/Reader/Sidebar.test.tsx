@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { Sidebar } from './Sidebar';
-import { getChapterStructureLabel, getSubchapterDisplayName, getSummaryProgress } from './Sidebar.utils';
+import { getSubchapterDisplayName, getSummaryProgress } from './Sidebar.utils';
 import type { ChapterDocType } from '../../core/sync/db';
 
 // Mock the AI store
@@ -57,16 +57,6 @@ describe('Sidebar Helper Functions', () => {
             const content = ['Hello', 'world', 'test'];
             const result = getSubchapterDisplayName(sub, content);
             expect(result).toBe('Hello world test...');
-        });
-    });
-
-    describe('getChapterStructureLabel', () => {
-        it('distinguishes publisher structure from recovered structure', () => {
-            expect(getChapterStructureLabel('toc')).toBe('Publisher contents');
-            expect(getChapterStructureLabel('heading')).toBe('Document heading');
-            expect(getChapterStructureLabel('spine')).toBe('Recovered');
-            expect(getChapterStructureLabel('merged')).toBe('Combined by XYZ');
-            expect(getChapterStructureLabel(undefined)).toBeNull();
         });
     });
 
@@ -208,18 +198,33 @@ describe('Sidebar Component', () => {
             expect(button).toHaveTextContent('The quick brown fox jumps...');
         });
 
-        it('labels app-created sections separately from document headings', () => {
+        it('explains reformatted structure once and keeps analysis ranges separate', () => {
             const chapter = createMockChapter({
                 metadata: { classificationType: 'content', structureSource: 'heading' },
             });
-            render(<Sidebar {...defaultProps} chapters={[chapter]} />);
+            render(<Sidebar {...defaultProps} chapters={[chapter]} structureMode="generated" />);
 
-            expect(screen.getByTestId('chapter-structure-chapter-1')).toHaveTextContent('Document heading');
+            expect(screen.getByTestId('structure-notice')).toHaveTextContent(
+                'This edition used page-based structure. XYZ grouped it into 1 reading section.',
+            );
+            expect(screen.queryByTestId('chapter-structure-chapter-1')).not.toBeInTheDocument();
+            expect(screen.queryByText('Recovered')).not.toBeInTheDocument();
             expect(screen.getByLabelText('About XYZ-created sections')).toBeInTheDocument();
             expect(screen.getByRole('tooltip')).toHaveTextContent(
-                'XYZ-created sections are generated from headings or recovered structure so long chapters are easier to navigate.',
+                'Analysis ranges are generated inside each reading section for density work and recaps.',
             );
             expect(screen.getByTestId('subchapter-btn-0')).toHaveTextContent('Hello world this is a...');
+        });
+
+        it('describes long authored-section splits accurately', () => {
+            const chapter = createMockChapter({
+                metadata: { reformationReason: 'long-section-split' },
+            });
+            render(<Sidebar {...defaultProps} chapters={[chapter]} structureMode="hybrid" />);
+
+            expect(screen.getByTestId('structure-notice')).toHaveTextContent(
+                'This edition uses mixed structure. XYZ split long authored sections into 1 reading section.',
+            );
         });
     });
 

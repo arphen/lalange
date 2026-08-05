@@ -2180,6 +2180,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                     now={now}
                     activeSummaryId={activeSummaryId}
                     globalSummaries={globalSummaries}
+                    structureMode={book.structureMode}
                     onPlayGlobalSummary={handlePlayGlobalSummary}
                     chapterHandoffSelection={chapterHandoffSelection}
                     chapterHandoffActive={transitionKind === 'chapter' && chapterTransitionPhase !== null}

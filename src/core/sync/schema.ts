@@ -26,6 +26,13 @@ export const bookSchema = {
                 type: 'string'
             }
         },
+        structureVersion: {
+            type: 'number'
+        },
+        structureMode: {
+            type: 'string',
+            enum: ['authored', 'hybrid', 'generated']
+        },
         globalSummaries: {
             type: 'array',
             items: {
@@ -153,6 +160,30 @@ export const chapterSchema = {
                     enum: ['content', 'license', 'toc', 'cover', 'frontmatter', 'backmatter', 'image']
                 },
                 classificationReason: { type: 'string' },
+                structureSource: {
+                    type: 'string',
+                    enum: ['toc', 'heading', 'spine', 'merged']
+                },
+                structureOwnership: {
+                    type: 'string',
+                    enum: ['authored', 'xyz']
+                },
+                reformationReason: {
+                    type: 'string',
+                    enum: ['authored-boundary', 'page-sequence', 'long-section-split', 'short-section-merge', 'format-fallback']
+                },
+                boundaryEvidence: {
+                    type: 'array',
+                    items: {
+                        type: 'string',
+                        enum: ['publisher-toc', 'document-heading', 'source-spine']
+                    }
+                },
+                authoredGroupTitle: { type: 'string' },
+                originalTitles: {
+                    type: 'array',
+                    items: { type: 'string' }
+                },
                 licenseInfo: {
                     type: 'object',
                     properties: {

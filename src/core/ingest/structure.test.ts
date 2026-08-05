@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import JSZip from 'jszip';
-import { buildEpubStructurePlan, loadPlannedChapterSources } from './structure';
+import { buildEpubStructurePlan, loadPlannedChapterSources, normalizeReadingSections, type PlannedChapter } from './structure';
 
 const containerXml = (opfPath: string) => `<?xml version="1.0" encoding="UTF-8"?>
 <container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
@@ -548,7 +548,7 @@ describe('buildEpubStructurePlan', () => {
         expect(plan.chapters.map((chapter) => chapter.source)).toEqual(['spine', 'heading', 'heading']);
     });
 
-    it('keeps safe numbered labels instead of promoting repeated document titles', async () => {
+    it('uses a generated section for repeated document pagination labels', async () => {
         const zip = new JSZip();
         zip.file('META-INF/container.xml', containerXml('OPS/content.opf'));
         zip.file('OPS/content.opf', `
@@ -572,12 +572,9 @@ describe('buildEpubStructurePlan', () => {
 
         const plan = await buildEpubStructurePlan(zip);
 
-        expect(plan.chapters.map((chapter) => chapter.title)).toEqual([
-            'Chapter 1',
-            'Chapter 2',
-            'Chapter 3',
-        ]);
-        expect(plan.chapters.every((chapter) => chapter.source === 'spine')).toBe(true);
+        expect(plan.chapters.map((chapter) => chapter.title)).toEqual(['Section 1']);
+        expect(plan.chapters[0].source).toBe('merged');
+        expect(plan.structureMode).toBe('generated');
     });
 
     it('merges pathological tiny spine slices into larger reading chapters', async () => {
@@ -931,5 +928,96 @@ describe('buildEpubStructurePlan', () => {
         const plan = await buildEpubStructurePlan(zip);
 
         expect(plan.chapters.some((chapter) => chapter.title === 'Plate 1')).toBe(true);
+    });
+});
+
+describe('normalizeReadingSections', () => {
+    const pageUnits = (count: number, wordsPerPage = 400): PlannedChapter[] => Array.from({ length: count }, (_, index) => ({
+        title: `Page ${index + 1}`,
+        slices: [{ path: `OPS/page_${index + 1}.xhtml` }],
+        estimatedWords: wordsPerPage,
+        source: 'spine',
+    }));
+
+    it('groups page-like source units into stable sections without changing order or totals', () => {
+        const structure = normalizeReadingSections(pageUnits(150));
+
+        expect(structure.mode).toBe('generated');
+        expect(structure.sections).toHaveLength(19);
+        expect(structure.sections.map((section) => section.title)).toEqual(
+            Array.from({ length: 19 }, (_, index) => `Section ${index + 1}`),
+        );
+        expect(structure.sections.reduce((total, section) => total + section.estimatedWords, 0)).toBe(60_000);
+        expect(structure.sections.flatMap((section) => section.slices.map((slice) => slice.path))).toEqual(
+            pageUnits(150).map((unit) => unit.slices[0].path),
+        );
+        expect(structure.sections.every((section) => section.estimatedWords <= 5_000)).toBe(true);
+    });
+
+    it('rebalances a short final page bucket when the hard maximum allows it', () => {
+        const structure = normalizeReadingSections(pageUnits(20));
+        const lastSection = structure.sections.at(-1);
+
+        expect(lastSection?.reason).toBe('short-section-merge');
+        expect(lastSection?.estimatedWords).toBe(4_800);
+        expect(lastSection?.slices).toHaveLength(12);
+        expect(lastSection?.estimatedWords).toBeLessThanOrEqual(5_000);
+    });
+
+    it('does not cross authored boundaries while grouping adjacent generic units', () => {
+        const structure = normalizeReadingSections([
+            {
+                title: 'Chapter One',
+                slices: [{ path: 'OPS/chapter-one.xhtml' }],
+                estimatedWords: 1_500,
+                source: 'toc',
+            },
+            ...pageUnits(4, 500),
+            {
+                title: 'Chapter Two',
+                slices: [{ path: 'OPS/chapter-two.xhtml' }],
+                estimatedWords: 1_500,
+                source: 'toc',
+            },
+        ]);
+
+        expect(structure.mode).toBe('hybrid');
+        expect(structure.sections.map((section) => section.title)).toEqual([
+            'Chapter One',
+            'Section 1',
+            'Chapter Two',
+        ]);
+        expect(structure.sections[1].slices).toHaveLength(4);
+        expect(structure.sections[0].boundaryEvidence).toEqual(['publisher-toc']);
+        expect(structure.sections[2].boundaryEvidence).toEqual(['publisher-toc']);
+    });
+
+    it('splits oversized authored groups at source-slice boundaries', () => {
+        const structure = normalizeReadingSections([{
+            title: 'A Very Long Chapter',
+            slices: Array.from({ length: 5 }, (_, index) => ({ path: `OPS/part-${index + 1}.xhtml` })),
+            sliceEstimatedWords: [3_000, 3_000, 3_000, 3_000, 3_000],
+            estimatedWords: 15_000,
+            source: 'toc',
+        }]);
+
+        expect(structure.mode).toBe('hybrid');
+        expect(structure.sections.map((section) => section.title)).toEqual([
+            'A Very Long Chapter - Part 1',
+            'A Very Long Chapter - Part 2',
+            'A Very Long Chapter - Part 3',
+            'A Very Long Chapter - Part 4',
+            'A Very Long Chapter - Part 5',
+        ]);
+        expect(structure.sections.every((section) => section.authoredGroupTitle === 'A Very Long Chapter')).toBe(true);
+        expect(structure.sections.every((section) => section.reason === 'long-section-split')).toBe(true);
+        expect(structure.sections.reduce((total, section) => total + section.estimatedWords, 0)).toBe(15_000);
+        expect(structure.sections.flatMap((section) => section.slices.map((slice) => slice.path))).toEqual([
+            'OPS/part-1.xhtml',
+            'OPS/part-2.xhtml',
+            'OPS/part-3.xhtml',
+            'OPS/part-4.xhtml',
+            'OPS/part-5.xhtml',
+        ]);
     });
 });
