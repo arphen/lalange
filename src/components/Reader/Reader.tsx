@@ -61,6 +61,7 @@ const CHAPTER_LAUNCH_SPEED = 0.14;
 const CHAPTER_CHOOSER_HIDE_AFTER_PLAYBACK_MS = 320;
 
 type ChapterTransitionPhase = 'braking' | 'crossing' | 'launching';
+const TTS_RIVER_REFRESH_INTERVAL_MS = 1000;
 
 export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
     const [isPlaying, setIsPlaying] = useState(false);
@@ -162,6 +163,11 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
     const [showNotes, setShowNotes] = useState(false);
     const ttsPlaybackState = useTTSStore((s) => s.playbackState);
     const ttsPosition = useTTSStore((s) => s.currentPosition);
+    const ttsPlaybackActive = showTTSPlayer && (
+        ttsPlaybackState === 'preparing'
+        || ttsPlaybackState === 'generating'
+        || ttsPlaybackState === 'playing'
+    );
 
     const prevContainerRef = useRef<HTMLDivElement>(null);
     const nextContainerRef = useRef<HTMLDivElement>(null);
@@ -188,6 +194,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
     const wpmRef = useRef(wpm);
     const isPlayingRef = useRef(isPlaying);
     const showTTSPlayerRef = useRef(showTTSPlayer);
+    const wasTTSPlaybackActiveRef = useRef(false);
     const wordsRef = useRef<string[]>([]);
     const densitiesRef = useRef<number[]>([]);
     const chaptersRef = useRef(chapters);
@@ -1562,6 +1569,27 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
     }, [showTTSPlayer, isPlaying]);
 
     useEffect(() => {
+        const wasActive = wasTTSPlaybackActiveRef.current;
+        wasTTSPlaybackActiveRef.current = ttsPlaybackActive;
+
+        if (wasActive && !ttsPlaybackActive) {
+            setCurrentWordIndex(indexRef.current);
+        }
+    }, [ttsPlaybackActive]);
+
+    useEffect(() => {
+        if (!ttsPlaybackActive) return;
+
+        const interval = window.setInterval(() => {
+            const wordIndex = indexRef.current;
+            const displayWord = getDisplayWordForCurrentSegment(wordsRef.current[wordIndex] || '');
+            renderWord(wordIndex, wordsRef.current, true, displayWord);
+        }, TTS_RIVER_REFRESH_INTERVAL_MS);
+
+        return () => window.clearInterval(interval);
+    }, [getDisplayWordForCurrentSegment, renderWord, ttsPlaybackActive]);
+
+    useEffect(() => {
         isPlayingRef.current = isPlaying;
         if (!isPlaying) {
             saveProgress();
@@ -1838,11 +1866,11 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
             // Check if all required refs are mounted before rendering
             if (rsvpRef.current && prevContainerRef.current && nextContainerRef.current) {
                 const displayWord = getDisplayWordForCurrentSegment(wordsRef.current[currentWordIndex] || '');
-                renderWord(currentWordIndex, wordsRef.current, true, displayWord);
+                renderWord(currentWordIndex, wordsRef.current, !ttsPlaybackActive, displayWord);
                 initialRenderDoneRef.current = true;
             }
         }
-    }, [loading, currentChapter, currentWordIndex, renderWord, getDisplayWordForCurrentSegment, isCompactLandscape]);
+    }, [loading, currentChapter, currentWordIndex, renderWord, getDisplayWordForCurrentSegment, isCompactLandscape, ttsPlaybackActive]);
 
     // Fallback effect: if the above didn't trigger (refs not ready), 
     // use a microtask to try again after React finishes its work
@@ -1952,9 +1980,10 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
     // When paused or when state changes (like isSummaryActive), React re-renders.
     // We need to ensure React renders the correct word so it doesn't overwrite the loop's work with stale data.
     // Use currentChapter.content for React rendering (state-driven) rather than wordsRef (which doesn't trigger re-renders)
+    const liveWordIndex = ttsPlaybackActive ? indexRef.current : currentWordIndex;
     const wordToRender = isSummaryActive 
         ? (summaryWordsRef.current[indexRef.current] || '')
-        : (currentChapter?.content?.[currentWordIndex] || wordsRef.current[currentWordIndex] || '');
+        : (currentChapter?.content?.[liveWordIndex] || wordsRef.current[liveWordIndex] || '');
     const displayWordToRender = getDisplayWordForCurrentSegment(wordToRender);
     const rsvpTypographyClass = isCompactLandscape ? 'text-4xl sm:text-5xl md:text-6xl' : 'text-6xl md:text-8xl';
     const rsvpContainerStyle = {
@@ -2683,11 +2712,9 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                         words={currentChapter.content}
                         currentWordIndex={currentWordIndex}
                         onPositionChange={(wordIndex) => {
-                            // Sync TTS position to RSVP reader
                             indexRef.current = wordIndex;
-                            setCurrentWordIndex(wordIndex);
                             const displayWord = resetDisplaySegments(wordsRef.current[wordIndex] || '');
-                            renderWord(wordIndex, wordsRef.current, true, displayWord);
+                            renderWord(wordIndex, wordsRef.current, false, displayWord);
                         }}
                         bookId={book.id}
                         chapterId={currentChapter.id}

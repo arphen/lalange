@@ -15,6 +15,8 @@ export interface SentenceBoundary {
     audioEndTime?: number;
 }
 
+const SENTENCE_END_PATTERN = /(?:[.!?]|\u2026)["'\u2019\u201d)\]}]*$/;
+
 /**
  * Split text into sentences for TTS processing
  * This enables smooth reading <-> listening transitions
@@ -28,11 +30,7 @@ export function splitIntoSentences(words: string[]): SentenceBoundary[] {
         const word = words[i];
         currentSentence.push(word);
 
-        // Check for sentence-ending punctuation
-        const isEnd = /[.!?]["']?$/.test(word) ||
-                      /[.!?]$/.test(word) ||
-                      // Also break on very long sentences (for better streaming)
-                      currentSentence.length >= 50;
+        const isEnd = SENTENCE_END_PATTERN.test(word);
 
         if (isEnd || i === words.length - 1) {
             sentences.push({

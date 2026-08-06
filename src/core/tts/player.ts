@@ -12,6 +12,7 @@ import { useTTSStore } from '../store/tts';
 // Configuration
 const MAX_QUEUED_BUFFERS = 10;
 const BUFFER_CLEANUP_BEHIND = 2;
+const CLOCK_UPDATE_INTERVAL_SECONDS = 0.2;
 
 type AudioContextGlobal = typeof globalThis & {
     webkitAudioContext?: typeof AudioContext;
@@ -99,10 +100,17 @@ interface QueuedAudio {
     playbackRate: number;
 }
 
+interface ScheduledAudio {
+    source: AudioBufferSourceNode;
+    startTime: number;
+    ended: boolean;
+}
+
 class TTSAudioPlayer {
     private audioContext: AudioContext | null = null;
     private gainNode: GainNode | null = null;
     private currentSource: AudioBufferSourceNode | null = null;
+    private scheduledSources: Map<number, ScheduledAudio> = new Map();
     
     // Simple queue: map sentence index to audio
     private audioQueue: Map<number, QueuedAudio> = new Map();
@@ -118,6 +126,7 @@ class TTSAudioPlayer {
     // For word tracking within a sentence
     private sentenceStartTime = 0;
     private currentSentenceDuration = 0;
+    private lastClockUpdateTime = 0;
     private currentSentence: SentenceBoundary | null = null;
     private currentWordProgressBoundaries: number[] = [];
     private rafId: number | null = null;
@@ -185,6 +194,8 @@ class TTSAudioPlayer {
         // Re-check the contiguous startup target whenever another sentence arrives.
         if (this.isPlaying && !this.currentSource && this.waitingForSentenceIndex === this.currentSentenceIndex) {
             this.playCurrentSentence();
+        } else if (this.isPlaying && this.currentSource) {
+            this.scheduleBufferedSentences();
         }
         
         this.cleanupOldBuffers();
@@ -211,6 +222,7 @@ class TTSAudioPlayer {
     }
     
     clearQueue(): void {
+        this.cancelScheduledSources();
         this.audioQueue.clear();
         console.log('[TTS Player] Queue cleared');
     }
@@ -307,16 +319,9 @@ class TTSAudioPlayer {
                 // Already stopped
             }
         }
+        this.cancelScheduledSources();
         
-        // Create and play new source
-        const source = this.audioContext.createBufferSource();
-        source.buffer = buffer;
-        // Engines without a speed parameter deliver samples at their natural
-        // rate and ask the player to stretch them instead.
-        if (playbackRate !== 1 && source.playbackRate) {
-            source.playbackRate.value = playbackRate;
-        }
-        source.connect(this.gainNode);
+        const source = this.createSource(buffer, playbackRate);
 
         this.currentSource = source;
         this.sentenceStartTime = this.audioContext.currentTime;
@@ -329,6 +334,7 @@ class TTSAudioPlayer {
         
         // Update store
         useTTSStore.getState().setCurrentTime(0);
+        this.lastClockUpdateTime = 0;
         useTTSStore.getState().setDuration(duration);
         useTTSStore.getState().setCurrentSentence(sentence.index);
         useTTSStore.getState().setCurrentWordIndex(sentence.startWordIndex);
@@ -347,38 +353,165 @@ class TTSAudioPlayer {
         
         const sentenceIndex = sentence.index;
         source.onended = () => {
-            if (!this.isPlaying || source !== this.currentSource) {
-                return;
-            }
-            
-            this.stopWordTracking();
-            this.currentSource = null;
-            this.currentWordProgressBoundaries = [];
-            
-            // Move to next sentence
-            this.currentSentenceIndex = sentenceIndex + 1;
-            
-            // Clean up
-            this.cleanupOldBuffers();
-            
-            // Play next
-            this.playCurrentSentence();
+            this.handleSourceEnded(source, sentenceIndex);
         };
         
         try {
-            if (typeof source.start === 'function') {
-                source.start();
-            } else {
-                const legacySource = source as LegacyAudioBufferSourceNode;
-                if (typeof legacySource.noteOn !== 'function') {
-                    throw new Error('Audio playback cannot start in this browser.');
-                }
-                legacySource.noteOn(0);
-            }
+            this.startSource(source);
+            this.scheduleBufferedSentences();
         } catch (error) {
             console.error('[TTS Player] Failed to start:', error);
             this.options.onError?.(error as Error);
         }
+    }
+
+    private createSource(buffer: AudioBuffer, playbackRate: number): AudioBufferSourceNode {
+        if (!this.audioContext || !this.gainNode) {
+            throw new Error('Audio context not initialized');
+        }
+
+        const source = this.audioContext.createBufferSource();
+        source.buffer = buffer;
+        if (playbackRate !== 1 && source.playbackRate) {
+            source.playbackRate.value = playbackRate;
+        }
+        source.connect(this.gainNode);
+        return source;
+    }
+
+    private startSource(source: AudioBufferSourceNode, when?: number): void {
+        if (typeof source.start === 'function') {
+            if (when === undefined) {
+                source.start();
+            } else {
+                source.start(when);
+            }
+            return;
+        }
+
+        const legacySource = source as LegacyAudioBufferSourceNode;
+        if (typeof legacySource.noteOn !== 'function') {
+            throw new Error('Audio playback cannot start in this browser.');
+        }
+        legacySource.noteOn(when ?? 0);
+    }
+
+    private scheduleBufferedSentences(): void {
+        if (!this.isPlaying || !this.audioContext || !this.currentSource) return;
+
+        let sentenceIndex = this.currentSentenceIndex + 1;
+        let startTime = this.sentenceStartTime + this.currentSentenceDuration;
+
+        while (true) {
+            const queueItem = this.audioQueue.get(sentenceIndex);
+            if (!queueItem) break;
+
+            const scheduled = this.scheduledSources.get(sentenceIndex);
+            if (scheduled) {
+                startTime = scheduled.startTime + queueItem.duration;
+                sentenceIndex += 1;
+                continue;
+            }
+
+            const source = this.createSource(queueItem.buffer, queueItem.playbackRate);
+            const scheduledSentenceIndex = sentenceIndex;
+            const scheduledStartTime = Math.max(this.audioContext.currentTime, startTime);
+            const scheduledAudio: ScheduledAudio = {
+                source,
+                startTime: scheduledStartTime,
+                ended: false,
+            };
+            this.scheduledSources.set(scheduledSentenceIndex, scheduledAudio);
+            source.onended = () => {
+                this.handleSourceEnded(source, scheduledSentenceIndex);
+            };
+
+            try {
+                this.startSource(source, scheduledStartTime);
+            } catch (error) {
+                this.scheduledSources.delete(scheduledSentenceIndex);
+                this.cancelScheduledSources();
+                console.error('[TTS Player] Failed to schedule buffered sentence:', error);
+                this.options.onError?.(error as Error);
+                return;
+            }
+
+            startTime = scheduledStartTime + queueItem.duration;
+            sentenceIndex += 1;
+        }
+    }
+
+    private handleSourceEnded(source: AudioBufferSourceNode, sentenceIndex: number): void {
+        if (!this.isPlaying) return;
+
+        const scheduledSource = this.scheduledSources.get(sentenceIndex);
+        if (scheduledSource?.source === source) {
+            scheduledSource.ended = true;
+            return;
+        }
+        if (source !== this.currentSource) return;
+
+        this.stopWordTracking();
+        this.currentWordProgressBoundaries = [];
+
+        const promotedSentenceIndex = sentenceIndex + 1;
+        const promoted = this.scheduledSources.get(promotedSentenceIndex);
+        if (promoted) {
+            this.scheduledSources.delete(promotedSentenceIndex);
+            this.currentSource = promoted.source;
+            this.currentSentenceIndex = promotedSentenceIndex;
+
+            const nextItem = this.audioQueue.get(promotedSentenceIndex);
+            if (nextItem) {
+                this.activateSentence(nextItem, promoted.startTime);
+                if (promoted.ended) {
+                    this.handleSourceEnded(promoted.source, promotedSentenceIndex);
+                } else {
+                    this.scheduleBufferedSentences();
+                }
+                return;
+            }
+        }
+
+        this.currentSource = null;
+        this.currentSentenceIndex = sentenceIndex + 1;
+        this.cleanupOldBuffers();
+        this.playCurrentSentence();
+    }
+
+    private activateSentence(queueItem: QueuedAudio, startTime: number): void {
+        const { sentence, duration } = queueItem;
+        this.sentenceStartTime = startTime;
+        this.currentSentenceDuration = duration;
+        this.currentSentence = sentence;
+        this.currentWordProgressBoundaries = buildWordProgressBoundaries(
+            sentence.text,
+            sentence.endWordIndex - sentence.startWordIndex + 1,
+        );
+
+        const store = useTTSStore.getState();
+        store.setCurrentTime(0);
+        this.lastClockUpdateTime = 0;
+        store.setDuration(duration);
+        store.setCurrentSentence(sentence.index);
+        store.setCurrentWordIndex(sentence.startWordIndex);
+        this.options.onWordChange?.(sentence.startWordIndex);
+
+        this.startWordTracking();
+        this.options.onSentenceChange?.(sentence.index);
+        this.options.onBufferLow?.(this.currentSentenceIndex);
+    }
+
+    private cancelScheduledSources(): void {
+        for (const { source } of this.scheduledSources.values()) {
+            try {
+                source.stop();
+                source.disconnect();
+            } catch {
+                // Already stopped
+            }
+        }
+        this.scheduledSources.clear();
     }
     
     private startWordTracking(): void {
@@ -390,12 +523,21 @@ class TTSAudioPlayer {
                 return;
             }
             
-            const elapsed = this.audioContext.currentTime - this.sentenceStartTime;
+            const elapsed = clamp(
+                this.audioContext.currentTime - this.sentenceStartTime,
+                0,
+                this.currentSentenceDuration,
+            );
             const safeDuration = this.currentSentenceDuration > 0 ? this.currentSentenceDuration : 0.001;
             const progress = Math.min(1, elapsed / safeDuration);
             
-            // Update time display
-            useTTSStore.getState().setCurrentTime(elapsed);
+            if (
+                elapsed >= this.currentSentenceDuration
+                || elapsed - this.lastClockUpdateTime >= CLOCK_UPDATE_INTERVAL_SECONDS
+            ) {
+                useTTSStore.getState().setCurrentTime(elapsed);
+                this.lastClockUpdateTime = elapsed;
+            }
             
             // Calculate current word within sentence
             const sentence = this.currentSentence;
@@ -441,6 +583,15 @@ class TTSAudioPlayer {
         }
         
         console.log(`[TTS Player] Pausing at sentence ${this.currentSentenceIndex}`);
+        if (this.audioContext && this.currentSentence) {
+            const elapsed = clamp(
+                this.audioContext.currentTime - this.sentenceStartTime,
+                0,
+                this.currentSentenceDuration,
+            );
+            useTTSStore.getState().setCurrentTime(elapsed);
+            this.lastClockUpdateTime = elapsed;
+        }
         this.isPlaying = false;
         this.stopWordTracking();
         
@@ -453,6 +604,7 @@ class TTSAudioPlayer {
             }
             this.currentSource = null;
         }
+        this.cancelScheduledSources();
 
         this.currentWordProgressBoundaries = [];
         
