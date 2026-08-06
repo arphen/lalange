@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import type { MyDatabase } from '../../core/sync/db';
 import { Archive } from './Archive';
+import { getBookOpenIssue, persistInitialIngest } from './archivePersistence';
 import * as dbModule from '../../core/sync/db';
 import * as pipelineModule from '../../core/ingest/pipeline';
 
@@ -172,6 +173,71 @@ describe('Archive', () => {
         fireEvent.click(await screen.findByRole('button', { name: 'SCAN HANDOFF' }));
 
         expect(mockOnScanHandoff).toHaveBeenCalledOnce();
+    });
+
+    it('does not create a visible book when its raw source cannot be saved', async () => {
+        const insertBook = vi.fn();
+        const missingDocument = { exec: vi.fn().mockResolvedValue(null) };
+        const db = {
+            raw_files: {
+                insert: vi.fn().mockRejectedValue(new DOMException('Storage quota exceeded', 'QuotaExceededError')),
+                findOne: vi.fn(() => missingDocument),
+            },
+            books: {
+                insert: insertBook,
+                findOne: vi.fn(() => missingDocument),
+            },
+            chapters: {
+                bulkInsert: vi.fn(),
+                findOne: vi.fn(() => missingDocument),
+            },
+            images: {
+                bulkInsert: vi.fn(),
+                findOne: vi.fn(() => missingDocument),
+            },
+            reading_states: {
+                insert: vi.fn(),
+                findOne: vi.fn(() => missingDocument),
+            },
+        };
+
+        await expect(persistInitialIngest(db as unknown as MyDatabase, {
+            book: {
+                id: 'large-pdf',
+                title: 'Lacan',
+                totalWords: 0,
+                chapterIds: ['large-pdf_0'],
+            },
+            chapters: [{
+                id: 'large-pdf_0',
+                bookId: 'large-pdf',
+                index: 0,
+                title: 'Document',
+                status: 'pending',
+                content: [],
+            }],
+            images: [],
+            rawFile: { id: 'large-pdf', data: 'encoded-pdf' },
+        })).rejects.toThrow('No partial copy was kept');
+
+        expect(db.raw_files.insert).toHaveBeenCalledOnce();
+        expect(insertBook).not.toHaveBeenCalled();
+    });
+
+    it('identifies an incomplete book whose raw source is missing', async () => {
+        const db = {
+            raw_files: {
+                findOne: vi.fn(() => ({ exec: vi.fn().mockResolvedValue(null) })),
+            },
+            chapters: {
+                find: vi.fn(() => ({
+                    exec: vi.fn().mockResolvedValue([{ status: 'pending' }]),
+                })),
+            },
+        };
+
+        await expect(getBookOpenIssue(db as unknown as MyDatabase, 'incomplete-pdf'))
+            .resolves.toContain('select the PDF again');
     });
 
     it('reuses existing book when the ingested payload matches an archive entry', async () => {

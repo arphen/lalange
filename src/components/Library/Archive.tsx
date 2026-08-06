@@ -9,6 +9,7 @@ import { BookCard } from './BookCard';
 import { ExchangeSheet } from '../Exchange/ExchangeSheet';
 import { SeoHead } from '../SeoHead';
 import { getOpenGraphType, getPublicRoute } from '../../seo/publicRoutes';
+import { getBookOpenIssue, persistInitialIngest } from './archivePersistence';
 
 interface ArchiveProps {
     onOpenBook: (book: BookDocType) => void;
@@ -122,21 +123,7 @@ export const Archive: React.FC<ArchiveProps> = ({ onOpenBook, onScanHandoff }) =
                 return;
             }
 
-            await db.books.insert(book);
-            await db.chapters.bulkInsert(chapters);
-            if (images.length > 0) {
-                await db.images.bulkInsert(images);
-            }
-            await db.raw_files.insert(rawFile);
-
-            // Initialize reading state
-            await db.reading_states.insert({
-                bookId: book.id,
-                currentChapterId: chapters[0]?.id,
-                currentWordIndex: 0,
-                lastRead: Date.now(),
-                highlights: []
-            });
+            await persistInitialIngest(db, { book, chapters, images, rawFile });
 
             // Start background processing
             processChaptersInBackground(book.id, setStatus).catch(console.error);
@@ -173,7 +160,12 @@ export const Archive: React.FC<ArchiveProps> = ({ onOpenBook, onScanHandoff }) =
     };
 
     const handleBookClick = async (book: BookDocType) => {
-        // Allow opening even if processing
+        const db = await initDB();
+        const issue = await getBookOpenIssue(db, book.id);
+        if (issue) {
+            alert(issue);
+            return;
+        }
         onOpenBook(book);
     };
 
