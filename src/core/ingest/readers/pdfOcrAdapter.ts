@@ -173,6 +173,8 @@ export class TesseractPdfOcrEngine implements PdfOcrEngine {
 
     private workerPromise?: Promise<TesseractWorker>;
 
+    private activeProgressListener?: (progress: PdfOcrProgress) => void;
+
     private closed = false;
 
     public constructor(options: TesseractPdfOcrEngineOptions = {}) {
@@ -181,12 +183,12 @@ export class TesseractPdfOcrEngine implements PdfOcrEngine {
         this.workerFactory = options.workerFactory || createDefaultWorker;
     }
 
-    private getWorker(onProgress?: (progress: PdfOcrProgress) => void): Promise<TesseractWorker> {
+    private getWorker(): Promise<TesseractWorker> {
         if (this.closed) throw new Error('PDF OCR engine is closed.');
         if (!this.workerPromise) {
             this.workerPromise = this.workerFactory(this.language, {
                 ...this.assets,
-                logger: onProgress,
+                logger: (progress) => this.activeProgressListener?.(progress),
             });
         }
         return this.workerPromise;
@@ -197,21 +199,28 @@ export class TesseractPdfOcrEngine implements PdfOcrEngine {
         onProgress?: (progress: PdfOcrProgress) => void,
     ): Promise<PdfOcrPageResult> {
         const startedAt = Date.now();
-        const worker = await this.getWorker(onProgress);
-        const result = await worker.recognize(
-            image,
-            {},
-            { text: true, blocks: true },
-        );
-        const words = collectOcrWords(result.data);
+        this.activeProgressListener = onProgress;
+        try {
+            const worker = await this.getWorker();
+            const result = await worker.recognize(
+                image,
+                {},
+                { text: true, blocks: true },
+            );
+            const words = collectOcrWords(result.data);
 
-        return {
-            text: normalizeOcrText(result.data.text || ''),
-            words,
-            meanConfidence: getMeanConfidence(result.data, words),
-            language: this.language,
-            durationMs: Date.now() - startedAt,
-        };
+            return {
+                text: normalizeOcrText(result.data.text || ''),
+                words,
+                meanConfidence: getMeanConfidence(result.data, words),
+                language: this.language,
+                durationMs: Date.now() - startedAt,
+            };
+        } finally {
+            if (this.activeProgressListener === onProgress) {
+                this.activeProgressListener = undefined;
+            }
+        }
     }
 
     public async cancel(): Promise<void> {
