@@ -112,6 +112,7 @@ describe('App Component', () => {
             </MemoryRouter>
         );
         expect(screen.getByText(/Made by/i)).toBeInTheDocument();
+        expect(screen.getByTitle('Deployed application version')).toHaveTextContent('Version unknown');
 
         const arphen = screen.getByText('Arphen');
         expect(arphen).toBeInTheDocument();

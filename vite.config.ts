@@ -9,7 +9,9 @@ import { PWA_INJECT_REGISTER, PWA_MAX_PRECACHE_FILE_BYTES, PWA_PRECACHE_GLOB_IGN
 let commitHash = process.env.CF_PAGES_COMMIT_SHA?.slice(0, 7) || 'unknown';
 if (commitHash === 'unknown') {
   try {
-    commitHash = execSync('git rev-parse --short HEAD').toString().trim();
+    const localCommitHash = execSync('git rev-parse --short HEAD').toString().trim();
+    const hasUncommittedChanges = execSync('git status --porcelain').toString().trim().length > 0;
+    commitHash = hasUncommittedChanges ? `${localCommitHash}-dirty` : localCommitHash;
   } catch {
     // Keep the explicit unknown value when no source revision is available.
   }

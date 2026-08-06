@@ -60,6 +60,8 @@ const SettingsSubItem = ({ label, path }: { label: string; path: string }) => {
 };
 
 export function GlobalNavSidebar({ view, currentBook, onNavigate, onScanHandoff }: GlobalNavSidebarProps) {
+  const appVersion = typeof __COMMIT_HASH__ === 'string' ? __COMMIT_HASH__ : 'unknown';
+
   return (
     <div className="h-full w-64 shrink-0 border-r border-white/10 bg-black/20 backdrop-blur-sm flex flex-col">
       <div className="p-4 border-b border-white/10">
@@ -114,6 +116,12 @@ export function GlobalNavSidebar({ view, currentBook, onNavigate, onScanHandoff 
         >
           Manifesto
         </button>
+        <p
+          className="mt-3 text-center font-mono text-[10px] uppercase tracking-widest text-white/30"
+          title="Deployed application version"
+        >
+          Version <span className="text-white/55">{appVersion}</span>
+        </p>
       </div>
     </div>
   );
