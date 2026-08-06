@@ -6,7 +6,7 @@ import {
 
 describe('TesseractPdfOcrEngine', () => {
     it('creates one worker, normalizes text, and returns word geometry', async () => {
-        const recognize = vi.fn().mockResolvedValue({
+        const recognitionResult = {
             data: {
                 text: '  First line.\r\n\r\nSecond line.  ',
                 confidence: 87,
@@ -22,10 +22,17 @@ describe('TesseractPdfOcrEngine', () => {
                     }],
                 }],
             },
-        });
+        };
         const terminate = vi.fn().mockResolvedValue(undefined);
-        const progress: PdfOcrProgress[] = [];
+        const firstProgress: PdfOcrProgress[] = [];
+        const secondProgress: PdfOcrProgress[] = [];
         let logger: ((value: PdfOcrProgress) => void) | undefined;
+        let recognitionCount = 0;
+        const recognize = vi.fn().mockImplementation(async () => {
+            recognitionCount += 1;
+            logger?.({ status: 'recognizing text', progress: recognitionCount / 2 });
+            return recognitionResult;
+        });
         const workerFactory = vi.fn(async (_language, options) => {
             logger = options.logger;
             return { recognize, terminate };
@@ -33,9 +40,8 @@ describe('TesseractPdfOcrEngine', () => {
         const engine = new TesseractPdfOcrEngine({ workerFactory });
         const canvas = document.createElement('canvas');
 
-        const first = await engine.recognize(canvas, (value) => progress.push(value));
-        const second = await engine.recognize(canvas);
-        logger?.({ status: 'recognizing text', progress: 0.5 });
+        const first = await engine.recognize(canvas, (value) => firstProgress.push(value));
+        const second = await engine.recognize(canvas, (value) => secondProgress.push(value));
 
         expect(workerFactory).toHaveBeenCalledTimes(1);
         expect(recognize).toHaveBeenCalledTimes(2);
@@ -49,7 +55,8 @@ describe('TesseractPdfOcrEngine', () => {
             lineId: '0:0:0',
         }]);
         expect(second.language).toBe('eng');
-        expect(progress).toEqual([{ status: 'recognizing text', progress: 0.5 }]);
+        expect(firstProgress).toEqual([{ status: 'recognizing text', progress: 0.5 }]);
+        expect(secondProgress).toEqual([{ status: 'recognizing text', progress: 1 }]);
     });
 
     it('terminates the active worker on cancellation and can be closed safely', async () => {
