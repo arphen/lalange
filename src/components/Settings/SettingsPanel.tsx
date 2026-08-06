@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, Navigate } from 'react-router';
-import { useSettingsStore, type PromptFragment } from '../../core/store/settings';
+import { useSettingsStore, type NotePresentationMode, type PromptFragment } from '../../core/store/settings';
 import { useAIStore } from '../../core/store/ai';
 import { useTTSStore, type TTSBackendPreference } from '../../core/store/tts';
 import { getEngine, MODEL_INFO, PACING_MODEL_TIER, type ModelTier, isModelCached, deleteModel } from '../../core/ai/webllm';
@@ -429,6 +429,43 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                                         onChange={settings.setFootnoteSuppressor}
                                     />
                                 </div>
+                            </div>
+
+                            <div className="bg-black/20 p-6 rounded-lg border border-white/10 space-y-6">
+                                <div>
+                                    <label className="block text-sm text-dune-gold mb-2 uppercase tracking-widest">PDF Notes</label>
+                                    <p className="text-xs text-gray-500 mb-4">
+                                        Keep retained footnotes and endnotes beside the passage that calls them.
+                                    </p>
+                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                                        {([
+                                            ['guided', 'Guided', 'Show a short cue and open the full note on demand.'],
+                                            ['markers', 'Markers', 'Show only a small note marker at the RSVP position.'],
+                                            ['notes-only', 'Notes only', 'Hide note cues while reading; use the Notes view later.'],
+                                        ] as const).map(([mode, label, description]) => (
+                                            <button
+                                                key={mode}
+                                                type="button"
+                                                onClick={() => settings.setNotePresentation(mode as NotePresentationMode)}
+                                                className={clsx(
+                                                    'p-4 rounded border text-left transition-all',
+                                                    settings.notePresentation === mode
+                                                        ? 'bg-dune-gold text-black border-dune-gold'
+                                                        : 'bg-black/20 border-white/10 text-gray-400 hover:border-white/30 hover:text-white',
+                                                )}
+                                            >
+                                                <div className="font-bold text-sm">{label}</div>
+                                                <div className="text-[10px] opacity-70 mt-2 leading-relaxed">{description}</div>
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                                <Toggle
+                                    label="Pause for note"
+                                    description="Pause RSVP when a linked note cue appears."
+                                    checked={settings.noteAutoPause}
+                                    onChange={settings.setNoteAutoPause}
+                                />
                             </div>
                         </div>
                     )}

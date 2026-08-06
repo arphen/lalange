@@ -6,6 +6,7 @@ import * as dbModule from '../../core/sync/db';
 import { useSettingsStore } from '../../core/store/settings';
 import { useAIStore } from '../../core/store/ai';
 import { useTTSStore } from '../../core/store/tts';
+import type { PdfNoteAnchor, PdfNoteEntry } from '../../core/ingest/readers/pdfNotes';
 
 const mockSetSchedulerCursor = vi.hoisted(() => vi.fn());
 
@@ -36,6 +37,8 @@ describe('Reader Component', () => {
         title: 'Chapter 1',
         status: 'ready',
         content: ['Hello', 'world', 'this', 'is', 'a', 'test'],
+        notes: [] as PdfNoteEntry[],
+        noteAnchors: [] as PdfNoteAnchor[],
         subchapters: [
             { title: 'Part 1', summary: '', startWordIndex: 0, endWordIndex: 3 },
             { title: 'Part 2', summary: '', startWordIndex: 3, endWordIndex: 6 },
@@ -115,6 +118,8 @@ describe('Reader Component', () => {
         useSettingsStore.getState().focusModeEnabled = false;
         useSettingsStore.getState().riverTopEnabled = true;
         useSettingsStore.getState().riverBottomEnabled = true;
+        mockChapter1.notes = [];
+        mockChapter1.noteAnchors = [];
         useAIStore.getState().isLoading = false;
         // Reset the reading_states.findOne mock to return default state (chapter-1, word 0)
         mockDb.reading_states.findOne.mockReturnValue({
@@ -151,6 +156,55 @@ describe('Reader Component', () => {
         // Check RSVP container text content
         const rsvpContainer = screen.getByTestId('rsvp-container');
         expect(rsvpContainer).toHaveTextContent('Hello');
+    });
+
+    it('shows a linked PDF note without adding note text to the body cursor', async () => {
+        mockChapter1.notes = [{
+            id: 'chapter-1-r1-n0',
+            kind: 'footnote',
+            label: '1',
+            text: 'A retained note for the first body word.',
+            pageStart: 4,
+            pageEnd: 4,
+            sourceRegionIds: ['chapter-1-r1'],
+            confidence: 0.96,
+            issues: [],
+        }];
+        mockChapter1.noteAnchors = [{
+            id: 'chapter-1-r1-w0-nchapter-1-r1-n0',
+            noteId: 'chapter-1-r1-n0',
+            chapterId: 'chapter-1',
+            wordIndex: 0,
+            sourcePage: 4,
+            markerText: '1',
+            confidence: 0.96,
+            evidence: ['exact-label-match'],
+        }];
+
+        render(<Reader book={mockBook} />);
+
+        await waitFor(() => {
+            expect(screen.getByTestId('reader-note-cue')).toBeInTheDocument();
+        });
+
+        expect(screen.getByTestId('reader-note-cue')).toHaveTextContent('A retained note for the first body word.');
+        fireEvent.click(screen.getByRole('button', { name: 'Open note 1' }));
+
+        const sheet = screen.getByTestId('reader-note-sheet');
+        expect(sheet).toHaveTextContent('A retained note for the first body word.');
+        expect(sheet).toHaveTextContent('Linked at body word 1');
+        expect(screen.getByTestId('rsvp-container')).toHaveTextContent('Hello');
+
+        fireEvent.click(screen.getByRole('button', { name: 'Keep paused' }));
+
+        expect(screen.queryByTestId('reader-note-sheet')).not.toBeInTheDocument();
+        expect(screen.getByTestId('rsvp-container')).toHaveTextContent('Hello');
+
+        fireEvent.click(screen.getByRole('button', { name: 'Notes (1)' }));
+        expect(screen.getByTestId('reader-notes-view')).toHaveTextContent('A retained note for the first body word.');
+        fireEvent.click(screen.getByRole('button', { name: 'Jump to Note 1' }));
+        expect(screen.queryByTestId('reader-notes-view')).not.toBeInTheDocument();
+        expect(screen.getByTestId('rsvp-container')).toHaveTextContent('Hello');
     });
 
     it('should skip an empty saved placeholder and open the first readable chapter', async () => {

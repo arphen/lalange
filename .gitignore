@@ -31,5 +31,8 @@ books/
 renders/
 public/exhibition-texts/
 
+# Browser OCR assets are copied from pinned npm packages before dev/build.
+public/ocr-assets/
+
 # Downloaded EPUB corpus for structure and TOC integration checks
 test-fixtures/gutenberg/

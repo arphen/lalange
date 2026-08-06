@@ -1,4 +1,8 @@
 import { escapeHtml, getFileExtension, normalizeMime, readFileAsUint8Array, stripFileExtension } from './utils';
+import type { PdfOcrEngine } from './pdfOcrAdapter';
+import type { PdfLayoutWord } from './pdfLayout';
+import { extractPdfNotes, linkPdfNoteAnchors, type PdfNoteAnchor, type PdfNoteEntry } from './pdfNotes';
+import { resolvePdfLayout, type PdfLayoutPage } from './pdfLayout';
 import type { IngestReaderPlugin, ReaderPreparedBook, ReaderResolvedChapter } from './types';
 
 const PDF_EXTENSIONS = ['pdf'];
@@ -12,6 +16,10 @@ export interface ParsedPdfPage {
     pageNumber: number;
     label?: string;
     text: string;
+    words?: PdfLayoutWord[];
+    layout?: PdfLayoutPage;
+    notes?: PdfNoteEntry[];
+    noteAnchors?: PdfNoteAnchor[];
 }
 
 export interface ParsedPdfDocument {
@@ -20,10 +28,17 @@ export interface ParsedPdfDocument {
     pages: ParsedPdfPage[];
 }
 
+export interface PdfParseOptions {
+    useOcr?: boolean;
+    ocrEngine?: PdfOcrEngine;
+    signal?: AbortSignal;
+}
+
 export interface PdfReaderDependencies {
     parsePdf: (
         rawData: Uint8Array,
         onProgress?: (message: string) => void,
+        options?: PdfParseOptions,
     ) => Promise<ParsedPdfDocument>;
 }
 
@@ -49,26 +64,64 @@ const validatePdfSize = (size: number): void => {
     }
 };
 
-const normalizeParsedDocument = (document: ParsedPdfDocument): ParsedPdfDocument => {
+const normalizeParsedDocument = (document: ParsedPdfDocument, requireText: boolean): ParsedPdfDocument => {
     if (document.pages.length > MAX_PDF_PAGES) {
         throw new Error(`PDF has too many pages. The maximum supported count is ${MAX_PDF_PAGES.toLocaleString()}.`);
     }
 
-    const pages = document.pages
-        .map((page) => ({
-            ...page,
-            text: normalizePdfText(page.text),
-        }))
-        .filter((page) => page.text.length > 0);
+    const pages = document.pages.map((page) => ({
+        ...page,
+        text: normalizePdfText(page.text),
+    }));
 
-    if (pages.length === 0) {
-        throw new Error('No extractable text found in PDF. Scanned or image-only PDFs require OCR, which is not supported yet.');
+    if (requireText && !pages.some((page) => page.text.length > 0)) {
+        throw new Error('No readable text found in PDF after local OCR. The document may be blank or the OCR language pack may be unavailable.');
     }
 
     return {
         ...document,
         pages,
     };
+};
+
+const isBodyRegion = (role: PdfLayoutPage['regions'][number]['role']): boolean => (
+    role === 'body' || role === 'heading' || role === 'unknown'
+);
+
+const applyPdfLayout = (document: ParsedPdfDocument): ParsedPdfDocument => {
+    const words = document.pages.flatMap((page) => page.words || []);
+    if (words.length === 0) return document;
+
+    const layout = resolvePdfLayout(words);
+    const notesResult = extractPdfNotes(layout.regions);
+    const links = linkPdfNoteAnchors(notesResult.regions, notesResult.notes);
+    const pages = document.pages.map((page) => {
+        const pageLayout = layout.pages.find((candidate) => candidate.pageNumber === page.pageNumber);
+        if (!pageLayout) return page;
+        const pageRegions = notesResult.regions.filter((region) => region.pageNumber === page.pageNumber);
+        const regionById = new Map(pageRegions.map((region) => [region.id, region]));
+        const bodyRegions = pageLayout.bodyOrder
+            .map((blockId) => regionById.get(blockId.replace('-b', '-r')))
+            .filter((region): region is NonNullable<typeof region> => region !== undefined)
+            .filter((region) => isBodyRegion(region.role));
+        const bodyText = bodyRegions.map((region) => region.text).join('\n\n').trim();
+        const resolvedPageLayout: PdfLayoutPage = {
+            ...pageLayout,
+            regions: pageRegions,
+            bodyOrder: bodyRegions.map((region) => region.id.replace('-r', '-b')),
+        };
+        return {
+            ...page,
+            text: bodyText || page.text,
+            layout: resolvedPageLayout,
+            notes: pageRegions
+                .filter((region) => region.role === 'footnote' || region.role === 'endnote' || region.role === 'marginal-note')
+                .flatMap((region) => notesResult.notes.filter((note) => note.sourceRegionIds.includes(region.id))),
+            noteAnchors: links.anchors.filter((anchor) => anchor.sourcePage === page.pageNumber),
+        };
+    });
+
+    return { ...document, pages };
 };
 
 export class PdfIngestReader implements IngestReaderPlugin {
@@ -99,7 +152,7 @@ export class PdfIngestReader implements IngestReaderPlugin {
     public async prepareInitial(file: File, onProgress?: (message: string) => void): Promise<ReaderPreparedBook> {
         validatePdfSize(file.size);
         const rawData = await readFileAsUint8Array(file);
-        const document = normalizeParsedDocument(await this.dependencies.parsePdf(rawData, onProgress));
+        const document = normalizeParsedDocument(await this.dependencies.parsePdf(rawData, onProgress), false);
         const fallbackTitle = stripFileExtension(file.name).trim() || file.name;
 
         return {
@@ -113,9 +166,14 @@ export class PdfIngestReader implements IngestReaderPlugin {
         };
     }
 
-    public async loadChapters(rawData: Uint8Array): Promise<ReaderResolvedChapter[]> {
+    public async loadChapters(rawData: Uint8Array, onProgress?: (message: string) => void): Promise<ReaderResolvedChapter[]> {
         validatePdfSize(rawData.byteLength);
-        const document = normalizeParsedDocument(await this.dependencies.parsePdf(rawData));
+        const document = applyPdfLayout(normalizeParsedDocument(
+            await this.dependencies.parsePdf(rawData, onProgress, { useOcr: true }),
+            true,
+        ));
+        const notes = document.pages.flatMap((page) => page.notes || []);
+        const noteAnchors = document.pages.flatMap((page) => page.noteAnchors || []);
 
         return [{
             title: 'Document',
@@ -124,6 +182,8 @@ export class PdfIngestReader implements IngestReaderPlugin {
                 text: page.text,
                 html: `<div data-pdf-page="${page.pageNumber}">${escapeHtml(page.text)}</div>`,
             })),
+            ...(notes.length > 0 ? { notes } : {}),
+            ...(noteAnchors.length > 0 ? { noteAnchors } : {}),
         }];
     }
 }

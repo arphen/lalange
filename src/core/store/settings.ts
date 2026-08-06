@@ -5,6 +5,7 @@ import { type DurationStrategyId, DEFAULT_STRATEGY_ID } from '../rsvp/duration';
 import { type DisplayPluginId, DEFAULT_DISPLAY_PLUGIN } from '../rsvp/display';
 
 export type ThemeMode = 'volcanic' | 'day' | 'dunes' | 'ash';
+export type NotePresentationMode = 'guided' | 'markers' | 'notes-only';
 
 export interface PromptFragment {
     id: string;
@@ -29,6 +30,10 @@ interface SettingsState {
     setDurationStrategy: (strategy: DurationStrategyId) => void;
     displayPlugin: DisplayPluginId;
     setDisplayPlugin: (plugin: DisplayPluginId) => void;
+    notePresentation: NotePresentationMode;
+    setNotePresentation: (mode: NotePresentationMode) => void;
+    noteAutoPause: boolean;
+    setNoteAutoPause: (enabled: boolean) => void;
 
     // Features
     saccadeEnabled: boolean;
@@ -149,6 +154,10 @@ export const useSettingsStore = create<SettingsState>()(
 
             displayPlugin: DEFAULT_DISPLAY_PLUGIN,
             setDisplayPlugin: (displayPlugin) => set({ displayPlugin }),
+            notePresentation: 'guided',
+            setNotePresentation: (notePresentation) => set({ notePresentation }),
+            noteAutoPause: false,
+            setNoteAutoPause: (noteAutoPause) => set({ noteAutoPause }),
 
             saccadeEnabled: true,
             setSaccadeEnabled: (saccadeEnabled) => set({ saccadeEnabled }),

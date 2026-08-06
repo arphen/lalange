@@ -25,7 +25,10 @@ describe('parsePdfWithPdfJs', () => {
 
         expect(parsed.title).toBe('Adapter Test');
         expect(parsed.author).toBe('Test Author');
-        expect(parsed.pages).toEqual([{ pageNumber: 1, label: undefined, text: 'Hello PDF world.' }]);
+        expect(parsed.pages[0]).toMatchObject({ pageNumber: 1, label: undefined, text: 'Hello PDF world.' });
+        expect(parsed.pages[0].words?.map((word) => word.text)).toEqual(['Hello', 'PDF', 'world.']);
+        expect(parsed.pages[0].words?.every((word) => word.source === 'embedded')).toBe(true);
+        expect(parsed.pages[0].words?.every((word) => word.box.x0 >= 0 && word.box.x1 <= 1)).toBe(true);
         expect(progress).toEqual(['Extracting PDF page 1 of 1...']);
     });
 

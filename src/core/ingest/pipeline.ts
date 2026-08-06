@@ -1,5 +1,6 @@
 import { initDB, type BookDocType, type ChapterDocType, type ImageDocType, type RawFileDocType } from '../sync/db';
 import { classifyChapter, cleanText } from './cleaning';
+import { validateFinalContent } from './contentQuality';
 import { normalizeReferenceTokens, tokenizeForRSVP } from '../rsvp/tokenize';
 import { useSettingsStore } from '../store/settings';
 import { generateUUID } from '../../utils/uuid';
@@ -131,7 +132,7 @@ export const initialIngest = async (file: File, onProgress?: (msg: string) => vo
     };
 };
 
-export const processChaptersInBackground = async (bookId: string) => {
+export const processChaptersInBackground = async (bookId: string, onProgress?: (message: string) => void) => {
     if (activeJobs.has(bookId)) {
         console.log(`[Pipeline] Job already running for book ${bookId}`);
         return;
@@ -158,7 +159,7 @@ export const processChaptersInBackground = async (bookId: string) => {
         }
         console.log(`[Pipeline] Rehydrating with ingest reader: ${reader.id}`);
 
-        const plannedChapters = await reader.loadChapters(uint8Array);
+        const plannedChapters = await reader.loadChapters(uint8Array, onProgress);
 
         let firstContentChapterFound = false;
         for (const [chapterIndex, plannedChapter] of plannedChapters.entries()) {
@@ -215,6 +216,8 @@ export const processChaptersInBackground = async (bookId: string) => {
                                 await latestDoc.incrementalPatch({
                                     status: 'ready',
                                     content: [], // Empty content = skipped
+                                    notes: plannedChapter.notes || [],
+                                    noteAnchors: plannedChapter.noteAnchors?.map((anchor) => ({ ...anchor, chapterId })),
                                     title: extractedTitle || plannedChapter.title || `${classification.type.charAt(0).toUpperCase() + classification.type.slice(1)}`,
                                     progress: 100,
                                     // Store classification metadata for potential UI display
@@ -232,13 +235,26 @@ export const processChaptersInBackground = async (bookId: string) => {
                         }
 
                         // Step 4: Apply text-level license removal and cleaning
-                        const cleaningResult = cleanText(rawText, {
+                        const sourceTextBeforeCleaning = rawText;
+                        const cleaningOptions = {
                             removeLicense: true,
                             removePageNumbers: true,
                             normalizeWhitespace: true,
                             referenceHandling,
-                        });
+                        } as const;
+                        const cleaningResult = cleanText(rawText, cleaningOptions);
                         rawText = cleaningResult.cleanedText;
+
+                        const finalGuardIssues = validateFinalContent(rawText, {
+                            baselineText: sourceTextBeforeCleaning,
+                            requireContent: true,
+                        });
+                        if (cleanText(rawText, cleaningOptions).cleanedText !== rawText) {
+                            finalGuardIssues.push('final cleaning is not idempotent');
+                        }
+                        if (finalGuardIssues.length > 0) {
+                            throw new Error(`Final content guard failed for chapter ${chapterIndex + 1}: ${finalGuardIssues.join('; ')}`);
+                        }
                         
                         if (cleaningResult.metadata.pageNumbersRemoved > 0) {
                             console.log(`[Pipeline] Removed ${cleaningResult.metadata.pageNumbersRemoved} page number artifacts`);
@@ -360,6 +376,8 @@ export const processChaptersInBackground = async (bookId: string) => {
                             await finalDoc.incrementalPatch({
                                 status: 'ready', // Ready for reading (even if pending analysis)
                                 content: [...allWords],
+                                notes: plannedChapter.notes || [],
+                                noteAnchors: plannedChapter.noteAnchors?.map((anchor) => ({ ...anchor, chapterId })),
                                 densities: [...allDensities],
                                 subchapters,
                                 title: extractedTitle || plannedChapter.title || finalDoc.title,

@@ -139,7 +139,7 @@ export const Archive: React.FC<ArchiveProps> = ({ onOpenBook, onScanHandoff }) =
             });
 
             // Start background processing
-            processChaptersInBackground(book.id).catch(console.error);
+            processChaptersInBackground(book.id, setStatus).catch(console.error);
         } catch (err: unknown) {
             console.error(err);
             alert((err as Error).message || 'Failed to load book');

@@ -8,6 +8,7 @@ import type {
     SectionOwnership,
     StructureMode,
 } from '../ingest/structure';
+import type { PdfNoteAnchor, PdfNoteEntry } from '../ingest/readers/pdfNotes';
 
 addRxPlugin(RxDBMigrationSchemaPlugin);
 
@@ -58,6 +59,8 @@ export type ChapterDocType = {
     lastTPM?: number;
     lastChunkCompletedAt?: number;
     content: string[];
+    notes?: PdfNoteEntry[];
+    noteAnchors?: PdfNoteAnchor[];
     densities?: number[];
     analysisData?: {
         tokens: string[];
@@ -145,9 +148,22 @@ export const bookMigrationStrategies = {
 
 export const chapterMigrationStrategies = {
     1: (document: ChapterDocType): ChapterDocType => document,
+    2: (document: ChapterDocType): ChapterDocType => ({
+        ...document,
+        notes: document.notes || [],
+        noteAnchors: document.noteAnchors || [],
+    }),
 };
 
 let dbPromise: Promise<MyDatabase> | null = null;
+
+export const ensureWebCrypto = (): void => {
+    if (typeof globalThis.crypto?.subtle?.digest === 'function') return;
+
+    throw new Error(
+        'Local storage requires Web Crypto (crypto.subtle.digest). Open XYZ through https:// or http://localhost, not an insecure network URL.',
+    );
+};
 
 export const initDB = async (): Promise<MyDatabase> => {
     if (dbPromise) {
@@ -155,6 +171,8 @@ export const initDB = async (): Promise<MyDatabase> => {
     }
 
     dbPromise = (async () => {
+        ensureWebCrypto();
+
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         let storage: RxStorage<any, any> = getRxStorageDexie();
         if (import.meta.env.DEV) {
