@@ -239,6 +239,41 @@ describe('TTSPlayer voice changes', () => {
         expect(onPositionChange).toHaveBeenCalledWith(1);
     });
 
+    it('continues to the next chapter when the current chapter audio is exhausted', () => {
+        const onChapterEnd = vi.fn();
+        render(
+            <TTSPlayer
+                words={['Hello', 'world.']}
+                currentWordIndex={0}
+                chapterId="chapter-1"
+                onChapterEnd={onChapterEnd}
+            />,
+        );
+
+        const options = vi.mocked(ttsPlayer.setOptions).mock.calls.at(-1)?.[0];
+        act(() => options?.onBufferLow?.(1));
+
+        expect(ttsPlayer.pause).toHaveBeenCalled();
+        expect(onChapterEnd).toHaveBeenCalledTimes(1);
+    });
+
+    it('starts a chapter requested by the reader after a boundary transition', async () => {
+        vi.mocked(streamSpeech).mockReturnValue((async function* () {})());
+
+        render(
+            <TTSPlayer
+                words={['Next', 'chapter.']}
+                currentWordIndex={0}
+                chapterId="chapter-2"
+                autoPlayChapterId="chapter-2"
+            />,
+        );
+
+        await waitFor(() => {
+            expect(ttsPlayer.play).toHaveBeenCalledWith(0, 1);
+        });
+    });
+
     it('exposes and applies the full speed range including 0.5x', () => {
         const { getByText } = render(<TTSPlayer words={['Hello', 'world.']} currentWordIndex={0} />);
 

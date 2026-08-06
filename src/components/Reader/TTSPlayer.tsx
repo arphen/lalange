@@ -76,6 +76,10 @@ interface TTSPlayerProps {
     /** Book and chapter IDs for position tracking */
     bookId?: string;
     chapterId?: string;
+    /** Chapter ID requested by the reader for automatic continuation */
+    autoPlayChapterId?: string | null;
+    /** Called when the final sentence in this chapter has finished */
+    onChapterEnd?: () => void;
     /** Compact mode for smaller screens */
     compact?: boolean;
     /** Optional placement overrides from parent layout */
@@ -88,6 +92,8 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
     onPositionChange,
     bookId,
     chapterId,
+    autoPlayChapterId = null,
+    onChapterEnd,
     compact = false,
     dockClassName = '',
 }) => {
@@ -130,6 +136,8 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
     const lastHandoffPersistedAtRef = useRef(0);
     const bookIdRef = useRef<string | undefined>(bookId);
     const chapterIdRef = useRef<string | undefined>(chapterId);
+    const chapterEndHandledRef = useRef(false);
+    const autoPlayRequestHandledRef = useRef<string | null>(null);
 
     useEffect(() => {
         const repairedInvalidVoice = voice !== effectiveVoice;
@@ -203,6 +211,7 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
             generatorRef.current = null;
             hasStartedPlaybackRef.current = false;
             startSentenceIndexRef.current = 0;
+            chapterEndHandledRef.current = false;
             useTTSStore.getState().setGenerating(false);
             
             // Full player reset - stop, clear queue, reset state
@@ -236,6 +245,7 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
             isGeneratingRef.current = false;
             generatorRef.current = null;
             hasStartedPlaybackRef.current = false;
+            chapterEndHandledRef.current = false;
             useTTSStore.getState().setGenerating(false);
             
             // Clear player
@@ -331,6 +341,27 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
             }
         }
     }, [effectiveVoice, sentences, speed]);
+
+    const startFromSentence = useCallback(async (requestedSentenceIndex: number) => {
+        if (sentences.length === 0) return;
+        if (!await handleInit()) return;
+
+        const sentenceIndex = Math.max(0, Math.min(sentences.length - 1, requestedSentenceIndex));
+        const startSentence = sentences[sentenceIndex];
+        if (!startSentence) return;
+
+        startSentenceIndexRef.current = sentenceIndex;
+        useTTSStore.getState().setCurrentWordIndex(startSentence.startWordIndex);
+        hasStartedPlaybackRef.current = true;
+        useTTSStore.getState().setPlaybackState('preparing');
+
+        const startupBufferSize = Math.min(
+            safeBufferAhead + 1,
+            sentences.length - sentenceIndex,
+        );
+        await ttsPlayer.play(sentenceIndex, 1);
+        void generateFrom(sentenceIndex, startupBufferSize);
+    }, [generateFrom, handleInit, safeBufferAhead, sentences]);
     
     // Set up player callbacks
     useEffect(() => {
@@ -343,7 +374,15 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
                 if (onPositionChange && hasStartedPlaybackRef.current) onPositionChange(wordIndex);
             },
             onBufferLow: (currentSentenceIndex) => {
-                if (isGeneratingRef.current || currentSentenceIndex >= sentences.length) return;
+                if (currentSentenceIndex >= sentences.length) {
+                    if (!isGeneratingRef.current && !chapterEndHandledRef.current) {
+                        chapterEndHandledRef.current = true;
+                        ttsPlayer.pause();
+                        onChapterEnd?.();
+                    }
+                    return;
+                }
+                if (isGeneratingRef.current) return;
 
                 const hasCurrentAudio = ttsPlayer.hasAudioForSentence(currentSentenceIndex);
                 const bufferedAhead = hasCurrentAudio
@@ -370,7 +409,7 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
                 console.log('[TTS] Playback ended');
             },
         });
-    }, [safeBufferAhead, sentences, onPositionChange, generateFrom, playbackState]);
+    }, [safeBufferAhead, sentences, onPositionChange, onChapterEnd, generateFrom, playbackState]);
     
     // Handle stop - full reset of all TTS resources
     const handleStop = useCallback(() => {
@@ -389,6 +428,7 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
         generatorRef.current = null;
         hasStartedPlaybackRef.current = false;
         startSentenceIndexRef.current = 0;
+        chapterEndHandledRef.current = false;
         useTTSStore.getState().setGenerating(false);
 
         // Full player reset
@@ -397,6 +437,21 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
 
         console.log('[TTS UI] Stopped and cleared all resources');
     }, []);
+
+    useEffect(() => {
+        if (!autoPlayChapterId || !chapterId || autoPlayChapterId !== chapterId) return;
+
+        const requestKey = `${autoPlayChapterId}:${chapterId}`;
+        if (autoPlayRequestHandledRef.current === requestKey) return;
+        autoPlayRequestHandledRef.current = requestKey;
+
+        void startFromSentence(0).catch((err) => {
+            console.error('[TTS UI] Automatic chapter continuation failed:', err);
+            const message = err instanceof Error ? err.message : 'Audio playback failed.';
+            useTTSStore.getState().setError(message);
+            ttsPlayer.stop();
+        });
+    }, [autoPlayChapterId, chapterId, startFromSentence]);
 
     // Handle play/pause toggle - PAUSE MUST BE INSTANT
     const handleToggle = useCallback(async () => {
@@ -436,25 +491,7 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
                 startSentenceIndexRef.current = startIdx;
 
                 // Mark that we're starting from a valid position
-                const startSentence = sentences[startIdx];
-                if (startSentence) {
-                    console.log(`[TTS UI] Starting from sentence ${startIdx}: word ${startSentence.startWordIndex} to ${startSentence.endWordIndex}`);
-                    // Pre-set the word index to avoid jump to 0
-                    useTTSStore.getState().setCurrentWordIndex(startSentence.startWordIndex);
-                    hasStartedPlaybackRef.current = true;
-                }
-
-                // Show preparing state
-                useTTSStore.getState().setPlaybackState('preparing');
-
-                // Start after the first sentence while the rest of the look-ahead
-                // buffer continues generating in the background.
-                const startupBufferSize = Math.min(
-                    safeBufferAhead + 1,
-                    sentences.length - startIdx,
-                );
-                await ttsPlayer.play(startIdx, 1);
-                void generateFrom(startIdx, startupBufferSize);
+                await startFromSentence(startIdx);
             } else if (playbackState === 'paused') {
                 // Check if user has read ahead with RSVP - if so, start from their new position
                 const currentTTSWordIndex = useTTSStore.getState().currentWordIndex;
@@ -468,22 +505,14 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
                     console.log(`[TTS UI] User read ahead from word ${currentTTSWordIndex} to ${currentWordIndex}, resuming from sentence ${sentenceIndex}`);
 
                     if (sentenceIndex >= 0) {
-                        const startSentence = sentences[sentenceIndex];
                         startSentenceIndexRef.current = sentenceIndex;
 
                         // Update position and start fresh from this sentence
-                        useTTSStore.getState().setCurrentWordIndex(startSentence.startWordIndex);
-                        useTTSStore.getState().setPlaybackState('preparing');
                         hasStartedPlaybackRef.current = true;
 
                         // Clear old queued audio and regenerate from new position
                         ttsPlayer.clearQueue();
-                        const startupBufferSize = Math.min(
-                            safeBufferAhead + 1,
-                            sentences.length - sentenceIndex,
-                        );
-                        await ttsPlayer.play(sentenceIndex, 1);
-                        void generateFrom(sentenceIndex, startupBufferSize);
+                        await startFromSentence(sentenceIndex);
                         return;
                     }
                 }
@@ -498,7 +527,7 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
             store.setError(message);
             ttsPlayer.stop();
         }
-    }, [playbackState, sentences, currentWordIndex, handleInit, generateFrom, safeBufferAhead, handleStop]);
+    }, [playbackState, sentences, currentWordIndex, handleInit, startFromSentence, handleStop]);
     
     // Voice options, grouped by language so the Slovenian voice is easy to find
     const voiceGroups = useMemo(() => {
