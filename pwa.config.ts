@@ -12,4 +12,5 @@ export const PWA_PRECACHE_GLOB_IGNORES = [
   '**/assets/piper-*.js',
   '**/assets/voices_static-*.js',
   '**/assets/ort.min-*.js',
+  '**/ocr-assets/**',
 ];

@@ -1,6 +1,6 @@
 import React, { useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { clsx } from 'clsx';
-import { ArrowLeft, Focus, Gauge, Headphones, List, Moon, Play, Share2, Sun, X } from 'lucide-react';
+import { ArrowLeft, BookOpenText, Focus, Gauge, Headphones, List, Moon, Play, Share2, Sun, X } from 'lucide-react';
 import { type BookDocType, type ChapterDocType, type ReadingStateDocType, type GlobalSummaryType, type ImageDocType, initDB } from '../../core/sync/db';
 import { getDisplayPlugin, type DisplayPlugin, getVelocireaderORPIndex } from '../../core/rsvp/display';
 import { getTargetInterval, isLikelyProperNoun } from '../../core/rsvp/timing';
@@ -78,6 +78,8 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
     const displayPluginId = useSettingsStore((s) => s.displayPlugin);
     const theme = useSettingsStore((s) => s.theme);
     const setTheme = useSettingsStore((s) => s.setTheme);
+    const notePresentation = useSettingsStore((s) => s.notePresentation);
+    const noteAutoPause = useSettingsStore((s) => s.noteAutoPause);
     const isDayTheme = theme === 'day' || theme === 'dunes';
     
     // River (context panel) toggles - use selectors for performance
@@ -152,10 +154,12 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
     const [now, setNow] = useState(Date.now()); // Force re-render for live time updates
     const [activeImageCue, setActiveImageCue] = useState<ImageBreakCue | null>(null);
     const [showImageCuePreview, setShowImageCuePreview] = useState(false);
+    const [openNoteId, setOpenNoteId] = useState<string | null>(null);
 
     // TTS State
     const [showTTSPlayer, setShowTTSPlayer] = useState(false);
     const [showExchange, setShowExchange] = useState(false);
+    const [showNotes, setShowNotes] = useState(false);
     const ttsPlaybackState = useTTSStore((s) => s.playbackState);
     const ttsPosition = useTTSStore((s) => s.currentPosition);
 
@@ -233,6 +237,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
     const chapterPulseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const progressReminderTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const lastProgressMilestoneRef = useRef<number | null>(null);
+    const autoPausedNoteRef = useRef<string | null>(null);
 
     const isSummaryActiveRef = useRef(false);
     const savedChapterIndexRef = useRef(0);
@@ -245,6 +250,37 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
         () => buildImageCueAssignments(chapters, bookImages),
         [chapters, bookImages],
     );
+
+    const activeNoteAnchor = useMemo(() => (
+        currentChapter?.noteAnchors?.find((anchor) => (
+            anchor.chapterId === currentChapter.id && anchor.wordIndex === currentWordIndex
+        )) || null
+    ), [currentChapter, currentWordIndex]);
+
+    const activeNote = useMemo(() => (
+        activeNoteAnchor && currentChapter?.notes?.find((note) => note.id === activeNoteAnchor.noteId)
+    ) || null, [activeNoteAnchor, currentChapter]);
+
+    const openNote = useCallback((noteId: string) => {
+        setIsPlaying(false);
+        setOpenNoteId(noteId);
+    }, []);
+
+    const openedNote = useMemo(() => (
+        currentChapter?.notes?.find((note) => note.id === openNoteId) || null
+    ), [currentChapter, openNoteId]);
+
+    const bookNotes = useMemo(() => chapters
+        .map((chapter) => chapter.id === currentChapter?.id && currentChapter ? currentChapter : chapter)
+        .flatMap((chapter) => (chapter.notes || []).map((note) => ({
+            chapter,
+            note,
+            anchor: chapter.noteAnchors?.find((candidate) => candidate.noteId === note.id) || null,
+        })))
+        .sort((left, right) => left.chapter.index - right.chapter.index
+            || left.note.pageStart - right.note.pageStart
+            || (left.note.label || '').localeCompare(right.note.label || '')),
+    [chapters, currentChapter]);
 
     useEffect(() => {
         activeImageCueRef.current = activeImageCue;
@@ -1824,6 +1860,23 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
         }
     }, [loading, currentChapter, currentWordIndex, renderWord, getDisplayWordForCurrentSegment, isCompactLandscape]);
 
+    useEffect(() => {
+        setOpenNoteId(null);
+        autoPausedNoteRef.current = null;
+    }, [currentChapter?.id]);
+
+    useEffect(() => {
+        if (!activeNoteAnchor) {
+            autoPausedNoteRef.current = null;
+            return;
+        }
+
+        if (noteAutoPause && isPlaying && autoPausedNoteRef.current !== activeNoteAnchor.id) {
+            autoPausedNoteRef.current = activeNoteAnchor.id;
+            setIsPlaying(false);
+        }
+    }, [activeNoteAnchor, isPlaying, noteAutoPause]);
+
     if (loading && !currentChapter) {
         return (
             <div className="relative flex h-full min-h-0 items-center justify-center bg-basalt text-white">
@@ -1912,6 +1965,14 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
         lensScale,
     );
     rsvpContainerStyle.transformOrigin = 'center center';
+    const activeNotePreview = activeNote?.text.replace(/\s+/g, ' ').trim().slice(0, 280) || '';
+    const activeNoteLabel = activeNote?.label || activeNoteAnchor?.markerText || 'Note';
+    const shouldShowNoteCue = !isSummaryActive
+        && notePresentation !== 'notes-only'
+        && Boolean(activeNote && activeNoteAnchor);
+    const openedNoteAnchor = openedNote
+        ? currentChapter?.noteAnchors?.find((anchor) => anchor.noteId === openedNote.id) || null
+        : null;
 
     return (
         <div
@@ -2090,6 +2151,24 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                         <span className="reader-toolbar-label">Audio</span>
                     </button>
 
+                    {bookNotes.length > 0 && (
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setShowNotes(true);
+                                setShowChapters(false);
+                            }}
+                            className="reader-toolbar-button reader-focus-fade"
+                            title="Open retained notes"
+                            aria-label={`Notes${bookNotes.length > 0 ? ` (${bookNotes.length})` : ''}`}
+                            aria-hidden={focusModeEnabled}
+                            tabIndex={focusModeEnabled ? -1 : undefined}
+                        >
+                            <BookOpenText className="reader-toolbar-icon" />
+                            <span className="reader-toolbar-label">Notes</span>
+                        </button>
+                    )}
+
                     <button
                         type="button"
                         onClick={() => setShowExchange(true)}
@@ -2186,6 +2265,85 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                     chapterHandoffActive={transitionKind === 'chapter' && chapterTransitionPhase !== null}
                 />
             </div>
+
+            {showNotes && (
+                <div
+                    data-testid="reader-notes-view"
+                    className="fixed inset-0 z-[85] flex items-start justify-end bg-black/55 pt-16 backdrop-blur-sm md:pt-20"
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby="reader-notes-title"
+                >
+                    <button
+                        type="button"
+                        className="absolute inset-0 cursor-default"
+                        onClick={() => setShowNotes(false)}
+                        aria-label="Close notes"
+                    />
+                    <section className="relative flex h-[calc(100%-4rem)] max-h-[48rem] w-full flex-col border-l border-white/10 bg-basalt shadow-2xl md:h-[calc(100%-5rem)] md:w-[min(38rem,92vw)]">
+                        <div className="flex items-start justify-between gap-4 border-b border-white/10 px-5 py-4 md:px-6">
+                            <div>
+                                <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-amber-200/70">Retained PDF material</p>
+                                <h2 id="reader-notes-title" className="mt-1 text-lg font-semibold text-white">Notes</h2>
+                                <p className="mt-1 text-xs text-white/45">{bookNotes.length} note{bookNotes.length === 1 ? '' : 's'} kept outside the body stream.</p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setShowNotes(false)}
+                                className="rounded border border-white/15 p-2 text-white/60 transition-colors hover:border-white/40 hover:text-white"
+                                aria-label="Close notes"
+                            >
+                                <X className="h-4 w-4" />
+                            </button>
+                        </div>
+                        <div className="flex-1 overflow-y-auto px-5 py-4 md:px-6">
+                            {bookNotes.length === 0 ? (
+                                <p className="py-8 text-sm text-white/50">No retained notes were found in this book.</p>
+                            ) : (
+                                <div className="divide-y divide-white/10">
+                                    {bookNotes.map(({ chapter, note, anchor }) => {
+                                        const noteTitle = `Note ${note.label || 'unlabeled'}`;
+                                        const noteBody = note.text.replace(/\s+/g, ' ').trim();
+                                        const noteRow = (
+                                            <div className="py-4 first:pt-1">
+                                                <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-amber-100/70">
+                                                    <span>{noteTitle}</span>
+                                                    <span className="text-white/35">{note.kind.replace('-', ' ')}</span>
+                                                    {anchor ? (
+                                                        <span className="text-cyan-200/60">Linked word {anchor.wordIndex + 1}</span>
+                                                    ) : (
+                                                        <span className="text-white/40">Page {note.pageStart}</span>
+                                                    )}
+                                                    {anchor && anchor.confidence < 0.8 && <span className="text-white/40">Possible link</span>}
+                                                </div>
+                                                <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-white/70">{noteBody}</p>
+                                                <p className="mt-2 text-[11px] text-white/35">{chapter.title} / source page {note.pageStart}</p>
+                                            </div>
+                                        );
+
+                                        return anchor ? (
+                                            <button
+                                                type="button"
+                                                key={note.id}
+                                                className="block w-full text-left transition-colors hover:bg-white/[0.03]"
+                                                onClick={() => {
+                                                    setShowNotes(false);
+                                                    beginChapterTransition(chapter.id, anchor.wordIndex, anchor.wordIndex);
+                                                }}
+                                                aria-label={`Jump to ${noteTitle}`}
+                                            >
+                                                {noteRow}
+                                            </button>
+                                        ) : (
+                                            <div key={note.id}>{noteRow}</div>
+                                        );
+                                    })}
+                                </div>
+                            )}
+                        </div>
+                    </section>
+                </div>
+            )}
 
             {/* Main Reader Area (Full Screen) - uses responsive margins to prevent shifting/squishing text on mobile */}
             <div
@@ -2323,6 +2481,41 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                             </div>
                         )}
                     </div>
+
+                    {shouldShowNoteCue && activeNote && activeNoteAnchor && (
+                        <div
+                            data-testid="reader-note-cue"
+                            className="relative z-20 mx-auto w-[min(92%,42rem)] shrink-0 border-y border-amber-200/20 bg-black/25 px-4 py-3 text-left backdrop-blur-sm"
+                        >
+                            <div className="flex items-start gap-3">
+                                <BookOpenText className="mt-0.5 h-4 w-4 shrink-0 text-amber-200/80" aria-hidden="true" />
+                                <div className="min-w-0 flex-1">
+                                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-amber-100/80">
+                                        <span>Note {activeNoteLabel}</span>
+                                        {activeNoteAnchor.confidence < 0.8 && (
+                                            <span className="text-white/40">Possible link</span>
+                                        )}
+                                        {noteAutoPause && !isPlaying && (
+                                            <span className="text-cyan-200/70">RSVP paused</span>
+                                        )}
+                                    </div>
+                                    {notePresentation === 'guided' && (
+                                        <p className="mt-1 max-h-10 overflow-hidden text-xs leading-relaxed text-white/65">
+                                            {activeNotePreview}{activeNote.text.length > activeNotePreview.length ? '...' : ''}
+                                        </p>
+                                    )}
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => openNote(activeNoteAnchor.noteId)}
+                                    className="shrink-0 rounded border border-amber-200/30 px-2.5 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-amber-100 transition-colors hover:border-amber-100/70 hover:bg-amber-100/10"
+                                    aria-label={`Open note ${activeNoteLabel}`}
+                                >
+                                    Open
+                                </button>
+                            </div>
+                        </div>
+                    )}
 
                     {/* Bottom Zone: Next Context */}
                     <div 
@@ -2504,6 +2697,74 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                             showChapters && 'opacity-0 pointer-events-none md:opacity-100 md:pointer-events-auto',
                         )}
                     />
+                </div>
+            )}
+
+            {openedNote && (
+                <div
+                    data-testid="reader-note-sheet"
+                    className="fixed inset-0 z-[100] flex items-end justify-end bg-black/55 backdrop-blur-sm"
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby="reader-note-sheet-title"
+                >
+                    <button
+                        type="button"
+                        className="absolute inset-0 cursor-default"
+                        onClick={() => setOpenNoteId(null)}
+                        aria-label="Close note"
+                    />
+                    <section className="relative flex max-h-[82vh] w-full flex-col border-t border-amber-200/20 bg-basalt shadow-2xl md:h-full md:max-h-none md:w-[min(32rem,92vw)] md:border-l md:border-t-0">
+                        <div className="flex items-start justify-between gap-4 border-b border-white/10 px-5 py-4 md:px-6">
+                            <div>
+                                <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-amber-200/70">
+                                    {openedNote.kind.replace('-', ' ')}
+                                </p>
+                                <h2 id="reader-note-sheet-title" className="mt-1 text-lg font-semibold text-white">
+                                    Note {openedNote.label || openedNoteAnchor?.markerText || ''}
+                                </h2>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setOpenNoteId(null)}
+                                className="rounded border border-white/15 p-2 text-white/60 transition-colors hover:border-white/40 hover:text-white"
+                                aria-label="Close note"
+                            >
+                                <X className="h-4 w-4" />
+                            </button>
+                        </div>
+                        <div className="flex-1 overflow-y-auto px-5 py-5 md:px-6">
+                            <p className="whitespace-pre-wrap text-sm leading-7 text-white/80">{openedNote.text}</p>
+                            <div className="mt-6 border-t border-white/10 pt-4 text-xs text-white/45">
+                                <p>Source page {openedNote.pageStart}{openedNote.pageEnd !== openedNote.pageStart ? `-${openedNote.pageEnd}` : ''}</p>
+                                {openedNoteAnchor && (
+                                    <p className="mt-1">
+                                        Linked at body word {openedNoteAnchor.wordIndex + 1}
+                                        {openedNoteAnchor.confidence < 0.8 ? ' with tentative confidence' : ''}.
+                                    </p>
+                                )}
+                            </div>
+                        </div>
+                        <div className="flex flex-wrap justify-end gap-2 border-t border-white/10 px-5 py-4 md:px-6">
+                            <button
+                                type="button"
+                                onClick={() => setOpenNoteId(null)}
+                                className="rounded border border-white/15 px-3 py-2 text-xs font-semibold uppercase tracking-wider text-white/65 transition-colors hover:border-white/40 hover:text-white"
+                            >
+                                Keep paused
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setOpenNoteId(null);
+                                    setIsPlaying(true);
+                                }}
+                                className="rounded border border-cyan-200/40 bg-cyan-200/10 px-3 py-2 text-xs font-semibold uppercase tracking-wider text-cyan-100 transition-colors hover:border-cyan-100 hover:bg-cyan-200/20"
+                            >
+                                Resume RSVP
+                            </button>
+                        </div>
+                    </section>
                 </div>
             )}
 

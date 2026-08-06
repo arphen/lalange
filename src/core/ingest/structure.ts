@@ -2,6 +2,14 @@ import JSZip from 'jszip';
 import * as cheerio from 'cheerio';
 import type { Element } from 'domhandler';
 import { classifyChapter, type ChapterClassification } from './cleaning';
+import {
+    analyzeContentUnits,
+    cleanContentUnit,
+    type ContentQualityIssue,
+    type ContentQualityProfile,
+    type RawContentUnit,
+} from './contentQuality';
+import type { ReferenceHandlingMode } from './cleaning';
 
 export type ChapterSource = 'toc' | 'heading' | 'spine' | 'merged';
 
@@ -97,8 +105,26 @@ export interface SkippedPlannedChapter {
     title: string;
     slices: ChapterSlice[];
     estimatedWords: number;
-    classificationType: ChapterClassification['type'];
+    classificationType: ChapterClassification['type'] | 'quality';
     reason: string;
+}
+
+export interface RejectedContentUnit {
+    path: string;
+    qualityScore: number;
+    issues: ContentQualityIssue[];
+    reason: string;
+}
+
+export interface ContentQualityAuditRecord {
+    path: string;
+    decision: 'accept' | 'accept-degraded' | 'reject';
+    zone?: string;
+    qualityScore: number;
+    issues: ContentQualityIssue[];
+    removedCharacters: number;
+    beforeSample: string;
+    afterSample: string;
 }
 
 export interface LoadedChapterSlice {
@@ -117,8 +143,15 @@ export interface EpubStructurePlan {
     spine: SpineItem[];
     chapters: PlannedChapter[];
     skippedChapters: SkippedPlannedChapter[];
+    qualityRejections: RejectedContentUnit[];
+    contentQualityProfile: ContentQualityProfile;
+    contentQualityAudit: ContentQualityAuditRecord[];
     structureVersion: 1;
     structureMode: StructureMode;
+}
+
+export interface EpubStructureOptions {
+    referenceHandling?: ReferenceHandlingMode;
 }
 
 const MARKER_START = '__XYZ_CHAPTER_START__';
@@ -1399,7 +1432,14 @@ const filterNonReadingChapters = async (
     coverManifestId?: string,
     publicationTitle = '',
     publicationAuthor = '',
-): Promise<{ chapters: PlannedChapter[]; skippedChapters: SkippedPlannedChapter[] }> => {
+    referenceHandling: ReferenceHandlingMode = 'suppress',
+): Promise<{
+    chapters: PlannedChapter[];
+    skippedChapters: SkippedPlannedChapter[];
+    qualityRejections: RejectedContentUnit[];
+    contentQualityProfile: ContentQualityProfile;
+    contentQualityAudit: ContentQualityAuditRecord[];
+}> => {
     const manifestByPath = new Map(
         Object.values(manifest).map((item) => [normalizeArchivePath(item.resolvedPath), item]),
     );
@@ -1409,6 +1449,8 @@ const filterNonReadingChapters = async (
     const htmlCache = new Map<string, string>();
     const readableChapters: PlannedChapter[] = [];
     const skippedChapters: SkippedPlannedChapter[] = [];
+    const qualityRejections: RejectedContentUnit[] = [];
+    const contentQualityAudit: ContentQualityAuditRecord[] = [];
 
     const loadHtml = async (path: string): Promise<string> => {
         const normalizedPath = normalizeArchivePath(path);
@@ -1420,6 +1462,34 @@ const filterNonReadingChapters = async (
         htmlCache.set(normalizedPath, html);
         return html;
     };
+
+    const rawUnits: RawContentUnit[] = [];
+    for (const chapter of chapters) {
+        for (const slice of chapter.slices) {
+            const normalizedPath = normalizeArchivePath(slice.path);
+            const html = await loadHtml(normalizedPath);
+            if (!html) continue;
+
+            const slicedHtml = extractSliceHtml(
+                html,
+                slice.startFragment,
+                slice.endFragment,
+                slice.startHeadingIndex,
+                slice.endHeadingIndex,
+            );
+            const readableHtml = stripEmbeddedPublicationMatter(slicedHtml);
+            const text = extractReadableTextFromHtml(readableHtml);
+            rawUnits.push({
+                ordinal: rawUnits.length,
+                path: normalizedPath,
+                html: readableHtml,
+                text,
+                lines: text.split('\n'),
+            });
+        }
+    }
+    const contentQualityProfile = analyzeContentUnits(rawUnits);
+    let rawUnitIndex = 0;
 
     for (const [chapterIndex, chapter] of chapters.entries()) {
         const readableSlices: ChapterSlice[] = [];
@@ -1441,9 +1511,53 @@ const filterNonReadingChapters = async (
                 slice.endHeadingIndex,
             );
             const markupClassification = classifyArtifactMarkup(slicedHtml);
-            const readableHtml = stripEmbeddedPublicationMatter(slicedHtml);
-            const text = extractReadableTextFromHtml(readableHtml);
+            const rawUnit = rawUnits[rawUnitIndex++];
+            const readableHtml = rawUnit.html;
+            const text = rawUnit.text;
             const sliceTitle = extractSliceTitle(readableHtml, bestTitle);
+            const qualityResult = cleanContentUnit(rawUnit, contentQualityProfile, { referenceHandling });
+            contentQualityAudit.push({
+                path: normalizedPath,
+                decision: qualityResult.decision,
+                zone: qualityResult.zone,
+                qualityScore: qualityResult.qualityScore,
+                issues: qualityResult.issues,
+                removedCharacters: qualityResult.removedCharacters,
+                beforeSample: text.replace(/\s+/g, ' ').trim().slice(0, 240),
+                afterSample: qualityResult.cleanedText.replace(/\s+/g, ' ').trim().slice(0, 240),
+            });
+
+            if (qualityResult.decision === 'reject') {
+                const rejection: RejectedContentUnit = {
+                    path: normalizedPath,
+                    qualityScore: qualityResult.qualityScore,
+                    issues: qualityResult.issues,
+                    reason: qualityResult.reason || 'Source unit rejected by content quality gate',
+                };
+                qualityRejections.push(rejection);
+                skippedSlices.push({
+                    title: extractSliceTitle(readableHtml, bestTitle) || bestTitle || 'Rejected source unit',
+                    slices: [slice],
+                    estimatedWords: countWords(qualityResult.cleanedText),
+                    classificationType: 'quality',
+                    reason: rejection.reason,
+                });
+                continue;
+            }
+
+            if (qualityResult.zone === 'notes' && referenceHandling !== 'keep') {
+                skippedSlices.push({
+                    title: sliceTitle || bestTitle || 'Notes',
+                    slices: [slice],
+                    estimatedWords: countWords(text),
+                    classificationType: 'backmatter',
+                    reason: `Notes omitted with reference handling mode: ${referenceHandling}`,
+                });
+                continue;
+            }
+
+            const cleanedHtml = qualityResult.cleanedHtml;
+            const cleanedText = qualityResult.cleanedText;
             const manifestItem = manifestByPath.get(normalizedPath);
 
             const explicitClassification = normalizedPath === coverPath
@@ -1453,19 +1567,19 @@ const filterNonReadingChapters = async (
                     : classifyArtifactLabel(sliceTitle, normalizedPath)
                         || classifyTitleMatter(
                             sliceTitle,
-                            text,
-                            readableHtml,
+                            cleanedText,
+                            cleanedHtml,
                             publicationTitle,
                             publicationAuthor,
                         )
                         || markupClassification;
 
             const classification = explicitClassification || classifyChapter(
-                text,
-                readableHtml,
+                cleanedText,
+                cleanedHtml,
                 sliceTitle,
             );
-            const estimatedWords = countWords(text);
+            const estimatedWords = countWords(cleanedText);
 
             if (!classification.shouldIncludeInReading) {
                 skippedSlices.push({
@@ -1480,23 +1594,24 @@ const filterNonReadingChapters = async (
 
             readableSlices.push(slice);
             readableSliceEstimates.push(estimatedWords);
-            readableSources.push({ html: readableHtml, text });
+            readableSources.push({ html: cleanedHtml, text: cleanedText });
             if (!bestTitle || isGenericChapterTitle(bestTitle) || bestTitle === 'Front Matter' || bestTitle === 'Opening') {
                 bestTitle = sliceTitle || bestTitle;
             }
         }
 
-        skippedChapters.push(...skippedSlices);
-
         if (readableSlices.length === 0) {
             const imageOnlySlices = skippedSlices.filter((slice) => slice.classificationType === 'image');
             if (imageOnlySlices.length > 0) {
+                skippedChapters.push(...skippedSlices.filter((slice) => slice.classificationType !== 'image' && slice.classificationType !== 'quality'));
                 readableChapters.push({
                     ...chapter,
                     title: bestTitle || imageOnlySlices[0].title || `Chapter ${readableChapters.length + 1}`,
                     slices: imageOnlySlices.flatMap((slice) => slice.slices),
                     estimatedWords: imageOnlySlices.reduce((sum, slice) => sum + slice.estimatedWords, 0),
                 });
+            } else {
+                skippedChapters.push(...skippedSlices.filter((slice) => slice.classificationType !== 'quality'));
             }
 
             if (skippedSlices.length === 0) {
@@ -1510,6 +1625,8 @@ const filterNonReadingChapters = async (
             }
             continue;
         }
+
+        skippedChapters.push(...skippedSlices.filter((slice) => slice.classificationType !== 'quality'));
 
         const readableChapter: PlannedChapter = {
             ...chapter,
@@ -1545,10 +1662,19 @@ const filterNonReadingChapters = async (
         readableChapters.push(readableChapter);
     }
 
-    return { chapters: readableChapters, skippedChapters };
+    return {
+        chapters: readableChapters,
+        skippedChapters,
+        qualityRejections,
+        contentQualityProfile,
+        contentQualityAudit,
+    };
 };
 
-export const buildEpubStructurePlan = async (zip: JSZip): Promise<EpubStructurePlan> => {
+export const buildEpubStructurePlan = async (
+    zip: JSZip,
+    options: EpubStructureOptions = {},
+): Promise<EpubStructurePlan> => {
     const opfPath = await resolveOpfPath(zip);
     const opfEntry = findZipEntry(zip, opfPath);
     if (!opfEntry) {
@@ -1639,6 +1765,7 @@ export const buildEpubStructurePlan = async (zip: JSZip): Promise<EpubStructureP
         coverManifestId,
         title,
         author,
+        options.referenceHandling || 'suppress',
     );
     if (filtered.chapters.length === 0) {
         throw new Error('Invalid EPUB: No readable content remains after excluding publication matter');
@@ -1667,6 +1794,9 @@ export const buildEpubStructurePlan = async (zip: JSZip): Promise<EpubStructureP
         spine,
         chapters: normalizedChapters,
         skippedChapters: filtered.skippedChapters,
+        qualityRejections: filtered.qualityRejections,
+        contentQualityProfile: filtered.contentQualityProfile,
+        contentQualityAudit: filtered.contentQualityAudit,
         structureVersion: normalizedStructure.version,
         structureMode: normalizedStructure.mode,
     };
@@ -1675,9 +1805,44 @@ export const buildEpubStructurePlan = async (zip: JSZip): Promise<EpubStructureP
 export const loadPlannedChapterSources = async (
     zip: JSZip,
     slices: ChapterSlice[],
+    contentQualityProfile?: ContentQualityProfile,
+    referenceHandling: ReferenceHandlingMode = 'suppress',
 ): Promise<LoadedChapterSlice[]> => {
     const htmlCache = new Map<string, string>();
     const sources: LoadedChapterSlice[] = [];
+    const rawUnits: RawContentUnit[] = [];
+
+    for (const slice of slices) {
+        const normalizedPath = normalizeArchivePath(slice.path);
+        if (!normalizedPath) continue;
+
+        let html = htmlCache.get(normalizedPath);
+        if (html === undefined) {
+            const entry = findZipEntry(zip, normalizedPath);
+            html = entry ? await entry.async('string') : '';
+            htmlCache.set(normalizedPath, html);
+        }
+        if (!html) continue;
+
+        const slicedHtml = extractSliceHtml(
+            html,
+            slice.startFragment,
+            slice.endFragment,
+            slice.startHeadingIndex,
+            slice.endHeadingIndex,
+        );
+        const readableHtml = stripEmbeddedPublicationMatter(slicedHtml);
+        const text = extractReadableTextFromHtml(readableHtml);
+        rawUnits.push({
+            ordinal: rawUnits.length,
+            path: normalizedPath,
+            html: readableHtml,
+            text,
+            lines: text.split('\n'),
+        });
+    }
+    const profile = contentQualityProfile || analyzeContentUnits(rawUnits);
+    let rawUnitIndex = 0;
 
     for (const slice of slices) {
         const normalizedPath = normalizeArchivePath(slice.path);
@@ -1696,19 +1861,14 @@ export const loadPlannedChapterSources = async (
 
         if (!html) continue;
 
-        const slicedHtml = extractSliceHtml(
-            html,
-            slice.startFragment,
-            slice.endFragment,
-            slice.startHeadingIndex,
-            slice.endHeadingIndex,
-        );
-        const readableHtml = stripEmbeddedPublicationMatter(slicedHtml);
-        const text = extractReadableTextFromHtml(readableHtml);
+        const rawUnit = rawUnits[rawUnitIndex++];
+        const qualityResult = cleanContentUnit(rawUnit, profile, { referenceHandling });
+        if (qualityResult.decision === 'reject') continue;
+        if (qualityResult.zone === 'notes' && referenceHandling !== 'keep') continue;
         sources.push({
             path: normalizedPath,
-            text,
-            html: readableHtml,
+            text: qualityResult.cleanedText,
+            html: qualityResult.cleanedHtml,
         });
     }
 

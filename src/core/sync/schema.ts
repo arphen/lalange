@@ -79,7 +79,7 @@ export const imageSchema = {
 } as const;
 
 export const chapterSchema = {
-    version: 1,
+    version: 2,
     primaryKey: 'id',
     type: 'object',
     properties: {
@@ -122,6 +122,44 @@ export const chapterSchema = {
             type: 'array',
             items: {
                 type: 'string'
+            }
+        },
+        notes: {
+            type: 'array',
+            items: {
+                type: 'object',
+                properties: {
+                    id: { type: 'string' },
+                    kind: {
+                        type: 'string',
+                        enum: ['footnote', 'endnote', 'translator-note', 'editor-note', 'unknown']
+                    },
+                    label: { type: 'string' },
+                    text: { type: 'string' },
+                    pageStart: { type: 'number' },
+                    pageEnd: { type: 'number' },
+                    sourceRegionIds: { type: 'array', items: { type: 'string' } },
+                    confidence: { type: 'number' },
+                    issues: { type: 'array', items: { type: 'string' } },
+                },
+                required: ['id', 'kind', 'text', 'pageStart', 'pageEnd', 'sourceRegionIds', 'confidence', 'issues']
+            }
+        },
+        noteAnchors: {
+            type: 'array',
+            items: {
+                type: 'object',
+                properties: {
+                    id: { type: 'string' },
+                    noteId: { type: 'string' },
+                    chapterId: { type: 'string' },
+                    wordIndex: { type: 'number' },
+                    sourcePage: { type: 'number' },
+                    markerText: { type: 'string' },
+                    confidence: { type: 'number' },
+                    evidence: { type: 'array', items: { type: 'string' } },
+                },
+                required: ['id', 'noteId', 'chapterId', 'wordIndex', 'sourcePage', 'confidence', 'evidence']
             }
         },
         densities: {

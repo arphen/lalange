@@ -1,8 +1,30 @@
-import { MAX_PDF_PAGES, type ParsedPdfDocument } from './pdfReader';
+import { MAX_PDF_PAGES, type ParsedPdfDocument, type PdfParseOptions } from './pdfReader';
+import { TesseractPdfOcrEngine, type PdfOcrEngine, type PdfOcrWord } from './pdfOcrAdapter';
+import { normalizePdfBox, type PdfLayoutWord, type PdfTextDirection } from './pdfLayout';
 
 interface PdfTextItem {
     str: string;
     hasEOL: boolean;
+    transform?: number[];
+    width?: number;
+    height?: number;
+    dir?: string;
+    fontName?: string;
+}
+
+interface PdfViewport {
+    width: number;
+    height: number;
+    convertToViewportPoint?: (x: number, y: number) => [number, number];
+}
+
+interface PdfPage {
+    getTextContent: (options: {
+        disableNormalization: boolean;
+        includeMarkedContent: boolean;
+    }) => Promise<{ items: unknown[] }>;
+    getViewport: (options: { scale: number }) => PdfViewport;
+    render: (options: { canvasContext: unknown; canvas: HTMLCanvasElement | null; viewport: PdfViewport }) => { promise: Promise<void> };
 }
 
 interface PdfMetadata {
@@ -21,14 +43,13 @@ interface PdfDocument {
     numPages: number;
     getMetadata: () => Promise<unknown>;
     getPageLabels: () => Promise<string[] | null>;
-    getPage: (pageNumber: number) => Promise<{
-        getTextContent: (options: {
-            disableNormalization: boolean;
-            includeMarkedContent: boolean;
-        }) => Promise<{ items: unknown[] }>;
-    }>;
+    getPage: (pageNumber: number) => Promise<PdfPage>;
     destroy: () => Promise<void>;
 }
+
+export const MAX_OCR_LONG_EDGE = 3_500;
+export const MAX_OCR_PIXELS = 16_000_000;
+const OCR_SCALE = 250 / 72;
 
 const isTextItem = (item: unknown): item is PdfTextItem => {
     if (!item || typeof item !== 'object') return false;
@@ -61,6 +82,145 @@ const appendTextItem = (current: string, item: PdfTextItem): string => {
     return item.hasEOL ? `${combined}\n` : combined;
 };
 
+const getTextDirection = (direction?: string): PdfTextDirection => {
+    if (direction === 'rtl') return 'rtl';
+    if (direction === 'ttb') return 'ttb';
+    return 'ltr';
+};
+
+const getViewportPoint = (viewport: PdfViewport, x: number, y: number): [number, number] => {
+    const point = viewport.convertToViewportPoint?.(x, y);
+    return point || [x, viewport.height - y];
+};
+
+const getTextItemBox = (
+    item: PdfTextItem,
+    viewport: PdfViewport,
+    startFraction: number,
+    endFraction: number,
+): { box: PdfLayoutWord['box']; baseline: number } | undefined => {
+    if (!item.transform || item.transform.length < 6) return undefined;
+    const [a, b, c, d, e, f] = item.transform;
+    const horizontalLength = Math.hypot(a, b) || 1;
+    const verticalLength = Math.hypot(c, d) || item.height || horizontalLength;
+    const xUnit = [a / horizontalLength, b / horizontalLength];
+    const yUnit = [c / verticalLength, d / verticalLength];
+    const itemWidth = item.width && item.width > 0 ? item.width : horizontalLength;
+    const itemHeight = item.height && item.height > 0 ? item.height : verticalLength;
+    const start = itemWidth * startFraction;
+    const end = itemWidth * endFraction;
+    const points = [
+        getViewportPoint(viewport, e + xUnit[0] * start, f + xUnit[1] * start),
+        getViewportPoint(viewport, e + xUnit[0] * end, f + xUnit[1] * end),
+        getViewportPoint(viewport, e + xUnit[0] * end + yUnit[0] * itemHeight, f + xUnit[1] * end + yUnit[1] * itemHeight),
+        getViewportPoint(viewport, e + xUnit[0] * start + yUnit[0] * itemHeight, f + xUnit[1] * start + yUnit[1] * itemHeight),
+    ];
+    const rawBox = {
+        x0: Math.min(...points.map(([x]) => x)),
+        y0: Math.min(...points.map(([, y]) => y)),
+        x1: Math.max(...points.map(([x]) => x)),
+        y1: Math.max(...points.map(([, y]) => y)),
+    };
+    const baseline = getViewportPoint(viewport, e + xUnit[0] * start, f + xUnit[1] * start)[1] / viewport.height;
+    return {
+        box: normalizePdfBox(rawBox, viewport.width, viewport.height),
+        baseline: Math.min(1, Math.max(0, baseline)),
+    };
+};
+
+const extractEmbeddedWords = (
+    pageNumber: number,
+    items: unknown[],
+    viewport: PdfViewport,
+): PdfLayoutWord[] => {
+    const words: PdfLayoutWord[] = [];
+    for (const [itemIndex, rawItem] of items.entries()) {
+        if (!isTextItem(rawItem)) continue;
+        const value = rawItem.str.replaceAll('\0', '');
+        const tokens = value.match(/\S+/g) || [];
+        let searchStart = 0;
+        for (const [wordIndex, token] of tokens.entries()) {
+            const start = value.indexOf(token, searchStart);
+            const end = start + token.length;
+            searchStart = end;
+            const geometry = getTextItemBox(rawItem, viewport, start / Math.max(1, value.length), end / Math.max(1, value.length));
+            if (!geometry) continue;
+            words.push({
+                id: `p${pageNumber}-embedded-${itemIndex}-${wordIndex}`,
+                pageNumber,
+                text: token,
+                box: geometry.box,
+                baseline: geometry.baseline,
+                fontName: rawItem.fontName,
+                fontSize: rawItem.height,
+                direction: getTextDirection(rawItem.dir),
+                source: 'embedded',
+                sourceLineId: `embedded-${itemIndex}`,
+            });
+        }
+    }
+    return words;
+};
+
+const extractOcrWords = (
+    pageNumber: number,
+    words: PdfOcrWord[],
+    width: number,
+    height: number,
+): PdfLayoutWord[] => words.map((word, index) => ({
+    id: `p${pageNumber}-ocr-${index}`,
+    pageNumber,
+    text: word.text,
+    box: normalizePdfBox(word.boundingBox, width, height),
+    baseline: Math.min(1, Math.max(0, word.boundingBox.y1 / height)),
+    confidence: word.confidence,
+    direction: 'ltr',
+    source: 'ocr',
+    sourceBlockId: word.blockId,
+    sourceLineId: word.lineId,
+}));
+
+const throwIfAborted = (signal?: AbortSignal): void => {
+    if (signal?.aborted) throw new DOMException('PDF parsing was cancelled.', 'AbortError');
+};
+
+const createCanvas = (width: number, height: number): HTMLCanvasElement | OffscreenCanvas => {
+    if (typeof OffscreenCanvas !== 'undefined') return new OffscreenCanvas(width, height);
+    if (typeof document === 'undefined') throw new Error('PDF OCR requires a browser canvas.');
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    return canvas;
+};
+
+const getOcrViewport = (page: PdfPage): PdfViewport => {
+    const baseViewport = page.getViewport({ scale: 1 });
+    const requestedScale = OCR_SCALE;
+    const longEdgeScale = MAX_OCR_LONG_EDGE / Math.max(baseViewport.width, baseViewport.height);
+    const pixelScale = Math.sqrt(MAX_OCR_PIXELS / Math.max(1, baseViewport.width * baseViewport.height));
+    const scale = Math.min(requestedScale, longEdgeScale, pixelScale);
+    return page.getViewport({ scale: Math.max(1, scale) });
+};
+
+const renderPageForOcr = async (page: PdfPage, signal?: AbortSignal): Promise<HTMLCanvasElement | OffscreenCanvas> => {
+    throwIfAborted(signal);
+    const viewport = getOcrViewport(page);
+    const canvas = createCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height));
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('Could not create a canvas for local PDF OCR.');
+    const htmlCanvas = typeof HTMLCanvasElement !== 'undefined' && canvas instanceof HTMLCanvasElement
+        ? canvas
+        : null;
+    await page.render({ canvasContext: context, canvas: htmlCanvas, viewport }).promise;
+    throwIfAborted(signal);
+    return canvas;
+};
+
+const releaseCanvas = (canvas: HTMLCanvasElement | OffscreenCanvas): void => {
+    canvas.width = 0;
+    canvas.height = 0;
+};
+
 const describePdfError = (error: unknown): Error => {
     const name = error instanceof Error ? error.name : '';
     const message = error instanceof Error ? error.message : String(error);
@@ -78,9 +238,12 @@ const describePdfError = (error: unknown): Error => {
 export const parsePdfWithPdfJs = async (
     rawData: Uint8Array,
     onProgress?: (message: string) => void,
+    options: PdfParseOptions = {},
 ): Promise<ParsedPdfDocument> => {
     let loadingTask: PdfLoadingTask | undefined;
     let pdfDocument: PdfDocument | undefined;
+    let ocrEngine: PdfOcrEngine | undefined;
+    let ownsOcrEngine = false;
 
     try {
         const [{ getDocument, GlobalWorkerOptions }, workerModule] = await Promise.all([
@@ -89,13 +252,14 @@ export const parsePdfWithPdfJs = async (
         ]);
         GlobalWorkerOptions.workerSrc = workerModule.default;
 
-        loadingTask = getDocument({
+        const task = getDocument({
             data: rawData.slice(),
             enableXfa: false,
             isEvalSupported: false,
             stopAtErrors: true,
-        });
-        const loadedDocument = await loadingTask.promise;
+        }) as unknown as PdfLoadingTask;
+        loadingTask = task;
+        const loadedDocument = await task.promise;
         pdfDocument = loadedDocument;
 
         if (loadedDocument.numPages > MAX_PDF_PAGES) {
@@ -104,25 +268,51 @@ export const parsePdfWithPdfJs = async (
 
         const metadata = await loadedDocument.getMetadata() as PdfMetadata;
         const pageLabels = await loadedDocument.getPageLabels();
+        if (options.useOcr) {
+            ocrEngine = options.ocrEngine || new TesseractPdfOcrEngine();
+            ownsOcrEngine = !options.ocrEngine;
+        }
         const pages: ParsedPdfDocument['pages'] = [];
 
         for (let pageNumber = 1; pageNumber <= loadedDocument.numPages; pageNumber++) {
+            throwIfAborted(options.signal);
             onProgress?.(`Extracting PDF page ${pageNumber} of ${loadedDocument.numPages}...`);
             const page = await loadedDocument.getPage(pageNumber);
             const textContent = await page.getTextContent({
                 disableNormalization: false,
                 includeMarkedContent: false,
             });
-            const text = textContent.items
+            const viewport = page.getViewport({ scale: 1 });
+            let words = extractEmbeddedWords(pageNumber, textContent.items, viewport);
+            let text = textContent.items
                 .filter(isTextItem)
                 .reduce(appendTextItem, '')
                 .trim();
 
-            pages.push({
+            if (!text && ocrEngine) {
+                onProgress?.(`Rendering PDF page ${pageNumber} for local OCR...`);
+                let canvas: HTMLCanvasElement | OffscreenCanvas | undefined;
+                try {
+                    canvas = await renderPageForOcr(page, options.signal);
+                    const ocrResult = await ocrEngine.recognize(canvas, (progress) => {
+                        onProgress?.(`OCR page ${pageNumber} of ${loadedDocument.numPages}: ${progress.status} ${Math.round(progress.progress * 100)}%`);
+                    });
+                    text = ocrResult.text;
+                    words = extractOcrWords(pageNumber, ocrResult.words, canvas.width, canvas.height);
+                } catch (error) {
+                    onProgress?.(`OCR failed for PDF page ${pageNumber}: ${error instanceof Error ? error.message : String(error)}`);
+                } finally {
+                    if (canvas) releaseCanvas(canvas);
+                }
+            }
+
+            const parsedPage = {
                 pageNumber,
                 label: pageLabels?.[pageNumber - 1] || undefined,
                 text,
-            });
+                ...(words.length > 0 ? { words } : {}),
+            };
+            pages.push(parsedPage);
         }
 
         return {
@@ -133,6 +323,9 @@ export const parsePdfWithPdfJs = async (
     } catch (error) {
         throw describePdfError(error);
     } finally {
+        if (ownsOcrEngine && ocrEngine) {
+            await ocrEngine.close().catch(() => undefined);
+        }
         if (pdfDocument) {
             await pdfDocument.destroy().catch(() => undefined);
         } else if (loadingTask) {

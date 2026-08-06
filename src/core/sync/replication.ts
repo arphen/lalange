@@ -10,6 +10,7 @@ if (typeof process === 'undefined' || typeof process.nextTick !== 'function') {
 import { replicateWebRTC, getConnectionHandlerSimplePeer, type SimplePeer } from 'rxdb/plugins/replication-webrtc';
 import { initDB, type MyDatabase } from './db';
 import type { RxCollection } from 'rxdb';
+import { Subject } from 'rxjs';
 
 // Use a public signaling server for testing, or a local one if available.
 // RxDB provides a default one for demos: wss://signaling.rxdb.info
@@ -78,7 +79,6 @@ function getChunkedConnectionHandler(options: Parameters<typeof getConnectionHan
         
         // Wrap message$ to reassemble chunks
         const originalMessage$ = handler.message$;
-        const { Subject } = await import('rxjs');
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const chunkedMessage$ = new Subject<any>();
         

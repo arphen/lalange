@@ -25,18 +25,19 @@ describe.skipIf(process.env.RUN_EPUB_CORPUS !== '1')('EPUB structure corpus', ()
         const plannedPagePaths = plan.chapters
             .flatMap((chapter) => chapter.slices.map((slice) => slice.path))
             .filter((slicePath) => /^EPUB\/page_\d+\.html$/i.test(slicePath));
-        const spinePagePaths = plan.spine
-            .map((item) => item.resolvedPath)
-            .filter((spinePath) => /^EPUB\/page_\d+\.html$/i.test(spinePath));
+        const qualityRejectedPagePaths = plan.qualityRejections
+            .map((rejection) => rejection.path)
+            .filter((rejectionPath) => /^EPUB\/page_\d+\.html$/i.test(rejectionPath));
+        const skippedPagePaths = plan.skippedChapters
+            .flatMap((chapter) => chapter.slices.map((slice) => slice.path))
+            .filter((slicePath) => /^EPUB\/page_\d+\.html$/i.test(slicePath));
         const resolvedChapters = await Promise.all(
-            plan.chapters.map((chapter) => loadPlannedChapterSources(zip, chapter.slices)),
+            plan.chapters.map((chapter) => loadPlannedChapterSources(zip, chapter.slices, plan.contentQualityProfile)),
         );
-        const resolvedWordTotal = resolvedChapters
+        const resolvedText = resolvedChapters
             .flatMap((sources) => sources.map((source) => source.text))
-            .join(' ')
-            .trim()
-            .split(/\s+/)
-            .filter(Boolean).length;
+            .join(' ');
+        const resolvedWordTotal = resolvedText.trim().split(/\s+/).filter(Boolean).length;
         const sectionWords = plan.chapters.map((chapter) => chapter.estimatedWords).sort((left, right) => left - right);
         const medianWords = sectionWords[Math.floor(sectionWords.length / 2)] || 0;
 
@@ -47,9 +48,43 @@ describe.skipIf(process.env.RUN_EPUB_CORPUS !== '1')('EPUB structure corpus', ()
             Array.from({ length: plan.chapters.length }, (_, index) => `Section ${index + 1}`),
         );
         expect(plan.chapters.every((chapter) => chapter.title !== 'Recovered')).toBe(true);
-        expect(plannedPagePaths).toEqual(spinePagePaths);
-        expect(new Set(plannedPagePaths)).toEqual(new Set(pagePaths));
+        const rejectedPagePathSet = new Set(qualityRejectedPagePaths);
+        const skippedPagePathSet = new Set(skippedPagePaths);
+        expect([...plannedPagePaths].sort()).toEqual(pagePaths
+            .filter((pagePath) => !rejectedPagePathSet.has(pagePath) && !skippedPagePathSet.has(pagePath))
+            .sort());
+        expect(new Set([...plannedPagePaths, ...qualityRejectedPagePaths, ...skippedPagePaths])).toEqual(new Set(pagePaths));
+        expect(new Set([...plannedPagePaths, ...qualityRejectedPagePaths, ...skippedPagePaths]).size)
+            .toBe(plannedPagePaths.length + qualityRejectedPagePaths.length + skippedPagePaths.length);
         expect(new Set(plannedPagePaths).size).toBe(plannedPagePaths.length);
+        expect(qualityRejectedPagePaths).toEqual([
+            'EPUB/page_0.html',
+            'EPUB/page_12.html',
+            'EPUB/page_158.html',
+            'EPUB/page_159.html',
+            'EPUB/page_161.html',
+            'EPUB/page_162.html',
+            'EPUB/page_163.html',
+        ]);
+        expect(plan.qualityRejections.every((rejection) => rejection.reason.length > 0)).toBe(true);
+        expect(skippedPagePaths).toContain('EPUB/page_104.html');
+        expect(plan.skippedChapters.filter((chapter) => chapter.classificationType === 'backmatter')
+            .every((chapter) => chapter.reason.includes('suppress'))).toBe(true);
+        expect(resolvedText).not.toContain('The text on this page is estimated to be only');
+        expect([...resolvedText].some((character) => {
+            const codePoint = character.codePointAt(0) || 0;
+            return codePoint <= 0x0008
+                || codePoint === 0x000B
+                || codePoint === 0x000C
+                || (codePoint >= 0x000E && codePoint <= 0x001F)
+                || (codePoint >= 0x007F && codePoint <= 0x009F);
+        })).toBe(false);
+        expect(resolvedText).not.toMatch(/(?:^|[\s.!?,;:()[\]{}"'])(?:\^+['"*®•♦■]+\^*|\^+\d{1,3}\^*|\^{2,})(?=$|[\s.,;!?()[\]{}"'])/u);
+        expect(resolvedChapters.flatMap((sources) => sources.map((source) => source.text.trim()))
+            .filter(Boolean)
+            .every((text) => !/^(?:Page\s+\d+\s+)?(?:THE GIFT|\d+ THE GIFT)\b/i.test(text))).toBe(true);
+        expect(resolvedText).toContain('Tahitian, Tongan and Mangarevan languages');
+        expect(resolvedText).toContain('The Spirit of the Thing Given');
         expect(plan.chapters.reduce((total, chapter) => total + chapter.estimatedWords, 0)).toBe(resolvedWordTotal);
         expect(medianWords).toBeGreaterThanOrEqual(2_000);
         expect(medianWords).toBeLessThanOrEqual(5_000);

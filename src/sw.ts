@@ -5,6 +5,8 @@ import {
     precacheAndRoute,
 } from 'workbox-precaching';
 import { NavigationRoute, registerRoute } from 'workbox-routing';
+import { CacheableResponsePlugin } from 'workbox-cacheable-response';
+import { CacheFirst } from 'workbox-strategies';
 import {
     GET_DEPLOYMENT_METADATA,
     type DeploymentMetadata,
@@ -43,6 +45,13 @@ registerRoute(
             'Content-Type': 'application/json',
         },
     })),
+);
+registerRoute(
+    ({ url }) => url.pathname.startsWith('/ocr-assets/'),
+    new CacheFirst({
+        cacheName: 'xyz-pdf-ocr-assets',
+        plugins: [new CacheableResponsePlugin({ statuses: [0, 200] })],
+    }),
 );
 
 serviceWorker.addEventListener('message', (event) => {

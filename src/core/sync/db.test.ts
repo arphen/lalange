@@ -5,6 +5,7 @@ import { wrappedValidateAjvStorage } from 'rxdb/plugins/validate-ajv';
 import {
     bookMigrationStrategies,
     chapterMigrationStrategies,
+    ensureWebCrypto,
     initDB,
 } from './db';
 import { bookSchema, chapterSchema } from './schema';
@@ -53,6 +54,25 @@ const createTestStorage = () => wrappedValidateAjvStorage({
 });
 
 describe('Database Initialization', () => {
+    it('explains when the browser origin cannot provide Web Crypto', () => {
+        const originalCrypto = globalThis.crypto;
+        Object.defineProperty(globalThis, 'crypto', {
+            configurable: true,
+            value: {},
+        });
+
+        try {
+            expect(() => ensureWebCrypto()).toThrow(
+                'Open XYZ through https:// or http://localhost, not an insecure network URL.',
+            );
+        } finally {
+            Object.defineProperty(globalThis, 'crypto', {
+                configurable: true,
+                value: originalCrypto,
+            });
+        }
+    });
+
     describe('ignoreDuplicate configuration', () => {
         it('should initialize database correctly with environment-aware ignoreDuplicate setting', async () => {
             // The database uses import.meta.env.DEV to set ignoreDuplicate
@@ -252,6 +272,8 @@ describe('Database Initialization', () => {
                 bookId: 'old-book',
                 title: 'Existing Chapter',
                 content: ['still', 'here'],
+                notes: [],
+                noteAnchors: [],
                 metadata: { classificationReason: 'existing metadata' },
             });
         } finally {

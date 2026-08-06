@@ -69,8 +69,8 @@ build: install-deps
 	@npm run build
 
 run: build
-	@echo "Starting production preview server..."
-	@npm run preview -- --host
+	@echo "Starting production preview server over HTTPS..."
+	@VITE_HTTPS=1 npm run preview -- --host
 
 # =====================================================================
 # Exhibition Render Pipeline (see docs/exhibition.md)

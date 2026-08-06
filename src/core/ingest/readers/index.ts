@@ -45,6 +45,9 @@ export { IngestReaderRegistry } from './registry';
 export { EpubIngestReader } from './epubReader';
 export { PdfIngestReader, MAX_PDF_BYTES, MAX_PDF_PAGES, isPdfData } from './pdfReader';
 export { parsePdfWithPdfJs } from './pdfjsAdapter';
+export { TesseractPdfOcrEngine, getDefaultPdfOcrAssets } from './pdfOcrAdapter';
+export { clusterPdfLines, normalizePdfBox, normalizePdfLayoutWord, resolvePdfLayout, segmentPdfBlocks } from './pdfLayout';
+export { classifyPdfRegions, extractPdfNotes, linkPdfNoteAnchors } from './pdfNotes';
 export { PlainTextIngestReader } from './plainTextReader';
 export { MarkdownIngestReader } from './markdownReader';
 export { encodeRawFilePayload, decodeRawFilePayload } from './rawFilePayload';
@@ -58,4 +61,23 @@ export type {
     ReaderImageAsset,
     ReaderStructureMetadata,
 } from './types';
-export type { ParsedPdfDocument, ParsedPdfPage, PdfReaderDependencies } from './pdfReader';
+export type { ParsedPdfDocument, ParsedPdfPage, PdfParseOptions, PdfReaderDependencies } from './pdfReader';
+export type {
+    PdfOcrAssetPaths,
+    PdfOcrEngine,
+    PdfOcrPageResult,
+    PdfOcrProgress,
+    PdfOcrWord,
+} from './pdfOcrAdapter';
+export type {
+    PdfBox,
+    PdfLayoutBlock,
+    PdfLayoutLine,
+    PdfLayoutPage,
+    PdfLayoutRegion,
+    PdfLayoutResult,
+    PdfLayoutWord,
+    PdfRegionRole,
+    PdfTextDirection,
+} from './pdfLayout';
+export type { PdfNoteAnchor, PdfNoteEntry, PdfNoteKind, PdfNoteLinkResult, PdfNotesResult } from './pdfNotes';

@@ -12,24 +12,13 @@
  * - Generation speed depends on model, backend, browser, and hardware
  */
 
-// Type-only import for the store (avoids circular deps at runtime)
-import type { useTTSStore as TTSStoreType } from '../store/tts';
+import { useTTSStore } from '../store/tts';
 import { getTTSAudioValidationError, type TTSAudioResult } from './audio';
 import {
     clearTransformersModelCache,
     isTransformersFileCached,
     transformersModelCache,
 } from './modelCache';
-
-// Lazy store getter to avoid circular dependency issues  
-let _ttsStore: typeof TTSStoreType | null = null;
-async function getTTSStore(): Promise<typeof TTSStoreType> {
-    if (!_ttsStore) {
-        const module = await import('../store/tts');
-        _ttsStore = module.useTTSStore;
-    }
-    return _ttsStore;
-}
 
 // Lazy import to avoid loading the large library until needed
 let KokoroTTS: typeof import('kokoro-js').KokoroTTS | null = null;
@@ -178,8 +167,6 @@ export async function initKokoro(
     device?: TTSDevice,
     onProgress?: (progress: number, status: string) => void
 ): Promise<void> {
-    // Get store using lazy getter to avoid circular dependency
-    const useTTSStore = await getTTSStore();
     const store = useTTSStore.getState();
     
     // Determine runtime config before deciding whether we can reuse the model.
@@ -277,7 +264,6 @@ export async function unloadKokoro(): Promise<void> {
     ttsLifecycleGeneration += 1;
     ttsInstance = null;
     currentLoadedConfig = null;
-    const useTTSStore = await getTTSStore();
     useTTSStore.getState().setReady(false);
     console.log('[TTS] Unloaded');
 }
@@ -366,7 +352,6 @@ async function generateValidatedAudio(
         }
 
         console.error(`[TTS] Rejected invalid ${failedConfig} output: ${validationError}. Retrying fp32 on WASM.`);
-        const useTTSStore = await getTTSStore();
         const store = useTTSStore.getState();
         store.setProgress(0, `Invalid ${failedConfig} audio · retrying FP32 / WASM`);
 
@@ -415,8 +400,6 @@ export async function generateKokoroSpeech(
     const { voice: requestedVoice, speed = 1.0 } = options;
     const voice = resolveKokoroVoiceId(requestedVoice);
     
-    // Get store using lazy getter
-    const useTTSStore = await getTTSStore();
     const store = useTTSStore.getState();
     store.setGenerating(true);
     
