@@ -7,6 +7,8 @@ import { useSettingsStore } from '../store/settings';
 vi.mock('../ai/webllm', () => ({
     getEngine: vi.fn(),
     MODEL_MAPPING: { tiny: 'mock-model' },
+    PACING_MODEL_TIER: 'tiny',
+    getPromptLogprobs: vi.fn().mockResolvedValue([]),
     generateWebLLMCompletion: vi.fn().mockImplementation(async () => {
         // Return a valid JSON response for density analysis
         // The pipeline expects a JSON object with sentence scores
@@ -31,8 +33,12 @@ const TEST_EPUB_PATH = path.resolve(__dirname, '../../../test_book.epub');
 describe('Pipeline Integration (WebLLM)', () => {
 
     beforeEach(() => {
-        // Force settings to use WebLLM
-        useSettingsStore.setState({ llmModel: 'tiny' });
+        // Enable the mocked background AI work for this integration test.
+        useSettingsStore.setState({
+            llmModel: 'tiny',
+            aiEnabled: true,
+            summariesEnabled: false,
+        });
     });
 
     it('should ingest and process a book end-to-end using WebLLM mock', async () => {
