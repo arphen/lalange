@@ -13,7 +13,7 @@
  */
 
 import { useTTSStore } from '../store/tts';
-import { getTTSAudioValidationError, type TTSAudioResult } from './audio';
+import { getTTSAudioValidationError, trimTTSAudioSilence, type TTSAudioResult } from './audio';
 import {
     clearTransformersModelCache,
     isTransformersFileCached,
@@ -404,8 +404,9 @@ export async function generateKokoroSpeech(
     store.setGenerating(true);
     
     try {
-        const { samples, phonemes } = await generateValidatedAudio(text, voice, speed);
+        const { samples: generatedSamples, phonemes } = await generateValidatedAudio(text, voice, speed);
         const sampleRate = 24000;
+        const samples = trimTTSAudioSilence(generatedSamples, sampleRate);
         const duration = samples.length / sampleRate;
         
         return {

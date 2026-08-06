@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { decodeWavToSamples, getTTSAudioValidationError } from './audio';
+import { decodeWavToSamples, getTTSAudioValidationError, trimTTSAudioSilence } from './audio';
 
 describe('getTTSAudioValidationError', () => {
     it('accepts finite audible samples', () => {
@@ -23,6 +23,27 @@ describe('getTTSAudioValidationError', () => {
     it('rejects pathological amplitude', () => {
         expect(getTTSAudioValidationError(new Float32Array([0.1, 2, -0.1])))
             .toBe('audio peak is out of range (2.00)');
+    });
+});
+
+describe('trimTTSAudioSilence', () => {
+    it('removes generated edge silence while retaining safe speech padding', () => {
+        const samples = new Float32Array(600);
+        samples.fill(0.2, 100, 300);
+
+        const trimmed = trimTTSAudioSilence(samples, 1000);
+
+        expect(trimmed).toHaveLength(340);
+        expect(trimmed[19]).toBe(0);
+        expect(trimmed[20]).toBeCloseTo(0.2);
+        expect(trimmed[trimmed.length - 121]).toBeCloseTo(0.2);
+        expect(trimmed[trimmed.length - 120]).toBe(0);
+    });
+
+    it('leaves ambiguous quiet audio untouched', () => {
+        const samples = new Float32Array(200).fill(0.0005);
+
+        expect(trimTTSAudioSilence(samples, 1000)).toBe(samples);
     });
 });
 

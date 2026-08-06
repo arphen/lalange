@@ -315,6 +315,51 @@ describe('Reader Component', () => {
         expect(screen.getByTestId('play-overlay')).toBeInTheDocument();
     });
 
+    it('refreshes TTS context rivers once per second while playback is active', async () => {
+        render(<Reader book={mockBook} />);
+
+        await waitFor(() => {
+            expect(screen.getByTestId('reader-context-bottom')).toHaveTextContent('world');
+        });
+        fireEvent.click(screen.getByRole('button', { name: 'Listen' }));
+
+        vi.useFakeTimers();
+        try {
+            act(() => {
+                useTTSStore.setState({ playbackState: 'playing' });
+            });
+
+            const bottomRiver = screen.getByTestId('reader-context-bottom');
+            bottomRiver.innerHTML = '<span>stale river</span>';
+
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(999);
+            });
+            expect(bottomRiver).toHaveTextContent('stale river');
+
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(1);
+            });
+            expect(bottomRiver).not.toHaveTextContent('stale river');
+            expect(bottomRiver).toHaveTextContent('world');
+
+            act(() => {
+                useTTSStore.setState({ playbackState: 'paused' });
+            });
+            bottomRiver.innerHTML = '<span>paused river</span>';
+
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(1000);
+            });
+            expect(bottomRiver).toHaveTextContent('paused river');
+        } finally {
+            act(() => {
+                useTTSStore.setState({ playbackState: 'idle' });
+            });
+            vi.useRealTimers();
+        }
+    });
+
     it('should toggle play/pause', async () => {
         render(<Reader book={mockBook} />);
         await waitFor(() => {

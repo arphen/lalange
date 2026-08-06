@@ -24,6 +24,59 @@ export interface TTSAudioResult {
     phonemes?: string;
 }
 
+const SILENCE_FRAME_SECONDS = 0.01;
+const SILENCE_RMS_THRESHOLD = 0.001;
+const LEADING_SPEECH_PADDING_SECONDS = 0.02;
+const TRAILING_SPEECH_PADDING_SECONDS = 0.12;
+
+/**
+ * Remove synthetic near-zero padding from generated audio without cutting
+ * against speech onsets or the short pause that belongs after a sentence.
+ */
+export function trimTTSAudioSilence(samples: Float32Array, sampleRate: number): Float32Array {
+    if (samples.length === 0 || !Number.isFinite(sampleRate) || sampleRate <= 0) return samples;
+
+    const frameSize = Math.max(1, Math.round(sampleRate * SILENCE_FRAME_SECONDS));
+    const isAudibleFrame = (start: number, end: number): boolean => {
+        let sumSquares = 0;
+        for (let index = start; index < end; index++) {
+            sumSquares += samples[index] * samples[index];
+        }
+        return Math.sqrt(sumSquares / Math.max(1, end - start)) >= SILENCE_RMS_THRESHOLD;
+    };
+
+    let firstAudibleSample = -1;
+    for (let start = 0; start < samples.length; start += frameSize) {
+        const end = Math.min(samples.length, start + frameSize);
+        if (isAudibleFrame(start, end)) {
+            firstAudibleSample = start;
+            break;
+        }
+    }
+
+    if (firstAudibleSample < 0) return samples;
+
+    let lastAudibleSample = samples.length;
+    for (let end = samples.length; end > 0; end -= frameSize) {
+        const start = Math.max(0, end - frameSize);
+        if (isAudibleFrame(start, end)) {
+            lastAudibleSample = end;
+            break;
+        }
+    }
+
+    const start = Math.max(
+        0,
+        firstAudibleSample - Math.round(sampleRate * LEADING_SPEECH_PADDING_SECONDS),
+    );
+    const end = Math.min(
+        samples.length,
+        lastAudibleSample + Math.round(sampleRate * TRAILING_SPEECH_PADDING_SECONDS),
+    );
+
+    return start === 0 && end === samples.length ? samples : samples.slice(start, end);
+}
+
 export function getTTSAudioValidationError(samples: Float32Array): string | null {
     if (samples.length === 0) return 'empty audio buffer';
 

@@ -24,6 +24,7 @@ class FakeAudioContext {
     static resumePromise: Promise<void> | null = null;
     static channelData = new Float32Array();
     static noteOn = vi.fn();
+    static sources: AudioBufferSourceNode[] = [];
 
     currentTime = 0;
     state: AudioContextState = FakeAudioContext.initialState;
@@ -52,7 +53,7 @@ class FakeAudioContext {
     }
 
     createBufferSource(): AudioBufferSourceNode {
-        return {
+        const source = {
             buffer: null,
             connect: vi.fn(),
             disconnect: vi.fn(),
@@ -61,6 +62,8 @@ class FakeAudioContext {
             stop: vi.fn(),
             onended: null,
         } as unknown as AudioBufferSourceNode;
+        FakeAudioContext.sources.push(source);
+        return source;
     }
 
     resume(): Promise<void> {
@@ -91,6 +94,7 @@ describe('TTSAudioPlayer word tracking', () => {
         FakeAudioContext.resumePromise = null;
         FakeAudioContext.channelData = new Float32Array();
         FakeAudioContext.noteOn.mockReset();
+        FakeAudioContext.sources = [];
         nextAnimationFrame = null;
         vi.stubGlobal('AudioContext', FakeAudioContext);
         vi.stubGlobal('requestAnimationFrame', vi.fn((callback: FrameRequestCallback) => {
@@ -140,6 +144,97 @@ describe('TTSAudioPlayer word tracking', () => {
         nextAnimationFrame?.(0);
 
         expect(onWordChange).toHaveBeenLastCalledWith(21);
+    });
+
+    it('schedules the full contiguous queue before the current source ends', async () => {
+        for (let index = 0; index < 4; index++) {
+            await ttsPlayer.queueAudio(
+                { samples: new Float32Array(4), sampleRate: 24000, duration: 2, text: `Sentence ${index}.` },
+                { index, text: `Sentence ${index}.`, startWordIndex: index, endWordIndex: index },
+            );
+        }
+
+        await ttsPlayer.play(0);
+
+        expect(FakeAudioContext.sources).toHaveLength(4);
+        expect(FakeAudioContext.sources[1].start).toHaveBeenCalledWith(2);
+        expect(FakeAudioContext.sources[2].start).toHaveBeenCalledWith(4);
+        expect(FakeAudioContext.sources[3].start).toHaveBeenCalledWith(6);
+    });
+
+    it('continues scheduling from the promoted sentence without a handoff restart', async () => {
+        for (let index = 0; index < 3; index++) {
+            await ttsPlayer.queueAudio(
+                { samples: new Float32Array(4), sampleRate: 24000, duration: 2, text: `Sentence ${index}.` },
+                { index, text: `Sentence ${index}.`, startWordIndex: index, endWordIndex: index },
+            );
+        }
+
+        await ttsPlayer.play(0);
+        FakeAudioContext.sources[0].onended?.(new Event('ended'));
+
+        expect(ttsPlayer.getState().currentSentenceIndex).toBe(1);
+        expect(FakeAudioContext.sources).toHaveLength(3);
+        expect(FakeAudioContext.sources[1].start).toHaveBeenCalledTimes(1);
+        expect(FakeAudioContext.sources[2].start).toHaveBeenCalledWith(4);
+
+        FakeAudioContext.sources[1].onended?.(new Event('ended'));
+
+        expect(ttsPlayer.getState().currentSentenceIndex).toBe(2);
+        expect(FakeAudioContext.sources).toHaveLength(3);
+        expect(FakeAudioContext.sources[2].start).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not replay scheduled samples when handoff callbacks are severely delayed', async () => {
+        for (let index = 0; index < 3; index++) {
+            await ttsPlayer.queueAudio(
+                { samples: new Float32Array(4), sampleRate: 24000, duration: 2, text: `Sentence ${index}.` },
+                { index, text: `Sentence ${index}.`, startWordIndex: index, endWordIndex: index },
+            );
+        }
+
+        await ttsPlayer.play(0);
+        FakeAudioContext.sources[1].onended?.(new Event('ended'));
+        FakeAudioContext.sources[2].onended?.(new Event('ended'));
+        FakeAudioContext.sources[0].onended?.(new Event('ended'));
+
+        expect(ttsPlayer.getState().currentSentenceIndex).toBe(3);
+        expect(FakeAudioContext.sources).toHaveLength(3);
+        for (const source of FakeAudioContext.sources) {
+            expect(source.start).toHaveBeenCalledTimes(1);
+        }
+    });
+
+    it('does not display elapsed time beyond the audible sentence duration', async () => {
+        await ttsPlayer.queueAudio(
+            { samples: new Float32Array(4), sampleRate: 24000, duration: 4, text: 'One two.' },
+            { index: 0, text: 'One two.', startWordIndex: 0, endWordIndex: 1 },
+        );
+        await ttsPlayer.play(0);
+
+        FakeAudioContext.current!.currentTime = 6;
+        nextAnimationFrame?.(0);
+
+        expect(ttsState.setCurrentTime).toHaveBeenLastCalledWith(4);
+    });
+
+    it('samples the displayed clock instead of updating React every animation frame', async () => {
+        await ttsPlayer.queueAudio(
+            { samples: new Float32Array(4), sampleRate: 24000, duration: 4, text: 'One two.' },
+            { index: 0, text: 'One two.', startWordIndex: 0, endWordIndex: 1 },
+        );
+        await ttsPlayer.play(0);
+        ttsState.setCurrentTime.mockClear();
+
+        FakeAudioContext.current!.currentTime = 0.05;
+        nextAnimationFrame?.(0);
+
+        expect(ttsState.setCurrentTime).not.toHaveBeenCalled();
+
+        FakeAudioContext.current!.currentTime = 0.2;
+        nextAnimationFrame?.(0);
+
+        expect(ttsState.setCurrentTime).toHaveBeenLastCalledWith(0.2);
     });
 
     it('queues audio when copyToChannel is unavailable', async () => {

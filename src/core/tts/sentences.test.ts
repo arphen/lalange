@@ -49,6 +49,17 @@ describe('splitIntoSentences', () => {
         expect(sentences[1].text).toBe('Then left.');
     });
 
+    it('recognizes terminal punctuation before EPUB closing marks', () => {
+        const words = ['She', 'asked,', '“Really?”', 'Then', 'she', 'laughed.)', 'Next.'];
+        const sentences = splitIntoSentences(words);
+
+        expect(sentences.map((sentence) => sentence.text)).toEqual([
+            'She asked, “Really?”',
+            'Then she laughed.)',
+            'Next.',
+        ]);
+    });
+
     it('should handle empty input', () => {
         const sentences = splitIntoSentences([]);
         expect(sentences).toHaveLength(0);
@@ -69,14 +80,13 @@ describe('splitIntoSentences', () => {
         expect(sentences[0].endWordIndex).toBe(3);
     });
 
-    it('should break long sentences at 50 words', () => {
-        // Create 60 words without punctuation
+    it('keeps a normal-length sentence intact past 50 words', () => {
         const words = Array(60).fill('word');
         const sentences = splitIntoSentences(words);
 
-        // Should break into at least 2 sentences
-        expect(sentences.length).toBeGreaterThanOrEqual(2);
-        expect(sentences[0].endWordIndex - sentences[0].startWordIndex + 1).toBeLessThanOrEqual(50);
+        expect(sentences).toHaveLength(1);
+        expect(sentences[0].startWordIndex).toBe(0);
+        expect(sentences[0].endWordIndex).toBe(59);
     });
 
     it('should maintain correct word indices across sentences', () => {
