@@ -158,6 +158,7 @@ export const chapterMigrationStrategies = {
         ...document,
         paragraphBreaks: document.paragraphBreaks || [],
     }),
+    4: (document: ChapterDocType): ChapterDocType => document,
 };
 
 let dbPromise: Promise<MyDatabase> | null = null;

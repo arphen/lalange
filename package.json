@@ -20,6 +20,7 @@
     "test": "vitest --exclude '**/*.integration.test.ts'",
     "test:epub-corpus": "RUN_EPUB_CORPUS=1 vitest run src/core/ingest/structure.corpus.integration.test.ts",
     "gutenberg:corpus": "node scripts/download_gutenberg_corpus.mjs --run",
+    "inspect:epub": "node scripts/inspect_epub_quality.mjs",
     "test:integration": "vitest run integration",
     "coverage": "vitest run --coverage",
     "og:image": "node scripts/generate-og-image.mjs",

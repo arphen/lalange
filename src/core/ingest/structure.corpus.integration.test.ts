@@ -41,13 +41,105 @@ describe.skipIf(process.env.RUN_EPUB_CORPUS !== '1')('EPUB structure corpus', ()
         const sectionWords = plan.chapters.map((chapter) => chapter.estimatedWords).sort((left, right) => left - right);
         const medianWords = sectionWords[Math.floor(sectionWords.length / 2)] || 0;
 
-        expect(plan.structureMode).toBe('generated');
-        expect(plan.chapters.length).toBeGreaterThanOrEqual(12);
-        expect(plan.chapters.length).toBeLessThanOrEqual(25);
-        expect(plan.chapters.map((chapter) => chapter.title)).toEqual(
-            Array.from({ length: plan.chapters.length }, (_, index) => `Section ${index + 1}`),
-        );
+        const expectedTitles = [
+            'Opening',
+            'Introduction',
+            "Translator's Note",
+            'Introductory: Gifts and Return Gifts',
+            'Chapter I: Gifts and the Obligation to Return Gifts',
+            'Chapter II: Distribution of the System: Generosity, Honour and Money',
+            'Chapter III: Survivals in Early Literature',
+            'Chapter IV: Conclusions',
+        ];
+        const expectedStarts = [
+            'EPUB/notice.html',
+            'EPUB/page_13.html',
+            'EPUB/page_19.html',
+            'EPUB/page_22.html',
+            'EPUB/page_28.html',
+            'EPUB/page_39.html',
+            'EPUB/page_68.html',
+            'EPUB/page_85.html',
+        ];
+
+        expect(plan.structureMode).toBe('authored');
+        expect(plan.structureDiagnostics.declaredToc.nav).toMatchObject({
+            state: 'present-empty',
+            paths: ['EPUB/nav.xhtml'],
+            entryCount: 0,
+        });
+        expect(plan.structureDiagnostics.declaredToc.ncx).toMatchObject({
+            state: 'present-empty',
+            paths: ['EPUB/toc.ncx'],
+            entryCount: 0,
+        });
+        expect(plan.structureDiagnostics.toc).toMatchObject({
+            collectedEntries: 0,
+            validatedEntries: 0,
+            boundaries: 0,
+            degraded: false,
+        });
+        expect(plan.structureDiagnostics.heading.selectedSource).toBe('scan-heading');
+        expect(plan.structureDiagnostics.heading.candidates.some((candidate) => (
+            candidate.kind === 'scan-heading'
+            && candidate.title === 'Chapter I: Gifts and the Obligation to Return Gifts'
+            && candidate.path === 'EPUB/page_28.html'
+        ))).toBe(true);
+        expect(plan.structureDiagnostics.finalSections.map((section) => section.title)).toEqual(expectedTitles);
+        expect(plan.chapters.map((chapter) => chapter.title)).toEqual(expectedTitles);
+        expect(plan.chapters.map((chapter) => chapter.slices[0]?.path)).toEqual(expectedStarts);
+        expect(plan.chapters[0].source).toBe('spine');
+        expect(plan.chapters.slice(1).every((chapter) => (
+            chapter.source === 'heading'
+            && chapter.structureOwnership === 'authored'
+            && chapter.reformationReason === 'authored-boundary'
+            && chapter.boundaryEvidence?.includes('scan-heading')
+            && chapter.authoredGroupTitle === chapter.title
+        ))).toBe(true);
         expect(plan.chapters.every((chapter) => chapter.title !== 'Recovered')).toBe(true);
+
+        const recoveredStarts = expectedStarts.slice(1);
+        for (const chapter of plan.chapters.slice(1)) {
+            const chapterPaths = chapter.slices.map((slice) => slice.path);
+            expect(recoveredStarts.filter((start) => chapterPaths.includes(start))).toHaveLength(1);
+        }
+        const translatorNote = plan.chapters.find((chapter) => chapter.title === "Translator's Note");
+        const introductoryChapter = plan.chapters.find((chapter) => chapter.title.startsWith('Introductory:'));
+        expect(translatorNote?.slices.map((slice) => slice.path)).not.toContain('EPUB/page_21.html');
+        expect(translatorNote?.slices.map((slice) => slice.path)).not.toContain('EPUB/page_22.html');
+        expect(introductoryChapter?.slices.map((slice) => slice.path)).toContain('EPUB/page_22.html');
+        expect(plan.chapters.some((chapter) => chapter.title.startsWith('Notes'))).toBe(false);
+        expect(plan.skippedChapters.some((chapter) => (
+            chapter.classificationType === 'toc'
+            && chapter.slices.some((slice) => slice.path === 'EPUB/page_21.html')
+        ))).toBe(true);
+
+        const skippedNotePaths = plan.skippedChapters
+            .filter((chapter) => chapter.classificationType === 'backmatter')
+            .flatMap((chapter) => chapter.slices.map((slice) => slice.path));
+        expect(skippedNotePaths).toContain('EPUB/page_104.html');
+        expect(skippedNotePaths).toContain('EPUB/page_152.html');
+        expect(plan.skippedChapters
+            .filter((chapter) => chapter.classificationType === 'backmatter')
+            .every((chapter) => chapter.reason.includes('suppress'))).toBe(true);
+
+        const repeatedPlan = await buildEpubStructurePlan(zip);
+        expect(repeatedPlan.structureMode).toBe(plan.structureMode);
+        expect(repeatedPlan.chapters.map(({ title, slices, boundaryEvidence }) => ({ title, slices, boundaryEvidence })))
+            .toEqual(plan.chapters.map(({ title, slices, boundaryEvidence }) => ({ title, slices, boundaryEvidence })));
+
+        const keptPlan = await buildEpubStructurePlan(zip, { referenceHandling: 'keep' });
+        const keptNotes = keptPlan.chapters.filter((chapter) => chapter.title.startsWith('Notes'));
+        expect(keptPlan.structureMode).toBe('hybrid');
+        expect(keptNotes.length).toBeGreaterThan(0);
+        expect(keptNotes.every((chapter) => (
+            chapter.source === 'heading' && chapter.boundaryEvidence?.includes('scan-heading')
+        ))).toBe(true);
+        expect(keptNotes.flatMap((chapter) => chapter.slices.map((slice) => slice.path)))
+            .toContain('EPUB/page_104.html');
+        expect(keptNotes.flatMap((chapter) => chapter.slices.map((slice) => slice.path)))
+            .toContain('EPUB/page_152.html');
+
         const rejectedPagePathSet = new Set(qualityRejectedPagePaths);
         const skippedPagePathSet = new Set(skippedPagePaths);
         expect([...plannedPagePaths].sort()).toEqual(pagePaths
@@ -71,6 +163,9 @@ describe.skipIf(process.env.RUN_EPUB_CORPUS !== '1')('EPUB structure corpus', ()
         expect(plan.skippedChapters.filter((chapter) => chapter.classificationType === 'backmatter')
             .every((chapter) => chapter.reason.includes('suppress'))).toBe(true);
         expect(resolvedText).not.toContain('The text on this page is estimated to be only');
+        expect(resolvedText).not.toContain('CONTENTS Introductory');
+        expect(resolvedChapters[3].map((source) => source.text).join(' '))
+            .toContain('I have never found a man so generous and hospitable');
         expect([...resolvedText].some((character) => {
             const codePoint = character.codePointAt(0) || 0;
             return codePoint <= 0x0008

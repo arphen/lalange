@@ -5,11 +5,12 @@ import { createServer } from 'vite';
 
 const inputPath = process.argv[2];
 if (!inputPath) {
-    console.error('Usage: node scripts/inspect_epub_quality.mjs <book.epub> [--reference=keep|compact|suppress]');
+    console.error('Usage: node scripts/inspect_epub_quality.mjs <book.epub> [--reference=keep|compact|suppress] [--structure]');
     process.exitCode = 1;
 } else {
     const referenceArgument = process.argv.find((argument) => argument.startsWith('--reference='));
     const referenceHandling = referenceArgument?.split('=')[1] || 'suppress';
+    const inspectStructure = process.argv.includes('--structure');
     if (!['keep', 'compact', 'suppress'].includes(referenceHandling)) {
         throw new Error(`Unsupported reference mode: ${referenceHandling}`);
     }
@@ -26,6 +27,9 @@ if (!inputPath) {
         const archive = await fs.readFile(path.resolve(inputPath));
         const zip = await JSZip.loadAsync(archive);
         const plan = await buildEpubStructurePlan(zip, { referenceHandling });
+        if (inspectStructure) {
+            console.log(JSON.stringify({ structure: plan.structureDiagnostics }));
+        }
         const records = plan.contentQualityAudit.map((record) => ({
             ...record,
             zone: record.zone || 'body',

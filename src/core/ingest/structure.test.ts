@@ -63,6 +63,34 @@ describe('buildEpubStructurePlan', () => {
         expect(plan.author).toBe('Right Author');
         expect(plan.chapters).toHaveLength(1);
         expect(plan.chapters[0].estimatedWords).toBeGreaterThan(100);
+        expect(plan.structureDiagnostics.declaredToc.nav.state).toBe('absent');
+        expect(plan.structureDiagnostics.declaredToc.ncx.state).toBe('absent');
+    });
+
+    it('reports a declared nav document without a TOC root as invalid', async () => {
+        const zip = new JSZip();
+        zip.file('META-INF/container.xml', containerXml('OEBPS/content.opf'));
+        zip.file('OEBPS/content.opf', `
+            <package xmlns:dc="http://purl.org/dc/elements/1.1/">
+                <metadata><dc:title>Invalid Nav</dc:title></metadata>
+                <manifest>
+                    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav" />
+                    <item id="book" href="book.xhtml" media-type="application/xhtml+xml" />
+                </manifest>
+                <spine><itemref idref="book" /></spine>
+            </package>
+        `);
+        zip.file('OEBPS/nav.xhtml', xhtml('<p>not a navigation document</p>'));
+        zip.file('OEBPS/book.xhtml', xhtml(`<p>${repeatedWords('word', 200)}</p>`));
+
+        const plan = await buildEpubStructurePlan(zip);
+
+        expect(plan.structureDiagnostics.declaredToc.nav).toMatchObject({
+            state: 'present-invalid',
+            paths: ['OEBPS/nav.xhtml'],
+            entryCount: 0,
+        });
+        expect(plan.structureDiagnostics.declaredToc.ncx.state).toBe('absent');
     });
 
     it('groups spine pages into meaningful chapters using TOC boundaries', async () => {
@@ -104,6 +132,12 @@ describe('buildEpubStructurePlan', () => {
         const plan = await buildEpubStructurePlan(zip);
 
         expect(plan.chapters).toHaveLength(2);
+        expect(plan.structureDiagnostics.declaredToc.nav).toMatchObject({
+            state: 'present-valid',
+            paths: ['OEBPS/nav.xhtml'],
+            entryCount: 2,
+        });
+        expect(plan.structureDiagnostics.declaredToc.ncx.state).toBe('absent');
         expect(plan.chapters[0].title).toBe('Opening');
         expect(plan.chapters[0].slices).toHaveLength(2);
         expect(plan.chapters[1].title).toBe('Finale');
@@ -518,6 +552,77 @@ describe('buildEpubStructurePlan', () => {
             'OPS/page2.xhtml',
         ]);
         expect(plan.chapters.every((chapter) => chapter.source === 'heading')).toBe(true);
+    });
+
+    it('recovers coherent headings from leading paragraph blocks in page-like spine files', async () => {
+        const zip = new JSZip();
+        zip.file('META-INF/container.xml', containerXml('OPS/content.opf'));
+        zip.file('OPS/content.opf', `
+            <package xmlns:dc="http://purl.org/dc/elements/1.1/">
+                <metadata><dc:title>Paragraph Headings</dc:title></metadata>
+                <manifest>
+                    <item id="page1" href="page1.xhtml" media-type="application/xhtml+xml" />
+                    <item id="page2" href="page2.xhtml" media-type="application/xhtml+xml" />
+                    <item id="page3" href="page3.xhtml" media-type="application/xhtml+xml" />
+                    <item id="page4" href="page4.xhtml" media-type="application/xhtml+xml" />
+                    <item id="page5" href="page5.xhtml" media-type="application/xhtml+xml" />
+                </manifest>
+                <spine>
+                    <itemref idref="page1" />
+                    <itemref idref="page2" />
+                    <itemref idref="page3" />
+                    <itemref idref="page4" />
+                    <itemref idref="page5" />
+                </spine>
+            </package>
+        `);
+        zip.file('OPS/page1.xhtml', xhtml(`<p>CHAPTER I ARRIVAL THE first body begins here. ${repeatedWords('first', 100)}</p>`));
+        zip.file('OPS/page2.xhtml', xhtml(`<p>${repeatedWords('first', 100)}</p>`));
+        zip.file('OPS/page3.xhtml', xhtml(`<p>CHAPTER II DISCOVERY THE second body begins here. ${repeatedWords('second', 100)}</p>`));
+        zip.file('OPS/page4.xhtml', xhtml(`<p>${repeatedWords('second', 100)}</p>`));
+        zip.file('OPS/page5.xhtml', xhtml(`<p>CHAPTER III RETURN THE third body begins here. ${repeatedWords('third', 100)}</p>`));
+
+        const plan = await buildEpubStructurePlan(zip);
+
+        expect(plan.chapters.map((chapter) => chapter.title)).toEqual([
+            'Chapter I: Arrival',
+            'Chapter II: Discovery',
+            'Chapter III: Return',
+        ]);
+        expect(plan.chapters.map((chapter) => chapter.slices.map((slice) => slice.path))).toEqual([
+            ['OPS/page1.xhtml', 'OPS/page2.xhtml'],
+            ['OPS/page3.xhtml', 'OPS/page4.xhtml'],
+            ['OPS/page5.xhtml'],
+        ]);
+        expect(plan.chapters.every((chapter) => chapter.source === 'heading')).toBe(true);
+        expect(plan.chapters.every((chapter) => chapter.boundaryEvidence?.includes('scan-heading'))).toBe(true);
+        expect(plan.structureMode).toBe('authored');
+    });
+
+    it('keeps an isolated paragraph heading in generated fallback mode', async () => {
+        const zip = new JSZip();
+        zip.file('META-INF/container.xml', containerXml('OPS/content.opf'));
+        zip.file('OPS/content.opf', `
+            <package xmlns:dc="http://purl.org/dc/elements/1.1/">
+                <metadata><dc:title>Ambiguous Paragraph Heading</dc:title></metadata>
+                <manifest>
+                    <item id="page1" href="page1.xhtml" media-type="application/xhtml+xml" />
+                    <item id="page2" href="page2.xhtml" media-type="application/xhtml+xml" />
+                </manifest>
+                <spine>
+                    <itemref idref="page1" />
+                    <itemref idref="page2" />
+                </spine>
+            </package>
+        `);
+        zip.file('OPS/page1.xhtml', xhtml('<p>CHAPTER I ARRIVAL The text continues without a peer heading.</p>'));
+        zip.file('OPS/page2.xhtml', xhtml(`<p>${repeatedWords('continued', 100)}</p>`));
+
+        const plan = await buildEpubStructurePlan(zip);
+
+        expect(plan.structureMode).toBe('generated');
+        expect(plan.chapters.map((chapter) => chapter.title)).toEqual(['Section 1']);
+        expect(plan.chapters.every((chapter) => chapter.boundaryEvidence?.includes('source-spine'))).toBe(true);
     });
 
     it('retains material before recovered headings without calling it authored structure', async () => {

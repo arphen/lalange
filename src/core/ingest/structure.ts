@@ -13,7 +13,7 @@ import type { ReferenceHandlingMode } from './cleaning';
 
 export type ChapterSource = 'toc' | 'heading' | 'spine' | 'merged';
 
-export type BoundaryEvidence = 'publisher-toc' | 'document-heading' | 'source-spine';
+export type BoundaryEvidence = 'publisher-toc' | 'document-heading' | 'scan-heading' | 'source-spine';
 export type SectionOwnership = 'authored' | 'xyz';
 export type ReformationReason =
     | 'authored-boundary'
@@ -49,6 +49,8 @@ interface ChapterBoundary {
     title: string;
     fragment?: string;
     headingIndex?: number;
+    blockIndex?: number;
+    evidence?: BoundaryEvidence;
 }
 
 export interface ChapterSlice {
@@ -57,6 +59,8 @@ export interface ChapterSlice {
     endFragment?: string;
     startHeadingIndex?: number;
     endHeadingIndex?: number;
+    startBlockIndex?: number;
+    endBlockIndex?: number;
 }
 
 export interface PlannedChapter {
@@ -133,6 +137,61 @@ export interface LoadedChapterSlice {
     html: string;
 }
 
+export type DeclaredTocState = 'absent' | 'present-empty' | 'present-invalid' | 'present-valid';
+
+export interface StructureCandidateDiagnostic {
+    path: string;
+    title: string;
+    kind: 'dom-heading' | 'scan-heading';
+    level?: number;
+    ordinal?: number;
+    headingIndex?: number;
+    blockIndex?: number;
+}
+
+export interface StructureDiagnostics {
+    declaredToc: {
+        nav: { state: DeclaredTocState; paths: string[]; entryCount: number };
+        ncx: { state: DeclaredTocState; paths: string[]; entryCount: number };
+    };
+    toc: {
+        collectedEntries: number;
+        validatedEntries: number;
+        boundaries: number;
+        degraded: boolean;
+    };
+    heading: {
+        selectedSource: 'document-heading' | 'scan-heading' | 'none';
+        candidates: StructureCandidateDiagnostic[];
+        selectedBoundaries: { path: string; title: string; evidence?: BoundaryEvidence }[];
+        abstentionReasons: string[];
+    };
+    sourceUnits: {
+        title?: string;
+        source: ChapterSource;
+        boundaryEvidence: BoundaryEvidence;
+        estimatedWords: number;
+        paths: string[];
+    }[];
+    finalSections: {
+        title: string;
+        source: ChapterSource;
+        ownership: SectionOwnership;
+        reason: ReformationReason;
+        boundaryEvidence: BoundaryEvidence[];
+        authoredGroupTitle?: string;
+        estimatedWords: number;
+        paths: string[];
+    }[];
+    skipped: {
+        title: string;
+        classificationType: SkippedPlannedChapter['classificationType'];
+        reason: string;
+        paths: string[];
+    }[];
+    qualityRejections: { path: string; reason: string }[];
+}
+
 export interface EpubStructurePlan {
     opfPath: string;
     opfDir: string;
@@ -148,6 +207,7 @@ export interface EpubStructurePlan {
     contentQualityAudit: ContentQualityAuditRecord[];
     structureVersion: 1;
     structureMode: StructureMode;
+    structureDiagnostics: StructureDiagnostics;
 }
 
 export interface EpubStructureOptions {
@@ -156,6 +216,7 @@ export interface EpubStructureOptions {
 
 const MARKER_START = '__XYZ_CHAPTER_START__';
 const MARKER_END = '__XYZ_CHAPTER_END__';
+const BLOCK_SELECTOR = 'p, h1, h2, h3, h4, h5, h6, li, blockquote';
 
 const normalizeWhitespace = (value: string): string => value.replace(/\s+/g, ' ').trim();
 
@@ -277,8 +338,17 @@ const extractSliceHtml = (
     endFragment?: string,
     startHeadingIndex?: number,
     endHeadingIndex?: number,
+    startBlockIndex?: number,
+    endBlockIndex?: number,
 ): string => {
-    if (!startFragment && !endFragment && startHeadingIndex === undefined && endHeadingIndex === undefined) {
+    if (
+        !startFragment
+        && !endFragment
+        && startHeadingIndex === undefined
+        && endHeadingIndex === undefined
+        && startBlockIndex === undefined
+        && endBlockIndex === undefined
+    ) {
         return html;
     }
 
@@ -286,14 +356,21 @@ const extractSliceHtml = (
     $('script, style, noscript').remove();
 
     const root = $('body').first();
+    const blockRoot: cheerio.Cheerio<Element> = root.length > 0 ? root : $.root().children().first();
+    const blocks = blockRoot.find(BLOCK_SELECTOR);
 
     const findBoundaryElement = (
         fragment: string | undefined,
         headingIndex: number | undefined,
+        blockIndex: number | undefined,
     ): cheerio.Cheerio<Element> | null => {
         if (fragment) {
             const fragmentElement = findFragmentElement($, fragment);
             if (fragmentElement) return fragmentElement;
+        }
+        if (blockIndex !== undefined) {
+            const block = blocks.eq(blockIndex);
+            if (block.length > 0) return block;
         }
         if (headingIndex !== undefined) {
             const heading = $('h1, h2').eq(headingIndex);
@@ -302,10 +379,10 @@ const extractSliceHtml = (
         return null;
     };
 
-    const startElement = findBoundaryElement(startFragment, startHeadingIndex);
+    const startElement = findBoundaryElement(startFragment, startHeadingIndex, startBlockIndex);
     if (startElement && startElement.length > 0) startElement.before(MARKER_START);
 
-    const endElement = findBoundaryElement(endFragment, endHeadingIndex);
+    const endElement = findBoundaryElement(endFragment, endHeadingIndex, endBlockIndex);
     if (endElement && endElement.length > 0) endElement.before(MARKER_END);
 
     const marked = root.length > 0 ? root.html() || '' : $.root().html() || '';
@@ -464,7 +541,7 @@ const numericSourcePath = /(?:^|\/)\d{1,5}\.(?:x?html?|xml)$/i;
 const isGenericSourceUnit = (unit: SourceUnit, repeatedTitles: Set<string>): boolean => {
     const title = normalizeWhitespace(unit.title || '');
     const pageLikeTitle = /^(?:(?:page|p\.?)[\s_-]*\d{1,5}|\d{1,5})[.:-]?$/i.test(title);
-    if (unit.boundaryEvidence === 'document-heading') return false;
+    if (unit.boundaryEvidence === 'document-heading' || unit.boundaryEvidence === 'scan-heading') return false;
     if (unit.boundaryEvidence === 'publisher-toc') return pageLikeTitle;
     if (isGenericChapterTitle(title)) return true;
     if (repeatedTitles.has(title.toLowerCase())) return true;
@@ -485,7 +562,7 @@ const toSourceUnits = (chapters: PlannedChapter[]): SourceUnit[] => chapters.map
     )),
     estimatedWords: chapter.estimatedWords,
     title: normalizeWhitespace(chapter.title) || undefined,
-    boundaryEvidence: boundaryEvidenceForSource(chapter.source),
+    boundaryEvidence: chapter.boundaryEvidence?.[0] || boundaryEvidenceForSource(chapter.source),
     authoredGroupTitle: chapter.authoredGroupTitle,
 }));
 
@@ -502,7 +579,7 @@ const makeAuthoredSection = (unit: SourceUnit): ReadingSectionPlan => ({
     estimatedWords: unit.estimatedWords,
     source: unit.boundaryEvidence === 'publisher-toc'
         ? 'toc'
-        : unit.boundaryEvidence === 'document-heading' ? 'heading' : 'spine',
+        : unit.boundaryEvidence === 'document-heading' || unit.boundaryEvidence === 'scan-heading' ? 'heading' : 'spine',
     ownership: unit.boundaryEvidence === 'source-spine' ? 'xyz' : 'authored',
     reason: unit.boundaryEvidence === 'source-spine' ? 'format-fallback' : 'authored-boundary',
     boundaryEvidence: [unit.boundaryEvidence],
@@ -748,6 +825,8 @@ const buildChaptersFromBoundaries = (
                     endFragment: next.fragment,
                     startHeadingIndex: current.headingIndex,
                     endHeadingIndex: next.headingIndex,
+                    startBlockIndex: current.blockIndex,
+                    endBlockIndex: next.blockIndex,
                 });
             } else {
                 for (let spineIndex = current.index; spineIndex < next.index; spineIndex++) {
@@ -755,6 +834,7 @@ const buildChaptersFromBoundaries = (
                         path: spine[spineIndex].resolvedPath,
                         startFragment: spineIndex === current.index ? current.fragment : undefined,
                         startHeadingIndex: spineIndex === current.index ? current.headingIndex : undefined,
+                        startBlockIndex: spineIndex === current.index ? current.blockIndex : undefined,
                     });
                 }
             }
@@ -764,6 +844,7 @@ const buildChaptersFromBoundaries = (
                     path: spine[spineIndex].resolvedPath,
                     startFragment: spineIndex === current.index ? current.fragment : undefined,
                     startHeadingIndex: spineIndex === current.index ? current.headingIndex : undefined,
+                    startBlockIndex: spineIndex === current.index ? current.blockIndex : undefined,
                 });
             }
         }
@@ -776,6 +857,7 @@ const buildChaptersFromBoundaries = (
             slices,
             estimatedWords: 0,
             source,
+            boundaryEvidence: [current.evidence || boundaryEvidenceForSource(source)],
         });
     }
 
@@ -789,7 +871,7 @@ const buildFallbackSpineChapters = (spine: SpineItem[]): PlannedChapter[] => spi
     source: 'spine',
 }));
 
-type HeadingKind = 'chapter' | 'book' | 'part' | 'section' | 'ordinal' | 'numbered-title';
+type HeadingKind = 'chapter' | 'book' | 'part' | 'section' | 'ordinal' | 'numbered-title' | 'frontmatter';
 
 interface HeadingCandidate extends ChapterBoundary {
     kind: HeadingKind;
@@ -880,6 +962,86 @@ const classifyHeading = (title: string): Pick<HeadingCandidate, 'kind' | 'ordina
     return null;
 };
 
+const ordinalTokenPattern = '[ivxlcdm]{1,8}|\\d{1,3}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty';
+
+const toRoman = (value: number): string => {
+    const numerals: [number, string][] = [
+        [1000, 'M'], [900, 'CM'], [500, 'D'], [400, 'CD'], [100, 'C'], [90, 'XC'],
+        [50, 'L'], [40, 'XL'], [10, 'X'], [9, 'IX'], [5, 'V'], [4, 'IV'], [1, 'I'],
+    ];
+    let remaining = value;
+    let result = '';
+    for (const [unit, numeral] of numerals) {
+        while (remaining >= unit) {
+            result += numeral;
+            remaining -= unit;
+        }
+    }
+    return result;
+};
+
+const titleCaseHeading = (value: string): string => {
+    const smallWords = new Set(['a', 'an', 'and', 'as', 'at', 'by', 'for', 'in', 'of', 'on', 'or', 'the', 'to']);
+    return normalizeWhitespace(value)
+        .toLocaleLowerCase()
+        .split(' ')
+        .map((word, index) => {
+            if (index > 0 && smallWords.has(word)) return word;
+            return word.replace(/[\p{L}]/u, (character) => character.toLocaleUpperCase());
+        })
+        .join(' ');
+};
+
+const repairScanHeadingWordBreaks = (value: string): string => value.replace(
+    /\b([A-Z])\s+([A-Z]{2,})\b/g,
+    '$1$2',
+);
+
+const extractScanHeading = (
+    value: string,
+): { title: string; kind: HeadingKind; ordinal?: number } | null => {
+    const normalized = normalizeWhitespace(value);
+    if (!normalized) return null;
+
+    const chapterMatch = new RegExp(`^(chapter|book|part|section)\\s+(${ordinalTokenPattern})(?:[.):-]|\\s+)(.*)$`, 'i').exec(normalized);
+    if (chapterMatch) {
+        const ordinal = parseOrdinal(chapterMatch[2]);
+        if (ordinal === null) return null;
+
+        const remainder = normalizeWhitespace(chapterMatch[3]);
+        const bodyMarker = /\s+(?:THE\s+[a-z]|[IVXLCDM]{1,8}\.\s+[A-Z])/u.exec(remainder);
+        const description = repairScanHeadingWordBreaks(
+            normalizeWhitespace(bodyMarker ? remainder.slice(0, bodyMarker.index) : remainder),
+        );
+        if (!description || description.length > 140) return null;
+
+        return {
+            title: `${chapterMatch[1][0].toLocaleUpperCase()}${chapterMatch[1].slice(1).toLocaleLowerCase()} ${toRoman(ordinal)}: ${titleCaseHeading(description)}`,
+            kind: chapterMatch[1].toLocaleLowerCase() as HeadingKind,
+            ordinal,
+        };
+    }
+
+    const frontMatter = /^(INTRODUCTION|TRANSLATOR['’]S NOTE|INTRODUCTORY)\b(.*)$/iu.exec(normalized);
+    if (!frontMatter) {
+        if (/^BIBLIOGRAPHICAL ABBREVIATIONS USED IN THE NOTES\b/i.test(normalized)) {
+            return { title: 'Notes', kind: 'section' };
+        }
+        return null;
+    }
+
+    const label = frontMatter[1].replace(/[’]/g, "'").toLocaleLowerCase();
+    const remainder = normalizeWhitespace(frontMatter[2]);
+    if (label === 'introduction') return { title: 'Introduction', kind: 'section' };
+    if (label === "translator's note") return { title: "Translator's Note", kind: 'section' };
+    const bodyMarker = /\s+THE\s+[a-z]/u.exec(remainder);
+    const description = repairScanHeadingWordBreaks(
+        normalizeWhitespace(bodyMarker ? remainder.slice(0, bodyMarker.index) : remainder),
+    );
+    if (!description || description.length > 140) return null;
+    return { title: `Introductory: ${titleCaseHeading(description)}`, kind: 'section' };
+};
+
 const isConsecutiveSequence = (candidates: HeadingCandidate[]): boolean => {
     if (candidates.some((candidate) => candidate.ordinal === undefined)) return false;
     return candidates.every((candidate, index) => (
@@ -908,11 +1070,58 @@ const selectHeadingFamily = (candidates: HeadingCandidate[]): HeadingCandidate[]
     return [];
 };
 
+const isPageLikeSpine = (spine: SpineItem[]): boolean => {
+    if (spine.length < 3) return false;
+    const pageLikeCount = spine.filter((item) => {
+        const path = normalizeArchivePath(item.resolvedPath);
+        return genericSourcePath.test(path) || numericSourcePath.test(path);
+    }).length;
+    return pageLikeCount / spine.length >= 0.75;
+};
+
+const isLeadingEpigraph = (html: string): boolean => {
+    const $ = cheerio.load(html);
+    if ($('h1, h2, h3, h4, h5, h6').length > 0) return false;
+
+    const blocks = $(BLOCK_SELECTOR).filter((_, el) => normalizeWhitespace($(el).text()).length > 0);
+    if (blocks.length !== 1) return false;
+
+    const text = normalizeWhitespace(blocks.first().text());
+    const wordCount = countWords(text);
+    return wordCount >= 40
+        && wordCount <= 400
+        && !/^(?:page\s+\d+\s+)?(?:the gift|\d+\s+the gift)\b/i.test(text);
+};
+
+const selectScanHeadingFamily = (candidates: HeadingCandidate[]): HeadingCandidate[] => {
+    const numbered = candidates
+        .filter((candidate) => candidate.kind === 'chapter' && candidate.ordinal !== undefined)
+        .sort((left, right) => left.index - right.index || (left.blockIndex || 0) - (right.blockIndex || 0));
+    if (numbered.length < 2 || !isConsecutiveSequence(numbered)) return [];
+
+    const firstNumberedIndex = numbered[0].index;
+    const lastNumberedIndex = numbered.at(-1)?.index ?? firstNumberedIndex;
+    const frontMatter = candidates.filter((candidate, index, allCandidates) => (
+        candidate.kind === 'section'
+        && candidate.title !== 'Notes'
+        && candidate.index < firstNumberedIndex
+        && allCandidates.findIndex((other) => other.kind === candidate.kind && other.title === candidate.title) === index
+    ));
+    const notes = candidates.filter((candidate) => candidate.title === 'Notes' && candidate.index > lastNumberedIndex);
+    return [...frontMatter, ...numbered, ...notes]
+        .sort((left, right) => left.index - right.index || (left.blockIndex || 0) - (right.blockIndex || 0));
+};
+
 interface TocDepthCandidate {
     title: string;
     resolvedPath: string;
     fragment?: string;
     depth: number;
+}
+
+interface TocSourceResult {
+    entries: TocEntry[];
+    state: 'present-empty' | 'present-invalid' | 'present-valid';
 }
 
 const selectTocDepth = (candidates: TocDepthCandidate[]): TocEntry[] => {
@@ -937,11 +1146,22 @@ const selectTocDepth = (candidates: TocDepthCandidate[]): TocEntry[] => {
     return selected.map(({ title, resolvedPath, fragment }) => ({ title, resolvedPath, fragment }));
 };
 
+interface HeadingRecoveryResult {
+    chapters: PlannedChapter[] | null;
+    semanticCandidates: HeadingCandidate[];
+    scanCandidates: HeadingCandidate[];
+    selectedBoundaries: ChapterBoundary[];
+    selectedSource: 'document-heading' | 'scan-heading' | 'none';
+    abstentionReasons: string[];
+}
+
 const buildHeadingChapters = async (
     zip: JSZip,
     spine: SpineItem[],
-): Promise<PlannedChapter[] | null> => {
+): Promise<HeadingRecoveryResult> => {
     const candidates: HeadingCandidate[] = [];
+    const scanCandidates: HeadingCandidate[] = [];
+    const allowScanHeadings = isPageLikeSpine(spine);
 
     for (const spineItem of spine) {
         const entry = findZipEntry(zip, spineItem.resolvedPath);
@@ -965,10 +1185,55 @@ const buildHeadingChapters = async (
                 ...classification,
             });
         });
+
+        if (allowScanHeadings) {
+            const block = $(BLOCK_SELECTOR).filter((_, el) => normalizeWhitespace($(el).text()).length > 0).first();
+            const blockText = normalizeWhitespace(block.text());
+            const scanHeading = extractScanHeading(blockText);
+            if (scanHeading) {
+                scanCandidates.push({
+                    index: spineItem.index,
+                    blockIndex: $(BLOCK_SELECTOR).index(block),
+                    level: 1,
+                    evidence: 'scan-heading',
+                    ...scanHeading,
+                });
+            }
+        }
     }
 
-    const boundaries: ChapterBoundary[] = [...selectHeadingFamily(candidates)];
-    if (boundaries.length < 2) return null;
+    const semanticBoundaries = selectHeadingFamily(candidates);
+    const scanBoundaries = selectScanHeadingFamily(scanCandidates);
+    const selectedSource: HeadingRecoveryResult['selectedSource'] = semanticBoundaries.length > 0
+        ? 'document-heading'
+        : scanBoundaries.length > 0 ? 'scan-heading' : 'none';
+    const selectedBoundaries: ChapterBoundary[] = semanticBoundaries.length > 0
+        ? [...semanticBoundaries]
+        : await Promise.all(scanBoundaries.map(async (boundary) => {
+            if (!/^Introductory:/u.test(boundary.title) || boundary.index <= 0) return boundary;
+
+            const previousEntry = findZipEntry(zip, spine[boundary.index - 1].resolvedPath);
+            if (!previousEntry || !isLeadingEpigraph(await previousEntry.async('string'))) return boundary;
+
+            return {
+                ...boundary,
+                index: boundary.index - 1,
+            };
+        }));
+    if (selectedBoundaries.length < 2) {
+        return {
+            chapters: null,
+            semanticCandidates: candidates,
+            scanCandidates,
+            selectedBoundaries,
+            selectedSource: 'none',
+            abstentionReasons: selectedSource === 'none'
+                ? ['No coherent heading family was recovered']
+                : ['Heading candidates did not form at least two boundaries'],
+        };
+    }
+
+    const boundaries = [...selectedBoundaries];
 
     const hasRecoveredOpening = boundaries[0].index > 0 || (boundaries[0].headingIndex ?? 0) > 0;
     if (hasRecoveredOpening) {
@@ -981,16 +1246,24 @@ const buildHeadingChapters = async (
     const chapters = buildChaptersFromBoundaries(boundaries, spine, 'heading');
     if (hasRecoveredOpening && chapters[0]) {
         chapters[0].source = 'spine';
+        chapters[0].boundaryEvidence = ['source-spine'];
     }
-    return chapters;
+    return {
+        chapters,
+        semanticCandidates: candidates,
+        scanCandidates,
+        selectedBoundaries,
+        selectedSource,
+        abstentionReasons: [],
+    };
 };
 
 const extractNavEntries = async (
     zip: JSZip,
     navPath: string,
-): Promise<TocEntry[]> => {
+): Promise<TocSourceResult> => {
     const entry = findZipEntry(zip, navPath);
-    if (!entry) return [];
+    if (!entry) return { entries: [], state: 'present-invalid' };
 
     const html = await entry.async('string');
     const $ = cheerio.load(html);
@@ -1024,20 +1297,25 @@ const extractNavEntries = async (
         });
     });
 
-    return selectTocDepth(candidates);
+    const entries = selectTocDepth(candidates);
+    return {
+        entries,
+        state: entries.length > 0 ? 'present-valid' : navRoot.length > 0 ? 'present-empty' : 'present-invalid',
+    };
 };
 
 const extractNcxEntries = async (
     zip: JSZip,
     ncxPath: string,
-): Promise<TocEntry[]> => {
+): Promise<TocSourceResult> => {
     const entry = findZipEntry(zip, ncxPath);
-    if (!entry) return [];
+    if (!entry) return { entries: [], state: 'present-invalid' };
 
     const xml = await entry.async('string');
     const $ = cheerio.load(xml, { xmlMode: true });
     const navDir = getDirectoryPath(ncxPath);
 
+    if ($('navMap').length === 0) return { entries: [], state: 'present-invalid' };
     const points = $('navMap navPoint');
 
     const candidates: TocDepthCandidate[] = [];
@@ -1065,31 +1343,48 @@ const extractNcxEntries = async (
         });
     });
 
-    return selectTocDepth(candidates);
+    const entries = selectTocDepth(candidates);
+    return { entries, state: entries.length > 0 ? 'present-valid' : 'present-empty' };
+};
+
+interface TocCollectionResult {
+    entries: TocEntry[];
+    nav: StructureDiagnostics['declaredToc']['nav'];
+    ncx: StructureDiagnostics['declaredToc']['ncx'];
+}
+
+const summarizeDeclaredToc = (
+    items: ManifestItem[],
+    sources: TocSourceResult[],
+): { state: DeclaredTocState; paths: string[]; entryCount: number } => {
+    const paths = items.map((item) => normalizeArchivePath(item.resolvedPath));
+    if (items.length === 0) return { state: 'absent', paths, entryCount: 0 };
+
+    const entries = sources.flatMap((source) => source.entries);
+    const state: DeclaredTocState = sources.some((source) => source.state === 'present-invalid')
+        ? 'present-invalid'
+        : entries.length > 0 ? 'present-valid' : 'present-empty';
+    return { state, paths, entryCount: entries.length };
 };
 
 const collectTocEntries = async (
     zip: JSZip,
     manifest: Record<string, ManifestItem>,
     spineTocId?: string,
-): Promise<TocEntry[]> => {
+): Promise<TocCollectionResult> => {
     const navCandidates = Object.values(manifest)
         .filter((item) => {
             const properties = (item.properties || '').toLowerCase();
             const mediaType = (item.mediaType || '').toLowerCase();
             const href = item.href.toLowerCase();
             return properties.includes('nav')
-                || href.includes('toc')
-                || href.includes('nav')
-                || mediaType.includes('xhtml')
-                || mediaType.includes('html');
-        })
-        .filter((item) => item.href.toLowerCase().includes('toc') || item.href.toLowerCase().includes('nav') || (item.properties || '').toLowerCase().includes('nav'));
+                || (mediaType.includes('xhtml') || mediaType.includes('html'))
+                && (href.includes('toc') || href.includes('nav'));
+        });
 
-    const navEntries: TocEntry[] = [];
+    const navSources: TocSourceResult[] = [];
     for (const item of navCandidates) {
-        const entries = await extractNavEntries(zip, item.resolvedPath);
-        navEntries.push(...entries);
+        navSources.push(await extractNavEntries(zip, item.resolvedPath));
     }
 
     const ncxCandidates: ManifestItem[] = [];
@@ -1105,25 +1400,29 @@ const collectTocEntries = async (
         ncxCandidates.push(manifest[spineTocId]);
     }
 
+    const uniqueNcxCandidates = [...new Map(ncxCandidates.map((item) => [item.id, item])).values()];
     const seenNcx = new Set<string>();
-    const ncxEntries: TocEntry[] = [];
-    for (const item of ncxCandidates) {
+    const ncxSources: TocSourceResult[] = [];
+    for (const item of uniqueNcxCandidates) {
         if (seenNcx.has(item.id)) continue;
         seenNcx.add(item.id);
-        const entries = await extractNcxEntries(zip, item.resolvedPath);
-        ncxEntries.push(...entries);
+        ncxSources.push(await extractNcxEntries(zip, item.resolvedPath));
     }
 
     const deduped: TocEntry[] = [];
     const seen = new Set<string>();
-    for (const entry of [...navEntries, ...ncxEntries]) {
+    for (const entry of [...navSources.flatMap((source) => source.entries), ...ncxSources.flatMap((source) => source.entries)]) {
         const key = `${normalizeArchivePath(entry.resolvedPath)}#${entry.fragment || ''}`;
         if (seen.has(key)) continue;
         seen.add(key);
         deduped.push(entry);
     }
 
-    return deduped;
+    return {
+        entries: deduped,
+        nav: summarizeDeclaredToc(navCandidates, navSources),
+        ncx: summarizeDeclaredToc(uniqueNcxCandidates, ncxSources),
+    };
 };
 
 const isLowInformationTocTitle = (title: string): boolean => {
@@ -1273,6 +1572,24 @@ const classifyArtifactLabel = (
     }
 
     return null;
+};
+
+const classifyEmbeddedContents = (
+    text: string,
+): Pick<ChapterClassification, 'type' | 'reason' | 'shouldIncludeInReading'> | null => {
+    const normalized = normalizeWhitespace(text);
+    if (!/^CONTENTS?\b/i.test(normalized)) return null;
+
+    const structuralEntries = normalized.match(
+        /\b(?:introductory|chapter|part|section|book|conclusions|bibliographical|notes)\b/gi,
+    ) || [];
+    if (structuralEntries.length < 3) return null;
+
+    return {
+        type: 'toc',
+        reason: 'Embedded table of contents detected from structural entries',
+        shouldIncludeInReading: false,
+    };
 };
 
 const normalizeMetadataLabel = (value: string): string => normalizeWhitespace(value)
@@ -1476,6 +1793,8 @@ const filterNonReadingChapters = async (
                 slice.endFragment,
                 slice.startHeadingIndex,
                 slice.endHeadingIndex,
+                slice.startBlockIndex,
+                slice.endBlockIndex,
             );
             const readableHtml = stripEmbeddedPublicationMatter(slicedHtml);
             const text = extractReadableTextFromHtml(readableHtml);
@@ -1509,6 +1828,8 @@ const filterNonReadingChapters = async (
                 slice.endFragment,
                 slice.startHeadingIndex,
                 slice.endHeadingIndex,
+                slice.startBlockIndex,
+                slice.endBlockIndex,
             );
             const markupClassification = classifyArtifactMarkup(slicedHtml);
             const rawUnit = rawUnits[rawUnitIndex++];
@@ -1560,6 +1881,17 @@ const filterNonReadingChapters = async (
             const cleanedText = qualityResult.cleanedText;
             const manifestItem = manifestByPath.get(normalizedPath);
 
+            if (chapter.title === 'Notes' && referenceHandling !== 'keep') {
+                skippedSlices.push({
+                    title: sliceTitle || 'Notes',
+                    slices: [slice],
+                    estimatedWords: countWords(text),
+                    classificationType: 'backmatter',
+                    reason: `Notes omitted with reference handling mode: ${referenceHandling}`,
+                });
+                continue;
+            }
+
             const explicitClassification = normalizedPath === coverPath
                 ? { type: 'cover' as const, reason: 'Manifest cover document', shouldIncludeInReading: false }
                 : (manifestItem?.properties || '').split(/\s+/).includes('nav')
@@ -1572,6 +1904,7 @@ const filterNonReadingChapters = async (
                             publicationTitle,
                             publicationAuthor,
                         )
+                        || classifyEmbeddedContents(cleanedText)
                         || markupClassification;
 
             const classification = explicitClassification || classifyChapter(
@@ -1737,17 +2070,20 @@ export const buildEpubStructurePlan = async (
     }
 
     const spineTocId = normalizeWhitespace($opf('spine').attr('toc') || '') || undefined;
-    const collectedTocEntries = await collectTocEntries(zip, manifest, spineTocId);
+    const tocCollection = await collectTocEntries(zip, manifest, spineTocId);
+    const collectedTocEntries = tocCollection.entries;
     const tocEntries = await validateAndOrderTocEntries(zip, collectedTocEntries, spine);
     const tocBoundaries = buildBoundariesFromToc(tocEntries, spine);
     const tocWasDegraded = tocEntries.length < collectedTocEntries.length;
 
+    let headingRecovery: HeadingRecoveryResult | null = null;
     let rawChapters = tocBoundaries.length > 0
         ? buildChaptersFromBoundaries(tocBoundaries, spine)
         : buildFallbackSpineChapters(spine);
 
     if (tocBoundaries.length === 0 || rawChapters.length === 1 || tocWasDegraded) {
-        const headingFallback = await buildHeadingChapters(zip, spine);
+        headingRecovery = await buildHeadingChapters(zip, spine);
+        const headingFallback = headingRecovery.chapters;
         const headingIsMoreComplete = headingFallback && headingFallback.length > rawChapters.length;
         if (headingFallback && (
             (headingFallback.length > 1 && tocBoundaries.length === 0)
@@ -1784,6 +2120,86 @@ export const buildEpubStructurePlan = async (
         originalTitles: section.originalTitles,
     }));
 
+    const sourceForEvidence = (evidence: BoundaryEvidence): ChapterSource => (
+        evidence === 'publisher-toc' ? 'toc'
+            : evidence === 'document-heading' || evidence === 'scan-heading' ? 'heading'
+                : 'spine'
+    );
+    const diagnosticCandidates: StructureCandidateDiagnostic[] = [
+        ...(headingRecovery?.semanticCandidates || []).map((candidate) => ({
+            path: spine[candidate.index]?.resolvedPath || '',
+            title: candidate.title,
+            kind: 'dom-heading' as const,
+            level: candidate.level,
+            ordinal: candidate.ordinal,
+            headingIndex: candidate.headingIndex,
+            blockIndex: candidate.blockIndex,
+        })),
+        ...(headingRecovery?.scanCandidates || []).map((candidate) => ({
+            path: spine[candidate.index]?.resolvedPath || '',
+            title: candidate.title,
+            kind: 'scan-heading' as const,
+            level: candidate.level,
+            ordinal: candidate.ordinal,
+            headingIndex: candidate.headingIndex,
+            blockIndex: candidate.blockIndex,
+        })),
+    ];
+    const headingAbstentionReasons = headingRecovery?.abstentionReasons || (
+        tocBoundaries.length > 0 && rawChapters.length > 1 && !tocWasDegraded
+            ? ['Not attempted because validated TOC boundaries were available']
+            : ['Heading recovery was not attempted']
+    );
+    const structureDiagnostics: StructureDiagnostics = {
+        declaredToc: {
+            nav: tocCollection.nav,
+            ncx: tocCollection.ncx,
+        },
+        toc: {
+            collectedEntries: collectedTocEntries.length,
+            validatedEntries: tocEntries.length,
+            boundaries: tocBoundaries.length,
+            degraded: tocWasDegraded,
+        },
+        heading: {
+            selectedSource: headingRecovery?.selectedSource || 'none',
+            candidates: diagnosticCandidates,
+            selectedBoundaries: (headingRecovery?.selectedBoundaries || []).map((boundary) => ({
+                path: spine[boundary.index]?.resolvedPath || '',
+                title: boundary.title,
+                evidence: boundary.evidence,
+            })),
+            abstentionReasons: headingAbstentionReasons,
+        },
+        sourceUnits: normalizedStructure.sourceUnits.map((unit) => ({
+            title: unit.title,
+            source: sourceForEvidence(unit.boundaryEvidence),
+            boundaryEvidence: unit.boundaryEvidence,
+            estimatedWords: unit.estimatedWords,
+            paths: unit.slices.map((slice) => slice.path),
+        })),
+        finalSections: normalizedStructure.sections.map((section) => ({
+            title: section.title,
+            source: section.source,
+            ownership: section.ownership,
+            reason: section.reason,
+            boundaryEvidence: section.boundaryEvidence,
+            authoredGroupTitle: section.authoredGroupTitle,
+            estimatedWords: section.estimatedWords,
+            paths: section.slices.map((slice) => slice.path),
+        })),
+        skipped: filtered.skippedChapters.map((chapter) => ({
+            title: chapter.title,
+            classificationType: chapter.classificationType,
+            reason: chapter.reason,
+            paths: chapter.slices.map((slice) => slice.path),
+        })),
+        qualityRejections: filtered.qualityRejections.map((rejection) => ({
+            path: rejection.path,
+            reason: rejection.reason,
+        })),
+    };
+
     return {
         opfPath,
         opfDir,
@@ -1799,6 +2215,7 @@ export const buildEpubStructurePlan = async (
         contentQualityAudit: filtered.contentQualityAudit,
         structureVersion: normalizedStructure.version,
         structureMode: normalizedStructure.mode,
+        structureDiagnostics,
     };
 };
 
@@ -1830,6 +2247,8 @@ export const loadPlannedChapterSources = async (
             slice.endFragment,
             slice.startHeadingIndex,
             slice.endHeadingIndex,
+            slice.startBlockIndex,
+            slice.endBlockIndex,
         );
         const readableHtml = stripEmbeddedPublicationMatter(slicedHtml);
         const text = extractReadableTextFromHtml(readableHtml);
