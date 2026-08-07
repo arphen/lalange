@@ -59,6 +59,7 @@ export type ChapterDocType = {
     lastTPM?: number;
     lastChunkCompletedAt?: number;
     content: string[];
+    paragraphBreaks?: number[];
     notes?: PdfNoteEntry[];
     noteAnchors?: PdfNoteAnchor[];
     densities?: number[];
@@ -152,6 +153,10 @@ export const chapterMigrationStrategies = {
         ...document,
         notes: document.notes || [],
         noteAnchors: document.noteAnchors || [],
+    }),
+    3: (document: ChapterDocType): ChapterDocType => ({
+        ...document,
+        paragraphBreaks: document.paragraphBreaks || [],
     }),
 };
 

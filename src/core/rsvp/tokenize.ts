@@ -481,6 +481,36 @@ export const normalizeReferenceTokens = (
     };
 };
 
+export interface StructuredTokenizeResult {
+    tokens: string[];
+    paragraphBreaks: number[];
+}
+
+/** Tokenize readable blocks while retaining their end positions in the RSVP stream. */
+export const tokenizeStructuredTextForRSVP = (
+    text: string,
+    referenceMode: ReferenceTokenMode = 'compact',
+): StructuredTokenizeResult => {
+    const paragraphs = text
+        .split(/\n\s*\n+/)
+        .map((paragraph) => paragraph.trim())
+        .filter(Boolean);
+    const tokens: string[] = [];
+    const paragraphBreaks: number[] = [];
+
+    for (const paragraph of paragraphs) {
+        const tokenized = tokenizeForRSVP(paragraph);
+        const normalized = normalizeReferenceTokens(tokenized.tokens, referenceMode).tokens;
+        if (normalized.length === 0) continue;
+
+        tokens.push(...normalized);
+        paragraphBreaks.push(tokens.length - 1);
+    }
+
+    paragraphBreaks.pop();
+    return { tokens, paragraphBreaks };
+};
+
 /**
  * Check if a token represents a pause/break (dash or similar).
  * Used by the display logic to apply special rendering.

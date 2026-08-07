@@ -1,7 +1,7 @@
 import { act, fireEvent, render, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TTSPlayer } from './TTSPlayer';
-import { initTTS, streamSpeech } from '../../core/tts';
+import { initTTS, splitIntoSentences, streamSpeech } from '../../core/tts';
 import { ttsPlayer } from '../../core/tts/player';
 
 const mocks = vi.hoisted(() => ({
@@ -135,6 +135,21 @@ describe('TTSPlayer voice changes', () => {
         await waitFor(() => {
             expect(ttsPlayer.play).toHaveBeenCalledWith(0, 1);
         });
+    });
+
+    it('passes authored paragraph boundaries into sentence segmentation', () => {
+        render(
+            <TTSPlayer
+                words={['A', 'heading', 'Body', 'text.']}
+                paragraphBreaks={[1]}
+                currentWordIndex={0}
+            />,
+        );
+
+        expect(splitIntoSentences).toHaveBeenCalledWith(
+            ['A', 'heading', 'Body', 'text.'],
+            [1],
+        );
     });
 
     it('stops pending playback when the main control is clicked while preparing', () => {

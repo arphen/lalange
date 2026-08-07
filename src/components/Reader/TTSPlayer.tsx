@@ -24,6 +24,7 @@ import { persistListeningHandoff } from '../../core/exchange/handoff';
 // Configuration
 const DEFAULT_BUFFER_AHEAD = 5;
 const SPEED_OPTIONS = [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
+const EMPTY_PARAGRAPH_BREAKS: number[] = [];
 
 const formatSpeedLabel = (value: number): string => {
     const fixed = value.toFixed(2).replace(/\.00$/, '').replace(/0$/, '');
@@ -69,6 +70,8 @@ const LoadingSpinner: React.FC = () => (
 interface TTSPlayerProps {
     /** The words to speak */
     words: string[];
+    /** Word indices after which an authored paragraph ends */
+    paragraphBreaks?: number[];
     /** Current reading position (word index) */
     currentWordIndex: number;
     /** Called when TTS position changes (for syncing reading position) */
@@ -88,6 +91,7 @@ interface TTSPlayerProps {
 
 export const TTSPlayer: React.FC<TTSPlayerProps> = ({
     words,
+    paragraphBreaks = EMPTY_PARAGRAPH_BREAKS,
     currentWordIndex,
     onPositionChange,
     bookId,
@@ -118,7 +122,10 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
     
     const { current: currentTimeStr, duration: durationStr } = useFormattedTime();
     
-    const sentences = useMemo(() => splitIntoSentences(words), [words]);
+    const sentences = useMemo(
+        () => splitIntoSentences(words, paragraphBreaks),
+        [words, paragraphBreaks],
+    );
     const [showVoiceMenu, setShowVoiceMenu] = useState(false);
     const [isExpanded, setIsExpanded] = useState(false);
     const effectiveVoice = resolveVoiceId(voice);

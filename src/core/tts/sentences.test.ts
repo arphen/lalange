@@ -101,6 +101,38 @@ describe('splitIntoSentences', () => {
         expect(sentences[2].startWordIndex).toBe(2);
         expect(sentences[2].endWordIndex).toBe(2);
     });
+
+    it('ends an unpunctuated utterance at an authored paragraph boundary', () => {
+        const words = ['A', 'short', 'heading', 'The', 'paragraph', 'begins', 'here.'];
+        const sentences = splitIntoSentences(words, [2]);
+
+        expect(sentences.map((sentence) => sentence.text)).toEqual([
+            'A short heading.',
+            'The paragraph begins here.',
+        ]);
+        expect(sentences[0].endWordIndex).toBe(2);
+        expect(sentences[1].startWordIndex).toBe(3);
+    });
+
+    it('infers the end of a numbered title in flattened EPUB text', () => {
+        const words = '3. The Obligation to Give and the Obligation to Receive To appreciate fully the institutions of total prestation and the potlatch we must seek to explain two complementary factors.'.split(' ');
+        const sentences = splitIntoSentences(words);
+
+        expect(sentences.map((sentence) => sentence.text)).toEqual([
+            '3.',
+            'The Obligation to Give and the Obligation to Receive.',
+            'To appreciate fully the institutions of total prestation and the potlatch we must seek to explain two complementary factors.',
+        ]);
+        expect(sentences[1].endWordIndex).toBe(9);
+        expect(sentences[2].startWordIndex).toBe(10);
+    });
+
+    it('recognizes common non-ASCII terminal punctuation', () => {
+        const words = ['Really؟', 'Yes。', 'Again！', 'Why？'];
+        const sentences = splitIntoSentences(words);
+
+        expect(sentences.map((sentence) => sentence.text)).toEqual(words);
+    });
 });
 
 describe('findSentenceForWord', () => {

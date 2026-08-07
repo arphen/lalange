@@ -79,7 +79,7 @@ export const imageSchema = {
 } as const;
 
 export const chapterSchema = {
-    version: 2,
+    version: 3,
     primaryKey: 'id',
     type: 'object',
     properties: {
@@ -122,6 +122,12 @@ export const chapterSchema = {
             type: 'array',
             items: {
                 type: 'string'
+            }
+        },
+        paragraphBreaks: {
+            type: 'array',
+            items: {
+                type: 'number'
             }
         },
         notes: {

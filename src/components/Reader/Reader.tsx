@@ -2723,6 +2723,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                 <div className="reader-focus-fade" aria-hidden={focusModeEnabled} inert={focusModeEnabled}>
                     <TTSPlayer
                         words={currentChapter.content}
+                        paragraphBreaks={currentChapter.paragraphBreaks}
                         currentWordIndex={currentWordIndex}
                         onPositionChange={(wordIndex) => {
                             indexRef.current = wordIndex;

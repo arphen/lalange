@@ -272,6 +272,7 @@ describe('Database Initialization', () => {
                 bookId: 'old-book',
                 title: 'Existing Chapter',
                 content: ['still', 'here'],
+                paragraphBreaks: [],
                 notes: [],
                 noteAnchors: [],
                 metadata: { classificationReason: 'existing metadata' },
