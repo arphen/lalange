@@ -1,7 +1,7 @@
 import { initDB, type BookDocType, type ChapterDocType, type ImageDocType, type RawFileDocType } from '../sync/db';
 import { classifyChapter, cleanText } from './cleaning';
 import { validateFinalContent } from './contentQuality';
-import { normalizeReferenceTokens, tokenizeForRSVP } from '../rsvp/tokenize';
+import { normalizeReferenceTokens, tokenizeForRSVP, tokenizeStructuredTextForRSVP } from '../rsvp/tokenize';
 import { useSettingsStore } from '../store/settings';
 import { generateUUID } from '../../utils/uuid';
 import { scheduler } from './scheduler';
@@ -195,7 +195,7 @@ export const processChaptersInBackground = async (bookId: string, onProgress?: (
                         let rawText = chapterSources
                             .map(source => source.text)
                             .filter(text => text.trim().length > 0)
-                            .join('\n\n');
+                            .join('\n');
 
                         // Step 2: Classify chapter (license, TOC, cover, content, etc.)
                         const classification = classifyChapter(
@@ -370,12 +370,21 @@ export const processChaptersInBackground = async (bookId: string, onProgress?: (
                         }
                         console.log(`[Pipeline] Scheduled ${rawChunks.length} density tasks for chapter ${chapterId} (${activeDensity} active, rest dormant)`);
 
+                        const structuredTokens = tokenizeStructuredTextForRSVP(rawText, referenceHandling);
+                        const paragraphTokensMatch = structuredTokens.tokens.length === allWords.length
+                            && structuredTokens.tokens.every((token, index) => token === allWords[index]);
+                        const paragraphBreaks = paragraphTokensMatch ? structuredTokens.paragraphBreaks : [];
+                        if (!paragraphTokensMatch) {
+                            console.warn(`[Pipeline] Chapter ${chapterIndex + 1}: paragraph mapping did not match RSVP tokens; omitting speech breaks.`);
+                        }
+
                         // Final update for this chapter (Content + Placeholders)
                         const finalDoc = await db.chapters.findOne(currentDoc.id).exec();
                         if (finalDoc) {
                             await finalDoc.incrementalPatch({
                                 status: 'ready', // Ready for reading (even if pending analysis)
                                 content: [...allWords],
+                                paragraphBreaks,
                                 notes: plannedChapter.notes || [],
                                 noteAnchors: plannedChapter.noteAnchors?.map((anchor) => ({ ...anchor, chapterId })),
                                 densities: [...allDensities],

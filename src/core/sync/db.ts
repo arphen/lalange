@@ -59,6 +59,7 @@ export type ChapterDocType = {
     lastTPM?: number;
     lastChunkCompletedAt?: number;
     content: string[];
+    paragraphBreaks?: number[];
     notes?: PdfNoteEntry[];
     noteAnchors?: PdfNoteAnchor[];
     densities?: number[];
@@ -153,6 +154,11 @@ export const chapterMigrationStrategies = {
         notes: document.notes || [],
         noteAnchors: document.noteAnchors || [],
     }),
+    3: (document: ChapterDocType): ChapterDocType => ({
+        ...document,
+        paragraphBreaks: document.paragraphBreaks || [],
+    }),
+    4: (document: ChapterDocType): ChapterDocType => document,
 };
 
 let dbPromise: Promise<MyDatabase> | null = null;

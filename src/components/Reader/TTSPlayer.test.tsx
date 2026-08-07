@@ -1,7 +1,7 @@
 import { act, fireEvent, render, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TTSPlayer } from './TTSPlayer';
-import { initTTS, streamSpeech } from '../../core/tts';
+import { initTTS, splitIntoSentences, streamSpeech } from '../../core/tts';
 import { ttsPlayer } from '../../core/tts/player';
 
 const mocks = vi.hoisted(() => ({
@@ -137,6 +137,21 @@ describe('TTSPlayer voice changes', () => {
         });
     });
 
+    it('passes authored paragraph boundaries into sentence segmentation', () => {
+        render(
+            <TTSPlayer
+                words={['A', 'heading', 'Body', 'text.']}
+                paragraphBreaks={[1]}
+                currentWordIndex={0}
+            />,
+        );
+
+        expect(splitIntoSentences).toHaveBeenCalledWith(
+            ['A', 'heading', 'Body', 'text.'],
+            [1],
+        );
+    });
+
     it('stops pending playback when the main control is clicked while preparing', () => {
         mocks.playbackState = 'preparing';
 
@@ -237,6 +252,41 @@ describe('TTSPlayer voice changes', () => {
         act(() => options?.onWordChange?.(1));
 
         expect(onPositionChange).toHaveBeenCalledWith(1);
+    });
+
+    it('continues to the next chapter when the current chapter audio is exhausted', () => {
+        const onChapterEnd = vi.fn();
+        render(
+            <TTSPlayer
+                words={['Hello', 'world.']}
+                currentWordIndex={0}
+                chapterId="chapter-1"
+                onChapterEnd={onChapterEnd}
+            />,
+        );
+
+        const options = vi.mocked(ttsPlayer.setOptions).mock.calls.at(-1)?.[0];
+        act(() => options?.onBufferLow?.(1));
+
+        expect(ttsPlayer.pause).toHaveBeenCalled();
+        expect(onChapterEnd).toHaveBeenCalledTimes(1);
+    });
+
+    it('starts a chapter requested by the reader after a boundary transition', async () => {
+        vi.mocked(streamSpeech).mockReturnValue((async function* () {})());
+
+        render(
+            <TTSPlayer
+                words={['Next', 'chapter.']}
+                currentWordIndex={0}
+                chapterId="chapter-2"
+                autoPlayChapterId="chapter-2"
+            />,
+        );
+
+        await waitFor(() => {
+            expect(ttsPlayer.play).toHaveBeenCalledWith(0, 1);
+        });
     });
 
     it('exposes and applies the full speed range including 0.5x', () => {

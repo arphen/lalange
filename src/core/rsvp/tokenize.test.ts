@@ -17,6 +17,7 @@ import {
     isSlashPart,
     isReferenceToken,
     normalizeReferenceTokens,
+    tokenizeStructuredTextForRSVP,
     isPauseToken,
     getTokenDisplayProps,
     STANDALONE_DASHES,
@@ -353,6 +354,28 @@ describe('tokenize', () => {
                 const result = tokenizeForRSVP(text);
                 expect(result.metadata.dashesExtracted).toBe(4);
             });
+        });
+    });
+
+    describe('tokenizeStructuredTextForRSVP', () => {
+        it('retains paragraph ends without adding visible tokens', () => {
+            const result = tokenizeStructuredTextForRSVP(
+                'A heading without punctuation\n\nThe next paragraph—begins here.',
+                'keep',
+            );
+
+            expect(result.tokens).toEqual([
+                'A', 'heading', 'without', 'punctuation',
+                'The', 'next', 'paragraph', '—', 'begins', 'here.',
+            ]);
+            expect(result.paragraphBreaks).toEqual([3]);
+        });
+
+        it('does not treat a single source-page newline as a paragraph', () => {
+            const result = tokenizeStructuredTextForRSVP('The sentence crosses\na page boundary.');
+
+            expect(result.tokens).toEqual(['The', 'sentence', 'crosses', 'a', 'page', 'boundary.']);
+            expect(result.paragraphBreaks).toEqual([]);
         });
     });
 

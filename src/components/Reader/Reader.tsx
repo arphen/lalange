@@ -159,6 +159,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
 
     // TTS State
     const [showTTSPlayer, setShowTTSPlayer] = useState(false);
+    const [ttsAutoPlayChapterId, setTtsAutoPlayChapterId] = useState<string | null>(null);
     const [showExchange, setShowExchange] = useState(false);
     const [showNotes, setShowNotes] = useState(false);
     const ttsPlaybackState = useTTSStore((s) => s.playbackState);
@@ -1009,6 +1010,18 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
         updateProgressMilestone,
         wpm,
     ]);
+
+    const handleTTSChapterEnd = useCallback(() => {
+        const currentChapter = currentChapterRef.current;
+        const nextChapter = currentChapter
+            ? findNextReadableChapter(chaptersRef.current, currentChapter.id)
+            : null;
+
+        if (!nextChapter) return;
+
+        setTtsAutoPlayChapterId(nextChapter.id);
+        beginChapterTransition(nextChapter.id, 0);
+    }, [beginChapterTransition]);
 
     const continueAfterImageCue = useCallback(() => {
         if (!activeImageCueRef.current) return;
@@ -2710,6 +2723,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                 <div className="reader-focus-fade" aria-hidden={focusModeEnabled} inert={focusModeEnabled}>
                     <TTSPlayer
                         words={currentChapter.content}
+                        paragraphBreaks={currentChapter.paragraphBreaks}
                         currentWordIndex={currentWordIndex}
                         onPositionChange={(wordIndex) => {
                             indexRef.current = wordIndex;
@@ -2718,6 +2732,8 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                         }}
                         bookId={book.id}
                         chapterId={currentChapter.id}
+                        autoPlayChapterId={ttsAutoPlayChapterId}
+                        onChapterEnd={handleTTSChapterEnd}
                         compact={false}
                         dockClassName={clsx(
                             showChapters && 'md:right-[21rem]',

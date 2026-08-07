@@ -15,27 +15,91 @@ export interface SentenceBoundary {
     audioEndTime?: number;
 }
 
-const SENTENCE_END_PATTERN = /(?:[.!?]|\u2026)["'\u2019\u201d)\]}]*$/;
+const SENTENCE_END_PATTERN = /(?:[.!?\u0589\u061f\u0964\u0965\u2026\u3002\uff01\uff1f\u1362])["'\u2019\u201d)\]}]*$/;
+const TRAILING_PUNCTUATION_PATTERN = /[.!?,:;\u0589\u061b\u061f\u0964\u0965\u2026\u3001\u3002\uff01\uff0c\uff1a\uff1b\uff1f\u1362]["'\u2019\u201d)\]}]*$/;
+const NUMBERED_HEADING_PATTERN = /^(?:\d+|[ivxlcdm]+)[.)]$/i;
+const HEADING_CONNECTORS = new Set([
+    'a', 'an', 'and', 'as', 'at', 'by', 'for', 'from', 'in', 'into', 'of',
+    'on', 'or', 'the', 'to', 'with', 'without',
+]);
+
+const cleanHeadingToken = (word: string): string => word
+    .replace(/^["'\u2018\u201c([{]+/, '')
+    .replace(/["'\u2019\u201d)\]},:;]+$/, '');
+
+const isCapitalizedHeadingWord = (word: string): boolean => {
+    const token = cleanHeadingToken(word);
+    return /^\p{Lu}[\p{L}\p{M}'\u2019-]*$/u.test(token) || /^\p{Lu}{2,}$/u.test(token);
+};
+
+const isLowercaseBodyWord = (word: string): boolean => {
+    const token = cleanHeadingToken(word);
+    return /^\p{Ll}/u.test(token) && !HEADING_CONNECTORS.has(token.toLocaleLowerCase());
+};
+
+const findInferredHeadingBreaks = (words: string[]): Set<number> => {
+    const breaks = new Set<number>();
+
+    for (let markerIndex = 0; markerIndex < words.length - 3; markerIndex++) {
+        if (!NUMBERED_HEADING_PATTERN.test(words[markerIndex])) continue;
+
+        const titleStart = markerIndex + 1;
+        const titleLimit = Math.min(words.length - 1, titleStart + 24);
+        for (let wordIndex = titleStart; wordIndex <= titleLimit; wordIndex++) {
+            const token = cleanHeadingToken(words[wordIndex]);
+            const normalized = token.toLocaleLowerCase();
+            const isHeadingWord = isCapitalizedHeadingWord(words[wordIndex]) || HEADING_CONNECTORS.has(normalized);
+            if (!isHeadingWord || SENTENCE_END_PATTERN.test(words[wordIndex])) break;
+
+            const nextWord = words[wordIndex + 1];
+            if (
+                wordIndex - titleStart >= 2
+                && isCapitalizedHeadingWord(words[wordIndex])
+                && nextWord
+                && isLowercaseBodyWord(nextWord)
+            ) {
+                breaks.add(wordIndex - 1);
+                break;
+            }
+        }
+    }
+
+    return breaks;
+};
+
+const closeStructuralUtterance = (text: string): string =>
+    TRAILING_PUNCTUATION_PATTERN.test(text) ? text : `${text}.`;
 
 /**
  * Split text into sentences for TTS processing
  * This enables smooth reading <-> listening transitions
  */
-export function splitIntoSentences(words: string[]): SentenceBoundary[] {
+export function splitIntoSentences(
+    words: string[],
+    breakAfterWordIndices: Iterable<number> = [],
+): SentenceBoundary[] {
     const sentences: SentenceBoundary[] = [];
     let currentSentence: string[] = [];
     let sentenceStartIndex = 0;
+    const structuralBreaks = findInferredHeadingBreaks(words);
+    for (const wordIndex of breakAfterWordIndices) {
+        if (Number.isInteger(wordIndex) && wordIndex >= 0 && wordIndex < words.length - 1) {
+            structuralBreaks.add(wordIndex);
+        }
+    }
 
     for (let i = 0; i < words.length; i++) {
         const word = words[i];
         currentSentence.push(word);
 
         const isEnd = SENTENCE_END_PATTERN.test(word);
+        const isStructuralBreak = structuralBreaks.has(i);
 
-        if (isEnd || i === words.length - 1) {
+        if (isEnd || isStructuralBreak || i === words.length - 1) {
+            const text = currentSentence.join(' ');
             sentences.push({
                 index: sentences.length,
-                text: currentSentence.join(' '),
+                text: isStructuralBreak && !isEnd ? closeStructuralUtterance(text) : text,
                 startWordIndex: sentenceStartIndex,
                 endWordIndex: i,
             });

@@ -79,7 +79,7 @@ export const imageSchema = {
 } as const;
 
 export const chapterSchema = {
-    version: 2,
+    version: 4,
     primaryKey: 'id',
     type: 'object',
     properties: {
@@ -122,6 +122,12 @@ export const chapterSchema = {
             type: 'array',
             items: {
                 type: 'string'
+            }
+        },
+        paragraphBreaks: {
+            type: 'array',
+            items: {
+                type: 'number'
             }
         },
         notes: {
@@ -214,7 +220,7 @@ export const chapterSchema = {
                     type: 'array',
                     items: {
                         type: 'string',
-                        enum: ['publisher-toc', 'document-heading', 'source-spine']
+                        enum: ['publisher-toc', 'document-heading', 'scan-heading', 'source-spine']
                     }
                 },
                 authoredGroupTitle: { type: 'string' },
