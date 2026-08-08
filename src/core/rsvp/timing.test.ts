@@ -1,6 +1,7 @@
 
 import { describe, it, expect } from 'vitest';
-import { getTargetInterval, getVisualProcessingDelay, isLikelyProperNoun } from './timing';
+import { getFrameTargetInterval, getTargetInterval, getVisualProcessingDelay, isLikelyProperNoun } from './timing';
+import type { RsvpFrame } from './phrases/grouping';
 
 describe('getTargetInterval', () => {
     it('should keep punctuation cadence smooth at 500 WPM', () => {
@@ -19,6 +20,40 @@ describe('getTargetInterval', () => {
         expect(isLikelyProperNoun('Montmorency', 'arrived.')).toBe(false);
         expect(getTargetInterval('Montmorency', 1, 500, { isLikelyProperNoun: true }))
             .toBeGreaterThan(getTargetInterval('montmorency', 1, 500));
+    });
+});
+
+describe('getFrameTargetInterval', () => {
+    const frame = (tokens: string[], sourceWordCount: 1 | 2 | 3): RsvpFrame => ({
+        startIndex: 0,
+        sourceWordCount,
+        tokens,
+        displayText: tokens.join(' '),
+    });
+
+    it('compresses a neutral bigram to 150 ms at 600 WPM', () => {
+        expect(getFrameTargetInterval(frame(['in', 'the'], 2), [1, 1], undefined, 600)).toBe(150);
+    });
+
+    it('compresses a neutral trigram to 225 ms at 600 WPM', () => {
+        expect(getFrameTargetInterval(frame(['one', 'of', 'the'], 3), [1, 1, 1], undefined, 600)).toBe(225);
+    });
+
+    it('keeps terminal punctuation outside the compression factor', () => {
+        expect(getFrameTargetInterval(frame(['in', 'the.'], 2), [1, 1], undefined, 600)).toBe(215);
+    });
+
+    it('preserves the single-token timing path', () => {
+        const single = frame(['word,'], 1);
+        expect(getFrameTargetInterval(single, [1], undefined, 500)).toBe(getTargetInterval('word,', 1, 500));
+        expect(getFrameTargetInterval(single, [0], undefined, 500)).toBe(getTargetInterval('word,', 1, 500));
+    });
+
+    it('uses each constituent density for its own portion of grouped time', () => {
+        const grouped = getFrameTargetInterval(frame(['in', 'the'], 2), [0.5, 2], undefined, 600);
+        expect(grouped).toBe(166.875);
+        expect(grouped).not.toBe(150);
+        expect(getFrameTargetInterval(frame(['in', 'the'], 2), [1, 1], undefined, 600)).toBe(150);
     });
 });
 

@@ -1,5 +1,6 @@
 
 import { getTokenDisplayProps } from './tokenize';
+import type { RsvpFrame } from './phrases/grouping';
 
 const MIN_DENSITY = 0.5;
 const MAX_DENSITY = 2;
@@ -88,6 +89,33 @@ export const getTargetInterval = (
     effectiveWpm: number,
     options: TargetIntervalOptions = {},
 ): number => calculateTargetTiming(word, density, effectiveWpm, options).duration;
+
+export const getFrameTargetInterval = (
+    frame: RsvpFrame,
+    densities: readonly number[],
+    previousSourceToken: string | undefined,
+    effectiveWpm: number,
+): number => {
+    const getEffectiveDensity = (index: number): number => {
+        const density = densities[index];
+        return density !== undefined && density > 0 ? density : 1;
+    };
+    const firstDensity = getEffectiveDensity(frame.startIndex);
+    if (frame.sourceWordCount === 1) {
+        return getTargetInterval(frame.tokens[0] ?? '', firstDensity, effectiveWpm, {
+            isLikelyProperNoun: isLikelyProperNoun(frame.tokens[0] ?? '', previousSourceToken),
+        });
+    }
+
+    return frame.tokens.reduce((total, token, offset) => {
+        const previousToken = offset === 0 ? previousSourceToken : frame.tokens[offset - 1];
+        const timing = calculateTargetTiming(token, getEffectiveDensity(frame.startIndex + offset), effectiveWpm, {
+            isLikelyProperNoun: isLikelyProperNoun(token, previousToken),
+        });
+        const lexicalTime = timing.duration - timing.punctuationTime;
+        return total + (lexicalTime * 0.75) + timing.punctuationTime;
+    }, 0);
+};
 
 /**
  * Get visual processing delay for a word.

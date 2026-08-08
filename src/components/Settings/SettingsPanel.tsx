@@ -6,6 +6,7 @@ import { useTTSStore, type TTSBackendPreference } from '../../core/store/tts';
 import { getEngine, MODEL_INFO, PACING_MODEL_TIER, type ModelTier, isModelCached, deleteModel } from '../../core/ai/webllm';
 import { getAvailableStrategies, type DurationStrategyId } from '../../core/rsvp/duration';
 import { getAllDisplayPlugins, type DisplayPluginId } from '../../core/rsvp/display';
+import { COMMON_NGRAM_RANK_LIMIT } from '../../core/rsvp/phrases/commonEnglishNgrams';
 import { VOICES, initTTS, clearTTSCache, isTTSModelCached, isTTSReady, getVoice, getVoiceEngine, type VoiceInfo } from '../../core/tts';
 import { clsx } from 'clsx';
 import { BrandName } from '../BrandName';
@@ -16,6 +17,39 @@ interface SettingsPanelProps {
 }
 
 type SettingsTab = 'librarian' | 'pacing' | 'summarizer' | 'tts';
+
+interface CommonPhraseGroupingControlProps {
+    value: number;
+    onChange: (value: number) => void;
+}
+
+export const CommonPhraseGroupingControl: React.FC<CommonPhraseGroupingControlProps> = ({ value, onChange }) => (
+    <div className="bg-black/20 p-8 rounded-lg border border-white/10">
+        <div className="flex justify-between gap-4 text-sm text-gray-400 mb-4">
+            <label htmlFor="common-phrase-grouping" className="uppercase tracking-widest">Common phrase grouping</label>
+            <span className="text-dune-gold font-bold text-right" aria-live="polite">
+                {value === 0 ? 'Off' : `Top ${value} bigrams and trigrams`}
+            </span>
+        </div>
+        <input
+            id="common-phrase-grouping"
+            type="range"
+            aria-label="Common phrase grouping"
+            min="0"
+            max={COMMON_NGRAM_RANK_LIMIT}
+            step="10"
+            value={value}
+            onChange={(event) => onChange(parseInt(event.target.value, 10))}
+            className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-dune-gold"
+        />
+        <p className="text-xs text-gray-500 mt-4">
+            Predictable two- and three-word phrases appear in one flash, with trigrams preferred.
+        </p>
+        <p className="text-xs text-gray-500 mt-2 italic">
+            <span className="text-gray-300">in</span> + <span className="text-gray-300">the</span> becomes <span className="text-gray-300">in the</span> for about 75% of their combined display time.
+        </p>
+    </div>
+);
 
 export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
     const { tab } = useParams<{ tab: string }>();
@@ -380,6 +414,11 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                                     </div>
                                 </div>
                             </div>
+
+                            <CommonPhraseGroupingControl
+                                value={settings.commonPhraseRankLimit}
+                                onChange={settings.setCommonPhraseRankLimit}
+                            />
 
                             <div className="bg-black/20 p-8 rounded-lg border border-white/10">
                                 <div className="flex justify-between text-sm text-gray-400 mb-4">

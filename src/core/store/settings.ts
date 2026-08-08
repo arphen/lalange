@@ -3,9 +3,16 @@ import { persist } from 'zustand/middleware';
 import { type ModelTier } from '../ai/webllm';
 import { type DurationStrategyId, DEFAULT_STRATEGY_ID } from '../rsvp/duration';
 import { type DisplayPluginId, DEFAULT_DISPLAY_PLUGIN } from '../rsvp/display';
+import { COMMON_NGRAM_RANK_LIMIT } from '../rsvp/phrases/commonEnglishNgrams';
 
 export type ThemeMode = 'volcanic' | 'day' | 'dunes' | 'ash';
 export type NotePresentationMode = 'guided' | 'markers' | 'notes-only';
+
+export const normalizeCommonPhraseRankLimit = (limit: unknown): number => {
+    if (typeof limit !== 'number' || !Number.isFinite(limit)) return 0;
+    const steppedLimit = Math.round(limit / 10) * 10;
+    return Math.min(COMMON_NGRAM_RANK_LIMIT, Math.max(0, steppedLimit));
+};
 
 export interface PromptFragment {
     id: string;
@@ -96,6 +103,8 @@ interface SettingsState {
     setPacingOverlapTokens: (tokens: number) => void;
     pacingSensitivity: number;
     setPacingSensitivity: (sensitivity: number) => void;
+    commonPhraseRankLimit: number;
+    setCommonPhraseRankLimit: (limit: number) => void;
 
     // Librarian
     librarianModelTier: ModelTier;
@@ -220,6 +229,8 @@ export const useSettingsStore = create<SettingsState>()(
             setPacingOverlapTokens: (pacingOverlapTokens) => set({ pacingOverlapTokens }),
             pacingSensitivity: 50,
             setPacingSensitivity: (pacingSensitivity) => set({ pacingSensitivity }),
+            commonPhraseRankLimit: 0,
+            setCommonPhraseRankLimit: (limit) => set({ commonPhraseRankLimit: normalizeCommonPhraseRankLimit(limit) }),
 
             // Librarian Defaults (used for density estimation)
             librarianModelTier: 'tiny',
@@ -258,6 +269,14 @@ export const useSettingsStore = create<SettingsState>()(
         }),
         {
             name: 'xyz-settings',
+            merge: (persistedState, currentState) => {
+                const persisted = persistedState as Record<string, unknown>;
+                return {
+                    ...currentState,
+                    ...persisted,
+                    commonPhraseRankLimit: normalizeCommonPhraseRankLimit(persisted.commonPhraseRankLimit),
+                };
+            },
         }
     )
 );

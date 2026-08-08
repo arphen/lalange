@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { getDisplayPlugin } from '../core/rsvp/display';
-import { getTargetInterval, isLikelyProperNoun } from '../core/rsvp/timing';
+import { getDisplayPlugin, renderDisplayFrame } from '../core/rsvp/display';
+import { getFrameTargetInterval } from '../core/rsvp/timing';
+import { planRsvpFrame } from '../core/rsvp/phrases/grouping';
 import { useSettingsStore } from '../core/store/settings';
 
 const getDensityColor = (score: number) => {
@@ -22,7 +23,7 @@ interface ManifestoRsvpProps {
 }
 
 export function ManifestoRsvp({ words, densities, currentIndex, onJumpToIndex }: ManifestoRsvpProps) {
-  const { wpm, setWpm, displayPlugin: displayPluginId } = useSettingsStore();
+  const { wpm, setWpm, displayPlugin: displayPluginId, commonPhraseRankLimit } = useSettingsStore();
   
   // Get active display plugin
   const displayPlugin = useMemo(() => getDisplayPlugin(displayPluginId), [displayPluginId]);
@@ -41,8 +42,8 @@ export function ManifestoRsvp({ words, densities, currentIndex, onJumpToIndex }:
   const rafRef = useRef<number | null>(null);
   const loopRef = useRef<(time: number) => void>(() => undefined);
 
-  // actual WPM (rolling minute)
-  const wordTimestampsRef = useRef<number[]>([]);
+  // actual WPM (rolling minute), weighted by source words consumed per frame
+  const wordTimestampsRef = useRef<Array<{ timeMs: number; sourceWordCount: number }>>([]);
   const [actualWpm, setActualWpm] = useState(0);
 
   // momentum-based speed controls
@@ -56,13 +57,14 @@ export function ManifestoRsvp({ words, densities, currentIndex, onJumpToIndex }:
   }, [actualWpm, wpm]);
 
   const renderAt = useCallback((idx: number) => {
-    const word = words[idx] || '';
+    const frame = planRsvpFrame(words, idx, { phraseRankLimit: commonPhraseRankLimit });
+    const frameEnd = frame.startIndex + frame.sourceWordCount;
 
     if (rsvpRef.current) {
-      rsvpRef.current.innerHTML = word ? displayPlugin.renderWord(word) : '';
+      rsvpRef.current.innerHTML = frame.displayText ? renderDisplayFrame(displayPlugin, frame.tokens) : '';
       
       // Apply plugin container styling
-      const containerStyle = displayPlugin.getContainerStyle?.(word);
+      const containerStyle = displayPlugin.getContainerStyle?.(frame.displayText);
       if (containerStyle) {
         Object.assign(rsvpRef.current.style, containerStyle);
       } else {
@@ -72,7 +74,7 @@ export function ManifestoRsvp({ words, densities, currentIndex, onJumpToIndex }:
     }
 
     const startPrev = Math.max(0, idx - 150);
-    const endPrev = idx;
+    const endPrev = frame.startIndex;
     const prevWords = words.slice(startPrev, endPrev);
 
     if (prevRef.current) {
@@ -100,8 +102,8 @@ export function ManifestoRsvp({ words, densities, currentIndex, onJumpToIndex }:
       prevRef.current.scrollTop = prevRef.current.scrollHeight;
     }
 
-    const startNext = idx + 1;
-    const endNext = Math.min(words.length, idx + 151);
+    const startNext = frameEnd;
+    const endNext = Math.min(words.length, frameEnd + 150);
     const nextWords = words.slice(startNext, endNext);
 
     if (nextRef.current) {
@@ -127,7 +129,7 @@ export function ManifestoRsvp({ words, densities, currentIndex, onJumpToIndex }:
       nextRef.current.innerHTML = html;
       nextRef.current.scrollTop = 0;
     }
-  }, [densities, words, displayPlugin]);
+  }, [commonPhraseRankLimit, densities, words, displayPlugin]);
 
   const handleRiverClick = useCallback((e: React.MouseEvent) => {
     const target = e.target as HTMLElement;
@@ -218,31 +220,35 @@ export function ManifestoRsvp({ words, densities, currentIndex, onJumpToIndex }:
     }
 
     while (true) {
-      const word = words[indexRef.current] || '';
-      const density = densities[indexRef.current] ?? 1.0;
-      const currentDensity = density > 0 ? density : 1.0;
-
-      const targetInterval = getTargetInterval(word, currentDensity, wpmRef.current, {
-        isLikelyProperNoun: isLikelyProperNoun(word, words[indexRef.current - 1]),
+      const frame = planRsvpFrame(words, indexRef.current, {
+        phraseRankLimit: commonPhraseRankLimit,
       });
+      const targetInterval = getFrameTargetInterval(
+        frame,
+        densities,
+        words[frame.startIndex - 1],
+        wpmRef.current,
+      );
 
       if (accumulatorRef.current < targetInterval) break;
 
-      if (indexRef.current < words.length - 1) {
-        indexRef.current++;
+      wordTimestampsRef.current.push({ timeMs: time, sourceWordCount: frame.sourceWordCount });
+      const nextIndex = frame.startIndex + frame.sourceWordCount;
+      if (nextIndex < words.length) {
+        indexRef.current = nextIndex;
         accumulatorRef.current -= targetInterval;
         onJumpToIndex(indexRef.current);
-
-        wordTimestampsRef.current.push(time);
         renderAt(indexRef.current);
       } else {
+        indexRef.current = Math.max(0, words.length - 1);
+        onJumpToIndex(indexRef.current);
         setIsPlaying(false);
         break;
       }
     }
 
     rafRef.current = requestAnimationFrame(loopRef.current);
-  }, [densities, onJumpToIndex, renderAt, words]);
+  }, [commonPhraseRankLimit, densities, onJumpToIndex, renderAt, words]);
 
   useEffect(() => {
     loopRef.current = loop;
@@ -280,13 +286,14 @@ export function ManifestoRsvp({ words, densities, currentIndex, onJumpToIndex }:
     const calc = () => {
       const now = performance.now();
       const oneMinuteAgo = now - 60000;
-      const recent = wordTimestampsRef.current.filter(t => t > oneMinuteAgo);
+      const recent = wordTimestampsRef.current.filter(({ timeMs }) => timeMs > oneMinuteAgo);
       wordTimestampsRef.current = recent;
 
       if (recent.length >= 2) {
-        const oldest = recent[0];
+        const oldest = recent[0].timeMs;
+        const consumedWords = recent.reduce((total, event) => total + event.sourceWordCount, 0);
         const spanMin = (now - oldest) / 60000;
-        setActualWpm(Math.round(recent.length / spanMin));
+        setActualWpm(Math.round(consumedWords / spanMin));
       } else {
         setActualWpm(0);
       }

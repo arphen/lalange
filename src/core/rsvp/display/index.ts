@@ -66,6 +66,7 @@ export function isValidPluginId(id: string): id is DisplayPluginId {
 
 // Re-export types and plugins for convenience
 export { type DisplayPlugin, type DisplayPluginId, type WordSplit, type RenderOptions } from './types';
+export { renderDisplayFrame } from './frame';
 export { saccadePlugin, getSaccadeSplit, getSaccadeGradientHtml } from './saccade';
 export { 
     velocireaderPlugin, 
