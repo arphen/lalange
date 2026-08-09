@@ -14,6 +14,10 @@ const MAX_QUEUED_BUFFERS = 10;
 const BUFFER_CLEANUP_BEHIND = 2;
 const CLOCK_UPDATE_INTERVAL_SECONDS = 0.2;
 
+const logTTSPlayerDebug = (...args: unknown[]): void => {
+    if (import.meta.env.DEV) console.debug(...args);
+};
+
 type AudioContextGlobal = typeof globalThis & {
     webkitAudioContext?: typeof AudioContext;
 };
@@ -186,7 +190,7 @@ class TTSAudioPlayer {
             playbackRate: result.playbackRate ?? 1,
         });
         
-        console.log(`[TTS Player] Queued sentence ${sentence.index} (${result.duration.toFixed(2)}s), queue: ${this.audioQueue.size}`);
+        logTTSPlayerDebug(`[TTS Player] Queued sentence ${sentence.index} (${result.duration.toFixed(2)}s), queue: ${this.audioQueue.size}`);
         
         // Notify UI
         this.options.onAudioQueued?.(sentence.index, this.audioQueue.size);
@@ -224,7 +228,7 @@ class TTSAudioPlayer {
     clearQueue(): void {
         this.cancelScheduledSources();
         this.audioQueue.clear();
-        console.log('[TTS Player] Queue cleared');
+        logTTSPlayerDebug('[TTS Player] Queue cleared');
     }
     
     getQueueSize(): number {
@@ -268,13 +272,13 @@ class TTSAudioPlayer {
         }
         
         if (this.isPlaying) {
-            console.log('[TTS Player] Already playing');
+            logTTSPlayerDebug('[TTS Player] Already playing');
             return;
         }
         
         this.isPlaying = true;
         const hasAudio = this.audioQueue.has(this.currentSentenceIndex);
-        console.log(`[TTS Player] Starting playback from sentence ${this.currentSentenceIndex} (hasAudio: ${hasAudio}, queueSize: ${this.audioQueue.size})`);
+        logTTSPlayerDebug(`[TTS Player] Starting playback from sentence ${this.currentSentenceIndex} (hasAudio: ${hasAudio}, queueSize: ${this.audioQueue.size})`);
         
         this.playCurrentSentence();
     }
@@ -291,7 +295,7 @@ class TTSAudioPlayer {
             // Wait until the initial contiguous buffer is ready. After playback
             // starts, startupBufferTarget resets to one and refill is rolling.
             if (this.waitingForSentenceIndex !== this.currentSentenceIndex) {
-                console.log(`[TTS Player] Waiting for ${this.startupBufferTarget} contiguous sentence(s) from ${this.currentSentenceIndex}...`);
+                logTTSPlayerDebug(`[TTS Player] Waiting for ${this.startupBufferTarget} contiguous sentence(s) from ${this.currentSentenceIndex}...`);
                 this.waitingForSentenceIndex = this.currentSentenceIndex;
                 useTTSStore.getState().setPlaybackState('generating');
                 
@@ -307,7 +311,7 @@ class TTSAudioPlayer {
         
         const { buffer, sentence, duration, playbackRate } = queueItem;
 
-        console.log(`[TTS Player] Playing sentence ${sentence.index}: "${sentence.text.slice(0, 40)}..."`);
+        logTTSPlayerDebug(`[TTS Player] Playing sentence ${sentence.index}: "${sentence.text.slice(0, 40)}..."`);
         useTTSStore.getState().setPlaybackState('playing');
         
         // Stop any existing source
@@ -348,7 +352,7 @@ class TTSAudioPlayer {
         
         // Check if buffer is running low
         const aheadCount = this.getBufferedAheadCount();
-        console.log(`[TTS Player] Contiguous buffer: ${aheadCount} ahead`);
+        logTTSPlayerDebug(`[TTS Player] Contiguous buffer: ${aheadCount} ahead`);
         this.options.onBufferLow?.(this.currentSentenceIndex);
         
         const sentenceIndex = sentence.index;
@@ -578,11 +582,11 @@ class TTSAudioPlayer {
         this.playbackRequestId += 1;
 
         if (!this.isPlaying) {
-            console.log('[TTS Player] Already paused');
+            logTTSPlayerDebug('[TTS Player] Already paused');
             return;
         }
         
-        console.log(`[TTS Player] Pausing at sentence ${this.currentSentenceIndex}`);
+        logTTSPlayerDebug(`[TTS Player] Pausing at sentence ${this.currentSentenceIndex}`);
         if (this.audioContext && this.currentSentence) {
             const elapsed = clamp(
                 this.audioContext.currentTime - this.sentenceStartTime,
@@ -620,7 +624,7 @@ class TTSAudioPlayer {
     }
     
     stop(): void {
-        console.log('[TTS Player] Stopping');
+        logTTSPlayerDebug('[TTS Player] Stopping');
         this.pause();
         this.currentSentenceIndex = 0;
         this.currentSentence = null;
@@ -655,7 +659,7 @@ class TTSAudioPlayer {
     }
     
     dispose(): void {
-        console.log('[TTS Player] Disposing');
+        logTTSPlayerDebug('[TTS Player] Disposing');
         this.stop();
         this.clearQueue();
         

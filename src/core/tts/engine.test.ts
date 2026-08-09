@@ -235,6 +235,16 @@ describe('streamSpeech', () => {
         expect(sentences[1]).toMatchObject({ audioStartTime: 2, audioEndTime: 5 });
     });
 
+    it('does not advance the audible sentence while generating ahead', async () => {
+        const results = [];
+        for await (const result of streamSpeech(sentences, { voice: SLOVENIAN_VOICE })) {
+            results.push(result);
+        }
+
+        expect(results).toHaveLength(sentences.length);
+        expect(ttsState.setCurrentSentence).not.toHaveBeenCalled();
+    });
+
     it('initializes the engine once when it is not ready', async () => {
         const generator = streamSpeech(sentences, { voice: SLOVENIAN_VOICE });
         await generator.next();

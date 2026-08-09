@@ -2786,6 +2786,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                         words={currentChapter.content}
                         paragraphBreaks={currentChapter.paragraphBreaks}
                         currentWordIndex={currentWordIndex}
+                        getCurrentWordIndex={() => indexRef.current}
                         onPositionChange={(wordIndex) => {
                             indexRef.current = wordIndex;
                             const displayWord = resetDisplaySegments(wordsRef.current[wordIndex] || '');
