@@ -26,7 +26,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          release="$(gh run list --workflow=ci.yml --branch=main --event=push --status=success --limit=1 --json databaseId,headSha --jq '.[0] | "\(.databaseId) \(.headSha)"')"
+          release="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow=ci.yml --branch=main --event=push --status=success --limit=1 --json databaseId,headSha --jq '.[0] | "\(.databaseId) \(.headSha)"')"
           if [[ -z "$release" ]]; then
             echo "No successful staged release was found." >&2
             exit 1
