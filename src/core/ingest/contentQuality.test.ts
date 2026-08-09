@@ -4,6 +4,7 @@ import {
     cleanContentUnit,
     type RawContentUnit,
 } from './contentQuality';
+import { recoverMalformedProseMarkup } from './markupRecovery';
 
 const unit = (text: string, path = 'page.html'): RawContentUnit => ({
     ordinal: 0,
@@ -141,5 +142,29 @@ describe('content quality gate', () => {
         });
         expect(cleanContentUnit(bibliography, undefined, { referenceHandling: 'keep' }).zone).toBe('notes');
         expect(cleanContentUnit(chapterNotes, undefined, { referenceHandling: 'keep' }).zone).toBe('notes');
+    });
+
+    it('surfaces repaired markup as degraded quality evidence', () => {
+        const recovery = recoverMalformedProseMarkup('<body><p><f alpha="" beta="" gamma="" delta="" epsilon="" zeta="" eta="" theta=""/></p></body>');
+        const source = unit('f alpha beta gamma delta epsilon zeta eta theta', 'markup.html');
+        source.html = recovery.html;
+        source.markupRecovery = recovery;
+
+        const result = cleanContentUnit(source);
+
+        expect(result.decision).toBe('accept-degraded');
+        expect(result.issues.map((issue) => issue.type)).toContain('malformed-prose-markup');
+        expect(result.cleanedText).toContain('alpha beta gamma delta');
+    });
+
+    it('rejects substantial unresolved markup outside protected literal contexts', () => {
+        const recovery = recoverMalformedProseMarkup('<body><p><f alpha="" beta="meaningful" gamma="" delta="" epsilon="" zeta="" eta="" theta=""/></p></body>');
+        const source = unit('Visible prose before the unresolved candidate.', 'markup.html');
+        source.markupRecovery = recovery;
+
+        const result = cleanContentUnit(source);
+
+        expect(result.decision).toBe('reject');
+        expect(result.reason).toContain('Unresolved malformed prose markup');
     });
 });

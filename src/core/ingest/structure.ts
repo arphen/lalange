@@ -9,6 +9,11 @@ import {
     type ContentQualityProfile,
     type RawContentUnit,
 } from './contentQuality';
+import {
+    recoverMalformedProseMarkup,
+    type MarkupRecoveryRecord,
+    type MarkupRecoveryResult,
+} from './markupRecovery';
 import type { ReferenceHandlingMode } from './cleaning';
 
 export type ChapterSource = 'toc' | 'heading' | 'spine' | 'merged';
@@ -129,6 +134,20 @@ export interface ContentQualityAuditRecord {
     removedCharacters: number;
     beforeSample: string;
     afterSample: string;
+    markupRecovery: {
+        records: MarkupRecoveryRecord[];
+        repairedCandidateCount: number;
+        unresolvedCandidateCount: number;
+        recoveredTokenCount: number;
+        recoveredCharacterCount: number;
+    };
+}
+
+export interface LoadedEpubContentDocument {
+    path: string;
+    rawHtml: string;
+    repairedHtml: string;
+    recovery: MarkupRecoveryResult;
 }
 
 export interface LoadedChapterSlice {
@@ -446,6 +465,30 @@ const findZipEntry = (zip: JSZip, requestedPath: string): JSZip.JSZipObject | nu
     }
 
     return null;
+};
+
+type ContentDocumentLoader = (path: string) => Promise<LoadedEpubContentDocument>;
+
+const createContentDocumentLoader = (zip: JSZip): ContentDocumentLoader => {
+    const cache = new Map<string, LoadedEpubContentDocument>();
+
+    return async (path: string): Promise<LoadedEpubContentDocument> => {
+        const normalizedPath = normalizeArchivePath(path);
+        const cached = cache.get(normalizedPath);
+        if (cached) return cached;
+
+        const entry = findZipEntry(zip, normalizedPath);
+        const rawHtml = entry ? await entry.async('string') : '';
+        const recovery = recoverMalformedProseMarkup(rawHtml);
+        const loaded: LoadedEpubContentDocument = {
+            path: normalizedPath,
+            rawHtml,
+            repairedHtml: recovery.html,
+            recovery,
+        };
+        cache.set(normalizedPath, loaded);
+        return loaded;
+    };
 };
 
 const resolveOpfPath = async (zip: JSZip): Promise<string> => {
@@ -1156,7 +1199,7 @@ interface HeadingRecoveryResult {
 }
 
 const buildHeadingChapters = async (
-    zip: JSZip,
+    loadDocument: ContentDocumentLoader,
     spine: SpineItem[],
 ): Promise<HeadingRecoveryResult> => {
     const candidates: HeadingCandidate[] = [];
@@ -1164,10 +1207,9 @@ const buildHeadingChapters = async (
     const allowScanHeadings = isPageLikeSpine(spine);
 
     for (const spineItem of spine) {
-        const entry = findZipEntry(zip, spineItem.resolvedPath);
-        if (!entry) continue;
-
-        const html = await entry.async('string');
+        const document = await loadDocument(spineItem.resolvedPath);
+        const html = document.repairedHtml;
+        if (!html) continue;
         const $ = cheerio.load(html);
 
         $('h1, h2').each((headingIndex, el) => {
@@ -1212,8 +1254,8 @@ const buildHeadingChapters = async (
         : await Promise.all(scanBoundaries.map(async (boundary) => {
             if (!/^Introductory:/u.test(boundary.title) || boundary.index <= 0) return boundary;
 
-            const previousEntry = findZipEntry(zip, spine[boundary.index - 1].resolvedPath);
-            if (!previousEntry || !isLeadingEpigraph(await previousEntry.async('string'))) return boundary;
+            const previousDocument = await loadDocument(spine[boundary.index - 1].resolvedPath);
+            if (!previousDocument.repairedHtml || !isLeadingEpigraph(previousDocument.repairedHtml)) return boundary;
 
             return {
                 ...boundary,
@@ -1431,9 +1473,9 @@ const isLowInformationTocTitle = (title: string): boolean => {
 };
 
 const validateAndOrderTocEntries = async (
-    zip: JSZip,
     tocEntries: TocEntry[],
     spine: SpineItem[],
+    loadDocument: ContentDocumentLoader,
 ): Promise<TocEntry[]> => {
     const lookups = buildPathLookup(spine);
     const htmlCache = new Map<string, string>();
@@ -1452,11 +1494,8 @@ const validateAndOrderTocEntries = async (
         if (tocEntry.fragment) {
             const path = spine[spineIndex].resolvedPath;
             let html = htmlCache.get(path);
-            if (html === undefined) {
-                const entry = findZipEntry(zip, path);
-                html = entry ? await entry.async('string') : '';
-                htmlCache.set(path, html);
-            }
+            if (html === undefined) html = (await loadDocument(path)).repairedHtml;
+            htmlCache.set(path, html);
             if (!html) continue;
 
             const $ = cheerio.load(html);
@@ -1743,7 +1782,7 @@ const extractSliceTitle = (html: string, fallback: string): string => {
 };
 
 const filterNonReadingChapters = async (
-    zip: JSZip,
+    loadDocument: ContentDocumentLoader,
     chapters: PlannedChapter[],
     manifest: Record<string, ManifestItem>,
     coverManifestId?: string,
@@ -1763,28 +1802,17 @@ const filterNonReadingChapters = async (
     const coverPath = coverManifestId && manifest[coverManifestId]
         ? normalizeArchivePath(manifest[coverManifestId].resolvedPath)
         : '';
-    const htmlCache = new Map<string, string>();
     const readableChapters: PlannedChapter[] = [];
     const skippedChapters: SkippedPlannedChapter[] = [];
     const qualityRejections: RejectedContentUnit[] = [];
     const contentQualityAudit: ContentQualityAuditRecord[] = [];
 
-    const loadHtml = async (path: string): Promise<string> => {
-        const normalizedPath = normalizeArchivePath(path);
-        const cached = htmlCache.get(normalizedPath);
-        if (cached !== undefined) return cached;
-
-        const entry = findZipEntry(zip, normalizedPath);
-        const html = entry ? await entry.async('string') : '';
-        htmlCache.set(normalizedPath, html);
-        return html;
-    };
-
     const rawUnits: RawContentUnit[] = [];
     for (const chapter of chapters) {
         for (const slice of chapter.slices) {
             const normalizedPath = normalizeArchivePath(slice.path);
-            const html = await loadHtml(normalizedPath);
+            const document = await loadDocument(normalizedPath);
+            const html = document.repairedHtml;
             if (!html) continue;
 
             const slicedHtml = extractSliceHtml(
@@ -1804,6 +1832,7 @@ const filterNonReadingChapters = async (
                 html: readableHtml,
                 text,
                 lines: text.split('\n'),
+                markupRecovery: document.recovery,
             });
         }
     }
@@ -1819,7 +1848,8 @@ const filterNonReadingChapters = async (
 
         for (const slice of chapter.slices) {
             const normalizedPath = normalizeArchivePath(slice.path);
-            const html = await loadHtml(normalizedPath);
+            const document = await loadDocument(normalizedPath);
+            const html = document.repairedHtml;
             if (!html) continue;
 
             const slicedHtml = extractSliceHtml(
@@ -1846,6 +1876,13 @@ const filterNonReadingChapters = async (
                 removedCharacters: qualityResult.removedCharacters,
                 beforeSample: text.replace(/\s+/g, ' ').trim().slice(0, 240),
                 afterSample: qualityResult.cleanedText.replace(/\s+/g, ' ').trim().slice(0, 240),
+                markupRecovery: {
+                    records: rawUnit.markupRecovery?.records || [],
+                    repairedCandidateCount: rawUnit.markupRecovery?.records.filter((record) => record.action === 'repair').length || 0,
+                    unresolvedCandidateCount: rawUnit.markupRecovery?.unresolvedCandidateCount || 0,
+                    recoveredTokenCount: rawUnit.markupRecovery?.recoveredTokenCount || 0,
+                    recoveredCharacterCount: rawUnit.markupRecovery?.recoveredCharacterCount || 0,
+                },
             });
 
             if (qualityResult.decision === 'reject') {
@@ -2069,10 +2106,11 @@ export const buildEpubStructurePlan = async (
         throw new Error('Invalid EPUB: No linear spine documents found');
     }
 
+    const loadDocument = createContentDocumentLoader(zip);
     const spineTocId = normalizeWhitespace($opf('spine').attr('toc') || '') || undefined;
     const tocCollection = await collectTocEntries(zip, manifest, spineTocId);
     const collectedTocEntries = tocCollection.entries;
-    const tocEntries = await validateAndOrderTocEntries(zip, collectedTocEntries, spine);
+    const tocEntries = await validateAndOrderTocEntries(collectedTocEntries, spine, loadDocument);
     const tocBoundaries = buildBoundariesFromToc(tocEntries, spine);
     const tocWasDegraded = tocEntries.length < collectedTocEntries.length;
 
@@ -2082,7 +2120,7 @@ export const buildEpubStructurePlan = async (
         : buildFallbackSpineChapters(spine);
 
     if (tocBoundaries.length === 0 || rawChapters.length === 1 || tocWasDegraded) {
-        headingRecovery = await buildHeadingChapters(zip, spine);
+        headingRecovery = await buildHeadingChapters(loadDocument, spine);
         const headingFallback = headingRecovery.chapters;
         const headingIsMoreComplete = headingFallback && headingFallback.length > rawChapters.length;
         if (headingFallback && (
@@ -2095,7 +2133,7 @@ export const buildEpubStructurePlan = async (
     }
 
     const filtered = await filterNonReadingChapters(
-        zip,
+        loadDocument,
         rawChapters,
         manifest,
         coverManifestId,
@@ -2225,7 +2263,7 @@ export const loadPlannedChapterSources = async (
     contentQualityProfile?: ContentQualityProfile,
     referenceHandling: ReferenceHandlingMode = 'suppress',
 ): Promise<LoadedChapterSlice[]> => {
-    const htmlCache = new Map<string, string>();
+    const loadDocument = createContentDocumentLoader(zip);
     const sources: LoadedChapterSlice[] = [];
     const rawUnits: RawContentUnit[] = [];
 
@@ -2233,12 +2271,8 @@ export const loadPlannedChapterSources = async (
         const normalizedPath = normalizeArchivePath(slice.path);
         if (!normalizedPath) continue;
 
-        let html = htmlCache.get(normalizedPath);
-        if (html === undefined) {
-            const entry = findZipEntry(zip, normalizedPath);
-            html = entry ? await entry.async('string') : '';
-            htmlCache.set(normalizedPath, html);
-        }
+        const document = await loadDocument(normalizedPath);
+        const html = document.repairedHtml;
         if (!html) continue;
 
         const slicedHtml = extractSliceHtml(
@@ -2258,6 +2292,7 @@ export const loadPlannedChapterSources = async (
             html: readableHtml,
             text,
             lines: text.split('\n'),
+            markupRecovery: document.recovery,
         });
     }
     const profile = contentQualityProfile || analyzeContentUnits(rawUnits);
@@ -2267,17 +2302,7 @@ export const loadPlannedChapterSources = async (
         const normalizedPath = normalizeArchivePath(slice.path);
         if (!normalizedPath) continue;
 
-        let html = htmlCache.get(normalizedPath);
-        if (html === undefined) {
-            const entry = findZipEntry(zip, normalizedPath);
-            if (!entry) {
-                htmlCache.set(normalizedPath, '');
-                continue;
-            }
-            html = await entry.async('string');
-            htmlCache.set(normalizedPath, html);
-        }
-
+        const html = (await loadDocument(normalizedPath)).repairedHtml;
         if (!html) continue;
 
         const rawUnit = rawUnits[rawUnitIndex++];

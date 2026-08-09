@@ -67,6 +67,56 @@ describe('buildEpubStructurePlan', () => {
         expect(plan.structureDiagnostics.declaredToc.ncx.state).toBe('absent');
     });
 
+    it('uses the same repaired XHTML for planning, quality, and final loading', async () => {
+        const zip = new JSZip();
+        zip.file('META-INF/container.xml', containerXml('OPS/content.opf'));
+        zip.file('OPS/content.opf', `
+            <package xmlns:dc="http://purl.org/dc/elements/1.1/">
+                <metadata><dc:title>Markup Recovery</dc:title><dc:creator>Tester</dc:creator></metadata>
+                <manifest>
+                    <item id="one" href="one.xhtml" media-type="application/xhtml+xml" />
+                    <item id="two" href="two.xhtml" media-type="application/xhtml+xml" />
+                </manifest>
+                <spine><itemref idref="one" /><itemref idref="two" /></spine>
+            </package>
+        `);
+        zip.file('OPS/one.xhtml', xhtml(`
+            <h1>Chapter One</h1>
+            <p>Opening prose before the malformed sequence.</p>
+            <p><..case-- exchange="" so="" the="" potlatch="" in="" north-="" west="" america="" types=""/></p>
+            <p>Closing prose after the malformed sequence.</p>
+        `));
+        zip.file('OPS/two.xhtml', xhtml(`
+            <h1>Chapter Two</h1>
+            <p>Opening prose before the synthetic sequence.</p>
+            <p><f cf.="" also="" venia="" venus="" venenum="" vanati="" to="" give="" pleasure="" and="" disposition=""/></p>
+            <p>Closing prose after the synthetic sequence.</p>
+        `));
+
+        const plan = await buildEpubStructurePlan(zip);
+        const resolved = await Promise.all(
+            plan.chapters.map((chapter) => loadPlannedChapterSources(zip, chapter.slices, plan.contentQualityProfile)),
+        );
+        const resolvedText = resolved.flatMap((sources) => sources.map((source) => source.text)).join(' ');
+        const recoveryRecords = plan.contentQualityAudit.flatMap((record) => record.markupRecovery.records);
+
+        expect(plan.chapters.map((chapter) => chapter.title)).toEqual(['Chapter One', 'Chapter Two']);
+        expect(resolvedText).toContain('exchange so the potlatch in north- west america');
+        expect(resolvedText).toContain('cf. also venia venus venenum');
+        expect(resolvedText).not.toContain('=""');
+        expect(recoveryRecords.map((record) => record.kind)).toEqual([
+            'invalid-pseudo-tag',
+            'synthetic-empty-element',
+        ]);
+        expect(plan.contentQualityAudit.every((record) => record.decision === 'accept-degraded')).toBe(true);
+        expect(plan.contentQualityAudit.every((record) => (
+            record.issues.some((issue) => issue.type === 'malformed-prose-markup')
+        ))).toBe(true);
+        expect(plan.chapters.reduce((total, chapter) => total + chapter.estimatedWords, 0)).toBe(
+            resolvedText.trim().split(/\s+/).filter(Boolean).length,
+        );
+    });
+
     it('reports a declared nav document without a TOC root as invalid', async () => {
         const zip = new JSZip();
         zip.file('META-INF/container.xml', containerXml('OEBPS/content.opf'));
