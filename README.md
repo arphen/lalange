@@ -61,6 +61,10 @@ npm run gutenberg:corpus -- --count=6 --seed=xyz-epub-corpus --clean
 npm run build
 ```
 
+Production releases are staged and promoted through GitHub Actions. See
+[docs/deployment.md](docs/deployment.md) for the release flow and one-time
+Cloudflare setup.
+
 ## 🏗️ Tech Stack
 
 - **Frontend**: React + TypeScript + Vite

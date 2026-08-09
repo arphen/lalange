@@ -1,0 +1,54 @@
+name: Promote release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: production-deployment
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    name: Promote latest staged release to arphen.xyz
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://arphen.xyz
+
+    steps:
+      - name: Find latest staged release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          release="$(gh run list --workflow=ci.yml --branch=main --event=push --status=success --limit=1 --json databaseId,headSha --jq '.[0] | "\(.databaseId) \(.headSha)"')"
+          if [[ -z "$release" ]]; then
+            echo "No successful staged release was found." >&2
+            exit 1
+          fi
+
+          run_id="${release%% *}"
+          head_sha="${release##* }"
+          printf 'run-id=%s\n' "$run_id" >> "$GITHUB_OUTPUT"
+          printf 'head-sha=%s\n' "$head_sha" >> "$GITHUB_OUTPUT"
+          printf 'Promoting commit `%s` from [CI run %s](%s/actions/runs/%s).\n' "$head_sha" "$run_id" "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" "$run_id" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Download tested production build
+        uses: actions/download-artifact@v4
+        with:
+          name: production-site-${{ steps.release.outputs.head-sha }}
+          path: dist
+          github-token: ${{ github.token }}
+          run-id: ${{ steps.release.outputs.run-id }}
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy dist --project-name=arphen --branch=main
