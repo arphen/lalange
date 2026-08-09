@@ -13,6 +13,7 @@
 
 import { useTTSStore } from '../store/tts';
 import { decodeWavToSamples, getTTSAudioValidationError, type TTSAudioResult } from './audio';
+import { createTTSProgressReporter } from './progress';
 
 type PiperModule = typeof import('@mintplex-labs/piper-tts-web');
 type PiperSession = InstanceType<PiperModule['TtsSession']>;
@@ -99,12 +100,15 @@ export async function initPiper(
         return initPiper(voiceId, onProgress);
     }
 
+    const progressReporter = createTTSProgressReporter((progress, status) => {
+        onProgress?.(progress, status);
+        store.setProgress(progress, status);
+    });
     const promise: Promise<void> = (async () => {
         try {
             store.setLoading(true);
             store.setError(null);
-            store.setProgress(0, 'Loading Piper runtime');
-            onProgress?.(0, 'Loading Piper runtime...');
+            progressReporter.report(0, 'Loading Piper runtime...');
 
             const piper = await loadPiperLibrary();
 
@@ -112,8 +116,7 @@ export async function initPiper(
             await unloadPiper();
 
             const loadingStatus = `Loading ${voiceId}`;
-            store.setProgress(0.05, loadingStatus);
-            onProgress?.(0.05, loadingStatus);
+            progressReporter.report(0.05, loadingStatus);
 
             const loadedSession = await piper.TtsSession.create({
                 voiceId,
@@ -125,8 +128,7 @@ export async function initPiper(
                     const pct = 0.05 + Math.max(0, Math.min(1, loaded / total)) * 0.9;
                     const file = url.split('/').pop() ?? 'model';
                     const status = `Loading ${file}`;
-                    store.setProgress(pct, status);
-                    onProgress?.(pct, status);
+                    progressReporter.report(pct, status);
                 },
             });
 
@@ -135,8 +137,7 @@ export async function initPiper(
 
             const readyStatus = 'Ready · Piper / WASM';
             store.setReady(true);
-            store.setProgress(1, readyStatus);
-            onProgress?.(1, readyStatus);
+            progressReporter.complete(1, readyStatus);
 
             console.log(`[TTS] Piper initialized: ${voiceId}`);
         } catch (error) {
@@ -145,6 +146,7 @@ export async function initPiper(
             console.error('[TTS] Piper initialization failed:', error);
             throw error;
         } finally {
+            progressReporter.dispose();
             initPromise = null;
             initVoiceId = null;
             store.setLoading(false);

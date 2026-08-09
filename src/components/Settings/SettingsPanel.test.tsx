@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const tts = vi.hoisted(() => ({
@@ -56,7 +56,7 @@ vi.mock('../../core/tts', () => ({
     isTTSReady: (voiceId: string) => voiceId === tts.readyVoice,
 }));
 
-import { TTSSettings } from './SettingsPanel';
+import { CommonPhraseGroupingControl, TTSSettings } from './SettingsPanel';
 
 describe('TTSSettings', () => {
     beforeEach(() => {
@@ -70,5 +70,24 @@ describe('TTSSettings', () => {
         expect(screen.getByRole('heading', { name: 'Kokoro Model Status' })).toBeInTheDocument();
         expect(screen.queryByText(/Loaded in memory/)).not.toBeInTheDocument();
         expect(await screen.findByRole('button', { name: 'DOWNLOAD & LOAD MODEL' })).toBeInTheDocument();
+    });
+});
+
+describe('CommonPhraseGroupingControl', () => {
+    it('shows an accessible off state and reports slider changes', () => {
+        const onChange = vi.fn();
+        const { rerender } = render(<CommonPhraseGroupingControl value={0} onChange={onChange} />);
+        const slider = screen.getByRole('slider', { name: 'Common phrase grouping' });
+
+        expect(screen.getByText('Off')).toBeInTheDocument();
+        expect(slider).toHaveAttribute('min', '0');
+        expect(slider).toHaveAttribute('max', '500');
+        expect(slider).toHaveAttribute('step', '10');
+
+        fireEvent.change(slider, { target: { value: '120' } });
+        expect(onChange).toHaveBeenCalledWith(120);
+
+        rerender(<CommonPhraseGroupingControl value={120} onChange={onChange} />);
+        expect(screen.getByText('Top 120 bigrams and trigrams')).toBeInTheDocument();
     });
 });

@@ -56,6 +56,15 @@ if (!inputPath) {
                 removedCharacters: records.reduce((total, record) => total + record.removedCharacters, 0),
                 rejectedUnits: plan.qualityRejections.length,
                 policySkippedUnits: plan.skippedChapters.length,
+                markupRecovery: {
+                    affectedPaths: records
+                        .filter((record) => record.markupRecovery.repairedCandidateCount > 0 || record.markupRecovery.unresolvedCandidateCount > 0)
+                        .map((record) => record.path),
+                    repairedCandidates: records.reduce((total, record) => total + record.markupRecovery.repairedCandidateCount, 0),
+                    unresolvedCandidates: records.reduce((total, record) => total + record.markupRecovery.unresolvedCandidateCount, 0),
+                    recoveredTokens: records.reduce((total, record) => total + record.markupRecovery.recoveredTokenCount, 0),
+                    recoveredCharacters: records.reduce((total, record) => total + record.markupRecovery.recoveredCharacterCount, 0),
+                },
             },
         }));
     } finally {

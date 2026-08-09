@@ -19,6 +19,7 @@ import {
     isTransformersFileCached,
     transformersModelCache,
 } from './modelCache';
+import { createTTSProgressReporter } from './progress';
 
 // Lazy import to avoid loading the large library until needed
 let KokoroTTS: typeof import('kokoro-js').KokoroTTS | null = null;
@@ -193,13 +194,15 @@ export async function initKokoro(
     }
 
     const lifecycleGeneration = ttsLifecycleGeneration;
+    const progressReporter = createTTSProgressReporter((progress, status) => {
+        onProgress?.(progress, status);
+        store.setProgress(progress, status);
+    });
     const initPromise: Promise<void> = (async () => {
         try {
             store.setLoading(true);
             store.setError(null);
-            store.setProgress(0, 'Loading TTS library');
-
-            onProgress?.(0, 'Loading TTS library...');
+            progressReporter.report(0, 'Loading TTS library...');
             await loadKokoroLibrary();
 
             if (!KokoroTTS) {
@@ -207,8 +210,7 @@ export async function initKokoro(
             }
 
             const initializingStatus = `Loading model (${runtimeConfig.dtype}, ${runtimeConfig.device})`;
-            onProgress?.(0.1, initializingStatus);
-            store.setProgress(0.1, initializingStatus);
+            progressReporter.report(0.1, initializingStatus);
 
             const loadedInstance = await KokoroTTS.from_pretrained(TTS_MODEL_ID, {
                 dtype: runtimeConfig.dtype,
@@ -222,8 +224,7 @@ export async function initKokoro(
                         const pct = 0.1 + normalizedProgress * 0.9;
                         const file = progress.file?.split('/').pop();
                         const status = file ? `Loading ${file}` : 'Loading model files';
-                        onProgress?.(pct, status);
-                        store.setProgress(pct, status);
+                        progressReporter.report(pct, status);
                     }
                 },
             });
@@ -236,8 +237,7 @@ export async function initKokoro(
             currentLoadedConfig = runtimeConfig;
             const readyStatus = `Ready · ${runtimeConfig.dtype.toUpperCase()} / ${runtimeConfig.device.toUpperCase()}`;
             store.setReady(true);
-            store.setProgress(1, readyStatus);
-            onProgress?.(1, readyStatus);
+            progressReporter.complete(1, readyStatus);
 
             console.log(`[TTS] Kokoro initialized: ${runtimeConfig.dtype} on ${runtimeConfig.device}`);
         } catch (error) {
@@ -246,6 +246,7 @@ export async function initKokoro(
             console.error('[TTS] Initialization failed:', error);
             throw error;
         } finally {
+            progressReporter.dispose();
             ttsInitPromise = null;
             ttsInitConfigKey = null;
             store.setLoading(false);

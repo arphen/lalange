@@ -37,6 +37,9 @@ describe.skipIf(process.env.RUN_EPUB_CORPUS !== '1')('EPUB structure corpus', ()
         const resolvedText = resolvedChapters
             .flatMap((sources) => sources.map((source) => source.text))
             .join(' ');
+            const resolvedByPath = new Map(
+                resolvedChapters.flatMap((chapters) => chapters.map((source) => [source.path, source.text] as const)),
+            );
         const resolvedWordTotal = resolvedText.trim().split(/\s+/).filter(Boolean).length;
         const sectionWords = plan.chapters.map((chapter) => chapter.estimatedWords).sort((left, right) => left - right);
         const medianWords = sectionWords[Math.floor(sectionWords.length / 2)] || 0;
@@ -139,6 +142,24 @@ describe.skipIf(process.env.RUN_EPUB_CORPUS !== '1')('EPUB structure corpus', ()
             .toContain('EPUB/page_104.html');
         expect(keptNotes.flatMap((chapter) => chapter.slices.map((slice) => slice.path)))
             .toContain('EPUB/page_152.html');
+        const keptResolvedChapters = await Promise.all(
+            keptPlan.chapters.map((chapter) => loadPlannedChapterSources(
+                zip,
+                chapter.slices,
+                keptPlan.contentQualityProfile,
+                'keep',
+            )),
+        );
+        const keptResolvedByPath = new Map(
+            keptResolvedChapters.flatMap((chapters) => chapters.map((source) => [source.path, source.text] as const)),
+        );
+        expect(keptResolvedByPath.get('EPUB/page_149.html')).toContain('also venia venus venenum');
+        expect(keptResolvedByPath.get('EPUB/page_149.html')).toContain('god loki curses gold');
+        expect(keptResolvedByPath.get('EPUB/page_149.html')).not.toMatch(/(?:\S+=""){8}/u);
+        expect(keptPlan.contentQualityAudit
+            .filter((record) => record.markupRecovery.repairedCandidateCount > 0)
+            .map((record) => record.path))
+            .toEqual(['EPUB/page_63.html', 'EPUB/page_149.html']);
 
         const rejectedPagePathSet = new Set(qualityRejectedPagePaths);
         const skippedPagePathSet = new Set(skippedPagePaths);
@@ -180,6 +201,15 @@ describe.skipIf(process.env.RUN_EPUB_CORPUS !== '1')('EPUB structure corpus', ()
             .every((text) => !/^(?:Page\s+\d+\s+)?(?:THE GIFT|\d+ THE GIFT)\b/i.test(text))).toBe(true);
         expect(resolvedText).toContain('Tahitian, Tongan and Mangarevan languages');
         expect(resolvedText).toContain('The Spirit of the Thing Given');
+        expect(resolvedByPath.get('EPUB/page_63.html')).toContain('exchange so the potlatch in north- west america');
+        expect(resolvedByPath.get('EPUB/page_63.html')).not.toMatch(/(?:\S+=""){8}/u);
+        expect(plan.contentQualityAudit
+            .filter((record) => record.markupRecovery.repairedCandidateCount > 0)
+            .map((record) => record.path))
+            .toEqual(['EPUB/page_63.html', 'EPUB/page_149.html']);
+        expect(plan.contentQualityAudit
+            .filter((record) => record.markupRecovery.unresolvedCandidateCount > 0))
+            .toHaveLength(0);
         expect(plan.chapters.reduce((total, chapter) => total + chapter.estimatedWords, 0)).toBe(resolvedWordTotal);
         expect(medianWords).toBeGreaterThanOrEqual(2_000);
         expect(medianWords).toBeLessThanOrEqual(5_000);

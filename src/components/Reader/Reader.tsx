@@ -2,9 +2,10 @@ import React, { useEffect, useLayoutEffect, useRef, useState, useCallback, useMe
 import { clsx } from 'clsx';
 import { ArrowLeft, BookOpenText, Focus, Gauge, Headphones, List, Moon, Play, Share2, Sun, X } from 'lucide-react';
 import { type BookDocType, type ChapterDocType, type ReadingStateDocType, type GlobalSummaryType, type ImageDocType, initDB } from '../../core/sync/db';
-import { getDisplayPlugin, type DisplayPlugin, getVelocireaderORPIndex } from '../../core/rsvp/display';
-import { getTargetInterval, isLikelyProperNoun } from '../../core/rsvp/timing';
-import { isReferenceToken, splitLongWordForRSVP } from '../../core/rsvp/tokenize';
+import { getDisplayPlugin, renderDisplayFrame, type DisplayPlugin, getVelocireaderORPIndex } from '../../core/rsvp/display';
+import { getFrameTargetInterval, getTargetInterval, isLikelyProperNoun } from '../../core/rsvp/timing';
+import { isPauseToken, isReferenceToken, splitLongWordForRSVP } from '../../core/rsvp/tokenize';
+import { planRsvpFrame, type RsvpFrame } from '../../core/rsvp/phrases/grouping';
 import { Sidebar } from './Sidebar';
 import { TTSPlayer } from './TTSPlayer';
 import { ExchangeSheet } from '../Exchange/ExchangeSheet';
@@ -63,6 +64,32 @@ const CHAPTER_CHOOSER_HIDE_AFTER_PLAYBACK_MS = 320;
 type ChapterTransitionPhase = 'braking' | 'crossing' | 'launching';
 const TTS_RIVER_REFRESH_INTERVAL_MS = 1000;
 
+const buildReaderBlockedIndexes = (
+    words: readonly string[],
+    chapter: ChapterDocType | null,
+): ReadonlySet<number> => {
+    const blockedIndexes = new Set<number>();
+    words.forEach((word, index) => {
+        if (isReferenceToken(word) || isPauseToken(word)) blockedIndexes.add(index);
+    });
+    chapter?.noteAnchors?.forEach((anchor) => blockedIndexes.add(anchor.wordIndex));
+    chapter?.subchapters?.forEach((subchapter) => {
+        if (subchapter.summary) blockedIndexes.add(subchapter.endWordIndex);
+    });
+    return blockedIndexes;
+};
+
+const assertFrameDoesNotSkipProtectedIndex = (
+    frame: RsvpFrame,
+    blockedIndexes: ReadonlySet<number>,
+): void => {
+    for (let index = frame.startIndex + 1; index < frame.startIndex + frame.sourceWordCount; index++) {
+        if (blockedIndexes.has(index)) {
+            throw new Error(`RSVP frame skipped protected source index ${index}`);
+        }
+    }
+};
+
 export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
     const [isPlaying, setIsPlaying] = useState(false);
     const [playbackSession, setPlaybackSession] = useState(0);
@@ -76,6 +103,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
     const wpm = useSettingsStore((s) => s.wpm);
     const setWpm = useSettingsStore((s) => s.setWpm);
     const summaryWpm = useSettingsStore((s) => s.summaryWpm);
+    const commonPhraseRankLimit = useSettingsStore((s) => s.commonPhraseRankLimit);
     const displayPluginId = useSettingsStore((s) => s.displayPlugin);
     const theme = useSettingsStore((s) => s.theme);
     const setTheme = useSettingsStore((s) => s.setTheme);
@@ -125,8 +153,8 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
         displayPluginRef.current = displayPlugin;
     }, [displayPlugin]);
 
-    // Actual WPM tracking (words displayed in last 60 seconds)
-    const wordTimestampsRef = useRef<number[]>([]);
+    // Actual WPM tracking, weighted by source words consumed per frame
+    const wordTimestampsRef = useRef<Array<{ timeMs: number; sourceWordCount: number }>>([]);
     const [actualWpm, setActualWpm] = useState(0);
 
     // Active reading time accumulator (to handle pauses correctly)
@@ -215,6 +243,8 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
     const currentWordSegmentsRef = useRef<string[]>([]);
     const currentSegmentIndexRef = useRef(0);
     const segmentedWordSourceRef = useRef('');
+    const activeFrameRef = useRef<RsvpFrame | null>(null);
+    const blockedIndexesRef = useRef<ReadonlySet<number>>(new Set());
 
     const syncSchedulerCursor = useCallback((chapterId: string, wordIndex: number) => {
         scheduler.setCursor(
@@ -408,18 +438,28 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
     // Performance: renderContext=false skips the expensive prev/next context panel updates
     const renderWord = useCallback((idx: number, words: string[], renderContext: boolean = true, displayWordOverride?: string) => {
         const plugin = displayPluginRef.current;
+        const frame = planRsvpFrame(words, idx, {
+            phraseRankLimit: showTTSPlayerRef.current ? 0 : commonPhraseRankLimit,
+            blockedIndexes: isSummaryActiveRef.current ? undefined : blockedIndexesRef.current,
+        });
+        activeFrameRef.current = frame;
+        const frameTokens = frame.sourceWordCount > 1
+            ? frame.tokens
+            : [displayWordOverride ?? frame.tokens[0] ?? ''];
+        const frameDisplayText = frameTokens.join(' ');
+        const frameEnd = frame.startIndex + frame.sourceWordCount;
         
         // Update RSVP Display
         if (rsvpRef.current) {
-            const currentWord = displayWordOverride ?? words[idx];
-            if (currentWord) {
-                const referenceWord = isReferenceToken(currentWord);
+            const currentWord = frameTokens[0] ?? '';
+            if (frameDisplayText) {
+                const referenceWord = frameTokens.length === 1 && isReferenceToken(currentWord);
 
                 if (referenceWord) {
                     rsvpRef.current.innerHTML = '<span class="uppercase tracking-[0.35em] text-sm md:text-base font-semibold text-gray-400">REF</span>';
                 } else {
                     // Use the active display plugin for rendering
-                    rsvpRef.current.innerHTML = plugin.renderWord(currentWord);
+                    rsvpRef.current.innerHTML = renderDisplayFrame(plugin, frameTokens);
                 }
                 
                 // Reset common style properties potentially set by other plugins
@@ -436,7 +476,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
 
                 // Apply plugin-specific container styling
                 if (!referenceWord) {
-                    const containerStyle = plugin.getContainerStyle?.(currentWord);
+                    const containerStyle = plugin.getContainerStyle?.(frameDisplayText);
                     if (containerStyle) {
                         Object.assign(rsvpRef.current.style, containerStyle);
                     }
@@ -450,7 +490,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
         // Performance: Skip when renderContext=false (during rapid playback) or riverTopEnabled=false
         if (renderContext && riverTopEnabled && prevContainerRef.current) {
             const start = Math.max(contextHistoryStartRef.current, idx - 150);
-            const end = idx;
+            const end = frame.startIndex;
             const prevWords = words.slice(start, end);
             const html = prevWords.map((w, i) => {
                 const actualIndex = start + i;
@@ -492,8 +532,8 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
         // Render Next Context (Next ~150 words)
         // Performance: Skip when renderContext=false (during rapid playback) or riverBottomEnabled=false
         if (renderContext && riverBottomEnabled && nextContainerRef.current) {
-            const start = idx + 1;
-            const end = Math.min(words.length, idx + 151);
+            const start = frameEnd;
+            const end = Math.min(words.length, frameEnd + 150);
             const nextWords = words.slice(start, end);
             const html = nextWords.map((w, i) => {
                 const actualIndex = start + i;
@@ -529,7 +569,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
             nextContainerRef.current.innerHTML = html;
             // Scroll to top (default)
         }
-    }, [riverTopEnabled, riverBottomEnabled, applyLensScaleToElement]);
+    }, [commonPhraseRankLimit, riverTopEnabled, riverBottomEnabled, applyLensScaleToElement]);
 
     useEffect(() => {
         if (!rsvpRef.current) return;
@@ -884,6 +924,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                     setCurrentChapter(chapterDoc);
                     wordsRef.current = chapterDoc.content;
                     densitiesRef.current = chapterDoc.densities || [];
+                    blockedIndexesRef.current = buildReaderBlockedIndexes(chapterDoc.content, chapterDoc);
 
                     indexRef.current = initialIndex;
                     setCurrentWordIndex(initialIndex);
@@ -923,6 +964,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                 }
                 densitiesRef.current = chapterDoc.densities || [];
                 currentChapterRef.current = chapterDoc;
+                blockedIndexesRef.current = buildReaderBlockedIndexes(wordsRef.current, chapterDoc);
 
                 if (!isPlayingRef.current) {
                     setCurrentChapter(chapterDoc);
@@ -1372,6 +1414,11 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
 
         const activeWords = isSummaryActiveRef.current ? summaryWordsRef.current : wordsRef.current;
         const activeDensities = isSummaryActiveRef.current ? [] : densitiesRef.current;
+        const activeFrame = planRsvpFrame(activeWords, indexRef.current, {
+            phraseRankLimit: commonPhraseRankLimit,
+            blockedIndexes: isSummaryActiveRef.current ? undefined : blockedIndexesRef.current,
+        });
+        activeFrameRef.current = activeFrame;
 
         const activeWord = activeWords[indexRef.current] || '';
         if (!activeWord) {
@@ -1379,14 +1426,15 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
             return;
         }
 
-        if (
+        const isGroupedFrame = activeFrame.sourceWordCount > 1;
+        if (!isGroupedFrame && (
             segmentedWordSourceRef.current !== activeWord ||
             currentWordSegmentsRef.current.length === 0
-        ) {
+        )) {
             resetDisplaySegments(activeWord);
         }
 
-        const segmentCount = currentWordSegmentsRef.current.length;
+        const segmentCount = isGroupedFrame ? 1 : currentWordSegmentsRef.current.length;
         const segmentIndex = Math.min(currentSegmentIndexRef.current, Math.max(0, segmentCount - 1));
         const displayWord = currentWordSegmentsRef.current[segmentIndex] || activeWord;
 
@@ -1394,12 +1442,15 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
         const currentDensity = (density !== undefined && density > 0) ? density : 1.0;
         const densityFactor = segmentCount > 1 ? currentDensity / segmentCount : currentDensity;
         const likelyProperNoun = isLikelyProperNoun(activeWord, activeWords[indexRef.current - 1]);
-        const targetInterval = calculateTargetInterval(
-            displayWord,
-            densityFactor,
-            segmentCount > 1,
-            likelyProperNoun,
-        );
+        const effectiveWpm = Math.max(1, wpmRef.current * playbackMomentumRef.current);
+        const targetInterval = isGroupedFrame
+            ? getFrameTargetInterval(
+                activeFrame,
+                activeDensities,
+                activeWords[activeFrame.startIndex - 1],
+                effectiveWpm,
+            )
+            : calculateTargetInterval(displayWord, densityFactor, segmentCount > 1, likelyProperNoun);
 
         // Cap accumulator to prevent huge jumps
         if (accumulatorRef.current > Math.max(1000, targetInterval * 10)) {
@@ -1437,8 +1488,17 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                 return;
             }
 
-            if (indexRef.current < activeWords.length - 1) {
-                indexRef.current++;
+            const nextIndex = activeFrame.startIndex + activeFrame.sourceWordCount;
+            if (!isSummaryActiveRef.current) {
+                assertFrameDoesNotSkipProtectedIndex(activeFrame, blockedIndexesRef.current);
+            }
+            wordTimestampsRef.current.push({
+                timeMs: processTimeRef.current,
+                sourceWordCount: activeFrame.sourceWordCount,
+            });
+
+            if (nextIndex < activeWords.length) {
+                indexRef.current = nextIndex;
                 accumulatorRef.current -= targetInterval;
 
                 if (
@@ -1452,9 +1512,6 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                 if (!isSummaryActiveRef.current && currentChapterRef.current) {
                     updateProgressMilestone(currentChapterRef.current.id, indexRef.current, true);
                 }
-
-                // Track word timestamp for actual WPM calculation
-                wordTimestampsRef.current.push(processTimeRef.current);
 
                 // Check for Subchapter Boundary (only if NOT in summary mode)
                 // Also skip if we already triggered this exact boundary (prevents loops)
@@ -1489,6 +1546,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
 
             } else {
                 // End of words
+                indexRef.current = Math.max(0, activeWords.length - 1);
                 if (isSummaryActiveRef.current) {
                     isPlayingRef.current = false;
                     
@@ -1536,7 +1594,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
 
         // Continue loop - use rAF for precision timing in final approach
         requestRef.current = requestAnimationFrame(loopInternal);
-    }, [wpm, renderWord, beginChapterTransition, summaryWpm, startTransition, calculateTargetInterval, resetDisplaySegments, syncSchedulerCursor, updateProgressMilestone, imageCueAssignments]);
+    }, [commonPhraseRankLimit, wpm, renderWord, beginChapterTransition, summaryWpm, startTransition, calculateTargetInterval, resetDisplaySegments, syncSchedulerCursor, updateProgressMilestone, imageCueAssignments]);
 
     // Sync refs
     useEffect(() => {
@@ -1554,6 +1612,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
 
     useEffect(() => {
         currentChapterRef.current = currentChapter;
+        blockedIndexesRef.current = buildReaderBlockedIndexes(wordsRef.current, currentChapter);
         if (currentChapter && lastProgressMilestoneRef.current === null) {
             updateProgressMilestone(currentChapter.id, indexRef.current, false);
         }
@@ -1658,13 +1717,17 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
             const oldTime = now - measureWindow;
             
             // Filter to words displayed in the last window
-            const recentTimestamps = wordTimestampsRef.current.filter(t => t > oldTime);
+            const recentTimestamps = wordTimestampsRef.current.filter(({ timeMs }) => timeMs > oldTime);
             wordTimestampsRef.current = recentTimestamps; // Prune old entries
             
             // Calculate WPM based on words in last window
             if (recentTimestamps.length >= 2) {
-                const oldestTimestamp = recentTimestamps[0];
-                const newestTimestamp = recentTimestamps[recentTimestamps.length - 1];
+                const oldestTimestamp = recentTimestamps[0].timeMs;
+                const newestTimestamp = recentTimestamps[recentTimestamps.length - 1].timeMs;
+                const consumedWords = recentTimestamps.reduce(
+                    (total, event) => total + event.sourceWordCount,
+                    0,
+                );
                 
                 // Effective duration over the span of words
                 const timeSpanMs = newestTimestamp - oldestTimestamp;
@@ -1672,9 +1735,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                 // Need at least 1 second of data to be stable
                 if (timeSpanMs > 1000) {
                     const timeSpanMinutes = timeSpanMs / 60000;
-                    // Count words (intervals = length - 1, but we want rate of consumption)
-                    // length is number of words displayed.
-                    const wordsPerMinute = Math.round(recentTimestamps.length / timeSpanMinutes);
+                    const wordsPerMinute = Math.round(consumedWords / timeSpanMinutes);
                     setActualWpm(wordsPerMinute);
                 }
             } else if (recentTimestamps.length <= 1) {
@@ -2725,6 +2786,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                         words={currentChapter.content}
                         paragraphBreaks={currentChapter.paragraphBreaks}
                         currentWordIndex={currentWordIndex}
+                        getCurrentWordIndex={() => indexRef.current}
                         onPositionChange={(wordIndex) => {
                             indexRef.current = wordIndex;
                             const displayWord = resetDisplaySegments(wordsRef.current[wordIndex] || '');

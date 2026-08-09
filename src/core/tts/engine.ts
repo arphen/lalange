@@ -7,7 +7,6 @@
  * settings) never branches on the engine itself.
  */
 
-import { useTTSStore } from '../store/tts';
 import { type TTSAudioResult } from './audio';
 import { type SentenceBoundary } from './sentences';
 import {
@@ -209,12 +208,10 @@ export async function* streamSpeech(
         await initTTS(voice);
     }
 
-    const store = useTTSStore.getState();
     let cumulativeTime = 0;
 
     for (const sentence of sentences) {
         onSentenceStart?.(sentence);
-        store.setCurrentSentence(sentence.index);
 
         try {
             const audio = await generateSpeech(sentence.text, { voice, speed });

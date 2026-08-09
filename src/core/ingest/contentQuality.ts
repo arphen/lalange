@@ -1,4 +1,5 @@
 import type { ReferenceHandlingMode } from './cleaning';
+import type { MarkupRecoveryResult } from './markupRecovery';
 
 export type ContentQualityDecision = 'accept' | 'accept-degraded' | 'reject';
 
@@ -12,7 +13,8 @@ export type ContentIssueType =
     | 'reference-marker'
     | 'control-character'
     | 'hard-wrap'
-    | 'corrupt-span';
+    | 'corrupt-span'
+    | 'malformed-prose-markup';
 
 export interface RawContentUnit {
     ordinal: number;
@@ -20,6 +22,7 @@ export interface RawContentUnit {
     html: string;
     text: string;
     lines: string[];
+    markupRecovery?: MarkupRecoveryResult;
 }
 
 export interface ContentQualityIssue {
@@ -369,6 +372,7 @@ const getQualityScore = (issues: ContentQualityIssue[], wordCount: number): numb
         if (issue.type === 'low-ocr-confidence') return total + 0.7;
         if (issue.type === 'scan-matter') return total + 0.65;
         if (issue.type === 'corrupt-span') return total + Math.min(0.5, issue.count / Math.max(1, wordCount));
+        if (issue.type === 'malformed-prose-markup') return total + Math.min(0.3, issue.count / Math.max(1, wordCount));
         if (issue.type === 'control-character') return total + Math.min(0.15, issue.count / Math.max(1, wordCount));
         return total;
     }, 0);
@@ -438,6 +442,12 @@ export const cleanContentUnit = (
     const wordCount = countWords(normalizedText.value);
     const ocrConfidence = getOcrConfidence(normalizedText.value);
     const corruptTokens = getCorruptTokens(normalizedText.value);
+    const markupRecords = unit.markupRecovery?.records || [];
+    const unresolvedMarkupRecords = markupRecords.filter((record) => (
+        record.action === 'abstain'
+        && record.recoveredTokenCount >= 8
+        && !record.protectedContext
+    ));
 
     if (normalizedText.removed.length > 0 || normalizedHtml.removed.length > 0) {
         issues.push(createIssue(
@@ -470,6 +480,15 @@ export const cleanContentUnit = (
         issues.push(createIssue('corrupt-span', 0.55, corruptTokens, corruptTokens.length));
     }
 
+    if (markupRecords.length > 0) {
+        issues.push(createIssue(
+            'malformed-prose-markup',
+            Math.max(...markupRecords.map((record) => record.confidence)),
+            markupRecords.flatMap((record) => [record.rawSample, record.recoveredSample]),
+            markupRecords.length,
+        ));
+    }
+
     const corruptionRatio = corruptTokens.length / Math.max(1, wordCount);
     const hasStrongOcrFailure = ocrConfidence !== undefined && ocrConfidence < lowConfidenceThreshold;
     const hasDegradedOcr = ocrConfidence !== undefined && ocrConfidence < degradedThreshold;
@@ -480,10 +499,16 @@ export const cleanContentUnit = (
     const isDominatedByCorruption = wordCount > 0
         && corruptionRatio >= CONTENT_QUALITY_THRESHOLDS.corruptionRejectRatio
         && wordCount <= CONTENT_QUALITY_THRESHOLDS.scanMatterWordLimit;
-    const shouldReject = hasStrongOcrFailure || isSmallScanMatter || isLowConfidenceWithMatter || isDominatedByCorruption;
+    const hasSubstantialUnresolvedMarkup = unresolvedMarkupRecords.length > 0;
+    const hasMarkupRecovery = markupRecords.length > 0;
+    const shouldReject = hasStrongOcrFailure
+        || isSmallScanMatter
+        || isLowConfidenceWithMatter
+        || isDominatedByCorruption
+        || hasSubstantialUnresolvedMarkup;
     const decision: ContentQualityDecision = shouldReject
         ? 'reject'
-        : (hasDegradedOcr || corruptionRatio > 0 ? 'accept-degraded' : 'accept');
+        : (hasDegradedOcr || corruptionRatio > 0 || hasMarkupRecovery ? 'accept-degraded' : 'accept');
     const furniture = removeRepeatedEdgeLines(normalizedText.value, _profile);
     if (furniture.samples.length > 0) {
         issues.push(createIssue('page-furniture', 0.9, furniture.samples, furniture.samples.length));
@@ -514,6 +539,8 @@ export const cleanContentUnit = (
                     ? 'Likely library or scan matter'
                     : isLowConfidenceWithMatter
                         ? 'Low-confidence OCR combined with publication or scan matter'
+                        : hasSubstantialUnresolvedMarkup
+                            ? 'Unresolved malformed prose markup may cause parser text loss'
                         : 'Source unit is dominated by corrupt OCR spans'
             : undefined,
     };

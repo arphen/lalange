@@ -5,7 +5,9 @@
  */
 
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { subscribeWithSelector } from 'zustand/middleware';
+import { shallow } from 'zustand/shallow';
+import { useShallow } from 'zustand/react/shallow';
 
 export type TTSPlaybackState = 'idle' | 'loading' | 'preparing' | 'playing' | 'paused' | 'generating';
 export type TTSBackendPreference = 'auto' | 'wasm' | 'webgpu';
@@ -73,9 +75,85 @@ interface TTSState {
     clearPosition: () => void;
 }
 
-export const useTTSStore = create<TTSState>()(
-    persist(
-        (set) => ({
+interface TTSPersistedSettings {
+    voice: string;
+    backendPreference: TTSBackendPreference;
+    bufferAhead: number;
+    autoPlay: boolean;
+    volume: number;
+    speed: number;
+}
+
+interface TTSSettingsStorage {
+    getItem: (name: string) => string | null;
+    setItem: (name: string, value: string) => void;
+    removeItem: (name: string) => void;
+}
+
+const TTS_SETTINGS_STORAGE_KEY = 'xyz-tts-settings';
+const DEFAULT_TTS_SETTINGS: TTSPersistedSettings = {
+    voice: 'af_heart',
+    backendPreference: 'auto',
+    bufferAhead: 5,
+    autoPlay: false,
+    volume: 1.0,
+    speed: 1.0,
+};
+
+function getTTSSettingsStorage(): TTSSettingsStorage | null {
+    try {
+        return typeof localStorage === 'undefined' ? null : localStorage;
+    } catch {
+        return null;
+    }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null;
+}
+
+function readPersistedTTSSettings(storage: TTSSettingsStorage | null): Partial<TTSPersistedSettings> {
+    if (!storage) return {};
+
+    try {
+        const raw = storage.getItem(TTS_SETTINGS_STORAGE_KEY);
+        if (!raw) return {};
+
+        const parsed: unknown = JSON.parse(raw);
+        const state = isRecord(parsed) && isRecord(parsed.state) ? parsed.state : parsed;
+        if (!isRecord(state)) return {};
+
+        const settings: Partial<TTSPersistedSettings> = {};
+        if (typeof state.voice === 'string') settings.voice = state.voice;
+        if (state.backendPreference === 'auto' || state.backendPreference === 'wasm' || state.backendPreference === 'webgpu') {
+            settings.backendPreference = state.backendPreference;
+        }
+        if (typeof state.bufferAhead === 'number') settings.bufferAhead = state.bufferAhead;
+        if (typeof state.autoPlay === 'boolean') settings.autoPlay = state.autoPlay;
+        if (typeof state.volume === 'number') settings.volume = state.volume;
+        if (typeof state.speed === 'number') settings.speed = state.speed;
+        return settings;
+    } catch {
+        return {};
+    }
+}
+
+function selectPersistedTTSSettings(state: TTSState): TTSPersistedSettings {
+    return {
+        voice: state.voice,
+        backendPreference: state.backendPreference,
+        bufferAhead: state.bufferAhead,
+        autoPlay: state.autoPlay,
+        volume: state.volume,
+        speed: state.speed,
+    };
+}
+
+let ttsSettingsStorage = getTTSSettingsStorage();
+let lastPersistedTTSSettings: string | null = null;
+
+const ttsStore = create<TTSState>()(
+    subscribeWithSelector((set) => ({
             // Engine State - Initial
             isReady: false,
             isLoading: false,
@@ -90,14 +168,7 @@ export const useTTSStore = create<TTSState>()(
             duration: 0,
             currentSentence: 0,
             currentWordIndex: 0,
-            volume: 1.0,
-            speed: 1.0,
-            
-            // Settings - Initial (persisted)
-            voice: 'af_heart',
-            backendPreference: 'auto',
-            bufferAhead: 5,
-            autoPlay: false,
+            ...DEFAULT_TTS_SETTINGS,
             
             // Position - Initial
             currentPosition: null,
@@ -133,26 +204,42 @@ export const useTTSStore = create<TTSState>()(
                 } as TTSPosition
             })),
             clearPosition: () => set({ currentPosition: null }),
-        }),
-        {
-            name: 'xyz-tts-settings',
-            // Only persist settings, not runtime state
-            partialize: (state) => ({
-                voice: state.voice,
-                backendPreference: state.backendPreference,
-                bufferAhead: state.bufferAhead,
-                autoPlay: state.autoPlay,
-                volume: state.volume,
-                speed: state.speed,
-            }),
-            merge: (persistedState, currentState) => {
-                const settings = { ...(persistedState as Record<string, unknown>) };
-                delete settings.quantization;
-                return { ...currentState, ...settings } as TTSState;
-            },
-        }
-    )
+            }))
 );
+
+    ttsStore.setState({
+        ...readPersistedTTSSettings(ttsSettingsStorage),
+    });
+
+    ttsStore.subscribe(
+        selectPersistedTTSSettings,
+        (settings) => {
+            const payload = JSON.stringify({ state: settings, version: 0 });
+            if (payload === lastPersistedTTSSettings) return;
+
+            try {
+                ttsSettingsStorage?.setItem(TTS_SETTINGS_STORAGE_KEY, payload);
+                lastPersistedTTSSettings = payload;
+            } catch {
+                // Storage can be unavailable or full; playback must continue.
+            }
+        },
+        { equalityFn: shallow },
+    );
+
+    export const useTTSStore = Object.assign(ttsStore, {
+        persist: {
+            setOptions: (options: { storage?: TTSSettingsStorage }) => {
+                if (options.storage) {
+                    ttsSettingsStorage = options.storage;
+                    lastPersistedTTSSettings = null;
+                }
+            },
+            rehydrate: async () => {
+                ttsStore.setState(readPersistedTTSSettings(ttsSettingsStorage));
+            },
+        },
+    });
 
 /**
  * Helper hook to check if TTS is currently active (playing or generating)
@@ -162,21 +249,23 @@ export function useTTSActive(): boolean {
     return playbackState === 'playing' || playbackState === 'generating';
 }
 
+export function formatTTSPlaybackTime(seconds: number): string {
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+}
+
 /**
  * Helper hook to get formatted playback time
  */
 export function useFormattedTime(): { current: string; duration: string } {
-    const currentTime = useTTSStore((s) => s.currentTime);
-    const duration = useTTSStore((s) => s.duration);
-    
-    const formatTime = (seconds: number): string => {
-        const mins = Math.floor(seconds / 60);
-        const secs = Math.floor(seconds % 60);
-        return `${mins}:${secs.toString().padStart(2, '0')}`;
-    };
+    const { currentTime, duration } = useTTSStore(useShallow((state) => ({
+        currentTime: state.currentTime,
+        duration: state.duration,
+    })));
     
     return {
-        current: formatTime(currentTime),
-        duration: formatTime(duration),
+        current: formatTTSPlaybackTime(currentTime),
+        duration: formatTTSPlaybackTime(duration),
     };
 }

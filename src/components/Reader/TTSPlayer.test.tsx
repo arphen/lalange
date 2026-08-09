@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
     setError: vi.fn(),
     setPlaybackState: vi.fn(),
     playbackState: 'idle' as 'idle' | 'preparing' | 'playing' | 'paused' | 'generating',
+    ttsWordIndex: 0,
     sentences: [{ index: 0, text: 'Hello world.', startWordIndex: 0, endWordIndex: 1 }],
 }));
 
@@ -32,7 +33,8 @@ vi.mock('../../core/store/tts', () => ({
             voice: mocks.voice,
             backendPreference: mocks.backendPreference,
             bufferAhead: mocks.bufferAhead,
-            currentWordIndex: 0,
+            currentWordIndex: mocks.ttsWordIndex,
+            duration: 0,
             setVolume: vi.fn(),
             setSpeed: mocks.setSpeed,
             setVoice: mocks.setVoice,
@@ -43,9 +45,15 @@ vi.mock('../../core/store/tts', () => ({
                 setError: mocks.setError,
                 setPlaybackState: mocks.setPlaybackState,
                 setCurrentWordIndex: vi.fn(),
+                currentWordIndex: mocks.ttsWordIndex,
             }),
         },
     ),
+    formatTTSPlaybackTime: (seconds: number) => {
+        const mins = Math.floor(seconds / 60);
+        const secs = Math.floor(seconds % 60);
+        return `${mins}:${secs.toString().padStart(2, '0')}`;
+    },
     useFormattedTime: () => ({ current: '0:00', duration: '0:00' }),
 }));
 
@@ -86,6 +94,7 @@ describe('TTSPlayer voice changes', () => {
         mocks.backendPreference = 'auto';
         mocks.bufferAhead = 5;
         mocks.playbackState = 'idle';
+        mocks.ttsWordIndex = 0;
         mocks.sentences = [{ index: 0, text: 'Hello world.', startWordIndex: 0, endWordIndex: 1 }];
         mocks.setSpeed.mockReset();
         vi.clearAllMocks();
@@ -137,6 +146,45 @@ describe('TTSPlayer voice changes', () => {
         });
     });
 
+    it('starts from the live reader cursor when rendered reader state is stale', async () => {
+        mocks.sentences = [
+            { index: 0, text: 'First sentence.', startWordIndex: 0, endWordIndex: 1 },
+            { index: 1, text: 'Second sentence.', startWordIndex: 2, endWordIndex: 3 },
+            { index: 2, text: 'Third sentence.', startWordIndex: 4, endWordIndex: 5 },
+        ];
+        vi.mocked(streamSpeech).mockReturnValue((async function* () {})());
+
+        const { container } = render(
+            <TTSPlayer
+                words={['chapter']}
+                currentWordIndex={0}
+                getCurrentWordIndex={() => 4}
+            />,
+        );
+        fireEvent.click(container.querySelector('button')!);
+
+        await waitFor(() => {
+            expect(ttsPlayer.play).toHaveBeenCalledWith(2, 1);
+        });
+    });
+
+    it('clamps an out-of-range reader cursor to the nearest sentence', async () => {
+        mocks.sentences = [
+            { index: 0, text: 'First sentence.', startWordIndex: 0, endWordIndex: 1 },
+            { index: 1, text: 'Last sentence.', startWordIndex: 2, endWordIndex: 3 },
+        ];
+        vi.mocked(streamSpeech).mockReturnValue((async function* () {})());
+
+        const { container } = render(
+            <TTSPlayer words={['chapter']} currentWordIndex={99} />,
+        );
+        fireEvent.click(container.querySelector('button')!);
+
+        await waitFor(() => {
+            expect(ttsPlayer.play).toHaveBeenCalledWith(1, 1);
+        });
+    });
+
     it('passes authored paragraph boundaries into sentence segmentation', () => {
         render(
             <TTSPlayer
@@ -162,6 +210,27 @@ describe('TTSPlayer voice changes', () => {
         expect(ttsPlayer.clearQueue).toHaveBeenCalled();
         expect(ttsPlayer.pause).not.toHaveBeenCalled();
         expect(initTTS).not.toHaveBeenCalled();
+    });
+
+    it('restarts from the reader position after the reader moves backward while paused', async () => {
+        mocks.playbackState = 'paused';
+        mocks.ttsWordIndex = 5;
+        mocks.sentences = [
+            { index: 0, text: 'First sentence.', startWordIndex: 0, endWordIndex: 1 },
+            { index: 1, text: 'Second sentence.', startWordIndex: 2, endWordIndex: 3 },
+            { index: 2, text: 'Third sentence.', startWordIndex: 4, endWordIndex: 5 },
+        ];
+        vi.mocked(streamSpeech).mockReturnValue((async function* () {})());
+
+        const { container } = render(
+            <TTSPlayer words={['chapter']} currentWordIndex={2} />,
+        );
+        fireEvent.click(container.querySelector('button')!);
+
+        await waitFor(() => {
+            expect(ttsPlayer.clearQueue).toHaveBeenCalled();
+            expect(ttsPlayer.play).toHaveBeenCalledWith(1, 1);
+        });
     });
 
     it('stops before playback when TTS initialization fails', async () => {

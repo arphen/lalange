@@ -145,10 +145,22 @@ describe('initPiper', () => {
     });
 
     it('reports download progress', async () => {
+        vi.useFakeTimers();
+        createSession.mockImplementationOnce(async (options) => {
+            sessions.createdVoiceIds.push(options.voiceId);
+            sessions.lastProgress = options.progress;
+            options.progress?.({
+                url: 'https://host/sl_SI-artur-medium.onnx',
+                loaded: 50,
+                total: 100,
+            });
+            vi.advanceTimersByTime(100);
+            return { voiceId: options.voiceId, predict };
+        });
         await initPiper(SLOVENIAN_VOICE);
-        sessions.lastProgress?.({ url: 'https://host/sl_SI-artur-medium.onnx', loaded: 50, total: 100 });
 
         expect(ttsState.setProgress).toHaveBeenCalledWith(0.5, 'Loading sl_SI-artur-medium.onnx');
+        vi.useRealTimers();
     });
 
     it('surfaces initialization failures', async () => {
