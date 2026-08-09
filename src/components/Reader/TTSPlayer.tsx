@@ -6,7 +6,8 @@
  */
 
 import React, { useEffect, useCallback, useMemo, useRef, useState } from 'react';
-import { useTTSStore, useFormattedTime } from '../../core/store/tts';
+import { formatTTSPlaybackTime, useTTSStore } from '../../core/store/tts';
+import { useShallow } from 'zustand/react/shallow';
 import {
     initTTS,
     streamSpeech,
@@ -25,6 +26,31 @@ import { persistListeningHandoff } from '../../core/exchange/handoff';
 const DEFAULT_BUFFER_AHEAD = 5;
 const SPEED_OPTIONS = [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
 const EMPTY_PARAGRAPH_BREAKS: number[] = [];
+
+const findNearestSentenceIndex = (
+    sentences: SentenceBoundary[],
+    wordIndex: number,
+): number => {
+    let nearestIndex = -1;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+
+    for (let sentenceIndex = 0; sentenceIndex < sentences.length; sentenceIndex++) {
+        const sentence = sentences[sentenceIndex];
+        if (wordIndex >= sentence.startWordIndex && wordIndex <= sentence.endWordIndex) {
+            return sentenceIndex;
+        }
+
+        const distance = wordIndex < sentence.startWordIndex
+            ? sentence.startWordIndex - wordIndex
+            : wordIndex - sentence.endWordIndex;
+        if (distance < nearestDistance) {
+            nearestIndex = sentenceIndex;
+            nearestDistance = distance;
+        }
+    }
+
+    return nearestIndex;
+};
 
 const formatSpeedLabel = (value: number): string => {
     const fixed = value.toFixed(2).replace(/\.00$/, '').replace(/0$/, '');
@@ -74,6 +100,8 @@ interface TTSPlayerProps {
     paragraphBreaks?: number[];
     /** Current reading position (word index) */
     currentWordIndex: number;
+    /** Returns the reader's imperative cursor when React state is intentionally throttled */
+    getCurrentWordIndex?: () => number;
     /** Called when TTS position changes (for syncing reading position) */
     onPositionChange?: (wordIndex: number) => void;
     /** Book and chapter IDs for position tracking */
@@ -93,6 +121,7 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
     words,
     paragraphBreaks = EMPTY_PARAGRAPH_BREAKS,
     currentWordIndex,
+    getCurrentWordIndex,
     onPositionChange,
     bookId,
     chapterId,
@@ -118,9 +147,29 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
         setVolume,
         setSpeed,
         setVoice,
-    } = useTTSStore();
-    
-    const { current: currentTimeStr, duration: durationStr } = useFormattedTime();
+        duration,
+    } = useTTSStore(useShallow((state) => ({
+        isLoading: state.isLoading,
+        error: state.error,
+        playbackState: state.playbackState,
+        loadProgress: state.loadProgress,
+        loadStatus: state.loadStatus,
+        volume: state.volume,
+        speed: state.speed,
+        voice: state.voice,
+        backendPreference: state.backendPreference,
+        bufferAhead: state.bufferAhead,
+        currentWordIndex: state.currentWordIndex,
+        currentSentence: state.currentSentence,
+        currentTime: state.currentTime,
+        duration: state.duration,
+        setVolume: state.setVolume,
+        setSpeed: state.setSpeed,
+        setVoice: state.setVoice,
+    })));
+
+    const currentTimeStr = formatTTSPlaybackTime(currentTime);
+    const durationStr = formatTTSPlaybackTime(duration);
     
     const sentences = useMemo(
         () => splitIntoSentences(words, paragraphBreaks),
@@ -203,8 +252,6 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
         const chapterChanged = chapterIdRef.current !== chapterId;
         
         if (bookChanged || chapterChanged) {
-            console.log(`[TTS UI] Book/chapter changed (book: ${bookIdRef.current} -> ${bookId}, chapter: ${chapterIdRef.current} -> ${chapterId}), full reset`);
-            
             generationIdRef.current += 1;
 
             // Abort any ongoing generation
@@ -241,8 +288,6 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
         );
         
         if (wordsChanged) {
-            console.log('[TTS UI] Words changed, resetting');
-            
             generationIdRef.current += 1;
 
             // Stop generation
@@ -266,9 +311,7 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
     // Initialize TTS engine
     const handleInit = useCallback(async (): Promise<boolean> => {
         try {
-            await initTTS(effectiveVoice, selectedDevice, (progress, status) => {
-                console.log(`[TTS UI] ${status} (${Math.round(progress * 100)}%)`);
-            });
+            await initTTS(effectiveVoice, selectedDevice, () => undefined);
             return true;
         } catch (err) {
             console.error('[TTS UI] Init failed:', err);
@@ -310,16 +353,10 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
         
         const endIndex = Math.min(fromSentenceIndex + sentenceCount, sentences.length);
         const sentencesToGenerate = sentences.slice(fromSentenceIndex, endIndex);
-        
-        console.log(`[TTS UI] Generating sentences ${fromSentenceIndex} to ${endIndex - 1}`);
-        
+
         const generator = streamSpeech(sentencesToGenerate, {
             voice: effectiveVoice,
             speed,
-            onSentenceStart: (sentence) => {
-                if (signal.aborted) return;
-                console.log(`[TTS] Generating: "${sentence.text.slice(0, 50)}..."`);
-            },
         });
         generatorRef.current = generator;
         
@@ -373,10 +410,6 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
     // Set up player callbacks
     useEffect(() => {
         ttsPlayer.setOptions({
-            onSentenceChange: (sentenceIndex) => {
-                const sentence = sentences[sentenceIndex];
-                if (sentence) console.log(`[TTS UI] Playing sentence ${sentenceIndex}`);
-            },
             onWordChange: (wordIndex) => {
                 if (onPositionChange && hasStartedPlaybackRef.current) onPositionChange(wordIndex);
             },
@@ -405,23 +438,14 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
                 const missingCount = finalTargetIndex - firstMissing + 1;
 
                 if (missingCount > 0) {
-                    console.log(`[TTS UI] Buffer ${bufferedAhead}/${safeBufferAhead} ahead, generating ${missingCount} from ${firstMissing}`);
                     void generateFrom(firstMissing, missingCount);
                 }
-            },
-            onAudioQueued: (sentenceIndex, queueSize) => {
-                console.log(`[TTS UI] Audio queued: sentence ${sentenceIndex}, queue size: ${queueSize}`);
-            },
-            onEnded: () => {
-                console.log('[TTS] Playback ended');
             },
         });
     }, [safeBufferAhead, sentences, onPositionChange, onChapterEnd, generateFrom, playbackState]);
     
     // Handle stop - full reset of all TTS resources
     const handleStop = useCallback(() => {
-        console.log('[TTS UI] Full stop - clearing all resources');
-
         generationIdRef.current += 1;
 
         // Abort any ongoing generation
@@ -441,8 +465,6 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
         // Full player reset
         ttsPlayer.stop();
         ttsPlayer.clearQueue();
-
-        console.log('[TTS UI] Stopped and cleared all resources');
     }, []);
 
     useEffect(() => {
@@ -477,39 +499,18 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
             // PLAY PATHS - these can be async. Always run init guard so quality/device
             // changes are applied before speaking.
             if (!await handleInit()) return;
+            const readerWordIndex = getCurrentWordIndex?.() ?? currentWordIndex;
 
             if (playbackState === 'idle') {
-                // Find sentence containing current word
-                const sentenceIndex = sentences.findIndex(
-                    s => currentWordIndex >= s.startWordIndex && currentWordIndex <= s.endWordIndex
-                );
-
-                console.log(`[TTS UI] Finding sentence for word ${currentWordIndex}, found: ${sentenceIndex}, sentences count: ${sentences.length}`);
-
-                if (sentenceIndex === -1 && sentences.length > 0) {
-                    // Word index might be beyond sentences - find closest
-                    const lastSentence = sentences[sentences.length - 1];
-                    if (currentWordIndex > lastSentence.endWordIndex) {
-                        console.log(`[TTS UI] Word ${currentWordIndex} beyond last sentence (ends at ${lastSentence.endWordIndex}), using last sentence`);
-                    }
-                }
-
-                const startIdx = sentenceIndex >= 0 ? sentenceIndex : 0;
-                startSentenceIndexRef.current = startIdx;
+                const sentenceIndex = findNearestSentenceIndex(sentences, readerWordIndex);
 
                 // Mark that we're starting from a valid position
-                await startFromSentence(startIdx);
+                await startFromSentence(sentenceIndex);
             } else if (playbackState === 'paused') {
-                // Check if user has read ahead with RSVP - if so, start from their new position
                 const currentTTSWordIndex = useTTSStore.getState().currentWordIndex;
 
-                if (currentWordIndex > currentTTSWordIndex) {
-                    // User read ahead - find the sentence for their current position
-                    const sentenceIndex = sentences.findIndex(
-                        s => currentWordIndex >= s.startWordIndex && currentWordIndex <= s.endWordIndex
-                    );
-
-                    console.log(`[TTS UI] User read ahead from word ${currentTTSWordIndex} to ${currentWordIndex}, resuming from sentence ${sentenceIndex}`);
+                if (readerWordIndex !== currentTTSWordIndex) {
+                    const sentenceIndex = findNearestSentenceIndex(sentences, readerWordIndex);
 
                     if (sentenceIndex >= 0) {
                         startSentenceIndexRef.current = sentenceIndex;
@@ -534,7 +535,7 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
             store.setError(message);
             ttsPlayer.stop();
         }
-    }, [playbackState, sentences, currentWordIndex, handleInit, startFromSentence, handleStop]);
+    }, [playbackState, sentences, currentWordIndex, getCurrentWordIndex, handleInit, startFromSentence, handleStop]);
     
     // Voice options, grouped by language so the Slovenian voice is easy to find
     const voiceGroups = useMemo(() => {
