@@ -31,6 +31,57 @@ let ttsInitPromise: Promise<void> | null = null;
 let ttsInitConfigKey: string | null = null;
 let ttsLifecycleGeneration = 0;
 
+const PARENTHETICAL_BOUNDARY = ' — ';
+const EXISTING_BOUNDARY_PUNCTUATION = /[,.!?;:\u0589\u061b\u061f\u0964\u0965\u2026\u3001\u3002\uff01\uff0c\uff1a\uff1b\uff1f\u1362\u2013\u2014-]/u;
+const TERMINAL_PUNCTUATION = /[.!?\u0589\u061f\u0964\u0965\u2026\u3002\uff01\uff1f\u1362]/u;
+
+export function prepareKokoroTextForSpeech(text: string): string {
+    const stack: number[] = [];
+    const ranges: Array<{ start: number; end: number }> = [];
+
+    for (let index = 0; index < text.length; index++) {
+        if (text[index] === '(') {
+            stack.push(index);
+        } else if (text[index] === ')' && stack.length > 0) {
+            const openingIndex = stack.pop() as number;
+            if (stack.length === 0) ranges.push({ start: openingIndex, end: index });
+        }
+    }
+
+    if (ranges.length === 0) return text;
+
+    let prepared = '';
+    let cursor = 0;
+    for (const range of ranges) {
+        prepared += text.slice(cursor, range.start);
+
+        const source = text.slice(range.start + 1, range.end);
+        const content = source.replace(/[()]/gu, '');
+        if (!/[\p{L}\p{N}]/u.test(content)) {
+            prepared += text.slice(range.start, range.end + 1);
+            cursor = range.end + 1;
+            continue;
+        }
+
+        const previousCharacter = text.slice(0, range.start).match(/\S(?=\s*$)/u)?.[0];
+        const nextCharacter = text.slice(range.end + 1).match(/^\s*(\S)/u)?.[1];
+        const contentLastCharacter = content.match(/\S(?=\s*$)/u)?.[0];
+        const needsOpeningBoundary = previousCharacter !== undefined
+            && !EXISTING_BOUNDARY_PUNCTUATION.test(previousCharacter);
+        const needsClosingBoundary = nextCharacter !== undefined
+            && !EXISTING_BOUNDARY_PUNCTUATION.test(nextCharacter)
+            && (contentLastCharacter === undefined || !TERMINAL_PUNCTUATION.test(contentLastCharacter));
+
+        if (needsOpeningBoundary) prepared += PARENTHETICAL_BOUNDARY;
+        prepared += content;
+        if (needsClosingBoundary) prepared += PARENTHETICAL_BOUNDARY;
+        cursor = range.end + 1;
+    }
+    prepared += text.slice(cursor);
+
+    return prepared.replace(/\s+/gu, ' ').trim();
+}
+
 // Model configuration
 export const TTS_MODEL_ID = 'onnx-community/Kokoro-82M-v1.0-ONNX';
 
@@ -405,7 +456,8 @@ export async function generateKokoroSpeech(
     store.setGenerating(true);
     
     try {
-        const { samples: generatedSamples, phonemes } = await generateValidatedAudio(text, voice, speed);
+        const synthesisText = prepareKokoroTextForSpeech(text);
+        const { samples: generatedSamples, phonemes } = await generateValidatedAudio(synthesisText, voice, speed);
         const sampleRate = 24000;
         const samples = trimTTSAudioSilence(generatedSamples, sampleRate);
         const duration = samples.length / sampleRate;

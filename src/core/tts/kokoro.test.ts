@@ -8,10 +8,49 @@ import { describe, it, expect } from 'vitest';
 import {
     resolveKokoroVoiceId,
     isIOSRuntime,
+    prepareKokoroTextForSpeech,
     resolveTTSRuntimeConfig,
     KOKORO_VOICES,
     KOKORO_DEFAULT_VOICE,
 } from './kokoro';
+
+describe('prepareKokoroTextForSpeech', () => {
+    it('turns an inline parenthetical into an audible aside', () => {
+        expect(prepareKokoroTextForSpeech(
+            'The vehicle (there are no other roads) is a symbol.',
+        )).toBe('The vehicle — there are no other roads — is a symbol.');
+    });
+
+    it('does not duplicate punctuation at a parenthetical boundary', () => {
+        expect(prepareKokoroTextForSpeech('He left (without warning).')).toBe(
+            'He left — without warning.',
+        );
+        expect(prepareKokoroTextForSpeech('It was (apparently), enough.')).toBe(
+            'It was — apparently, enough.',
+        );
+    });
+
+    it('removes nested parentheses without adding repeated prosody cues', () => {
+        expect(prepareKokoroTextForSpeech(
+            'It was (as he put it (quietly)) unusual.',
+        )).toBe('It was — as he put it quietly — unusual.');
+    });
+
+    it('leaves unmatched parentheses untouched', () => {
+        expect(prepareKokoroTextForSpeech('An unfinished (aside')).toBe(
+            'An unfinished (aside',
+        );
+        expect(prepareKokoroTextForSpeech('An (unfinished (aside)')).toBe(
+            'An (unfinished (aside)',
+        );
+    });
+
+    it('leaves empty parentheses untouched', () => {
+        expect(prepareKokoroTextForSpeech('A pause () remains.')).toBe(
+            'A pause () remains.',
+        );
+    });
+});
 
 describe('Kokoro voices', () => {
     it('keeps a current English voice', () => {
