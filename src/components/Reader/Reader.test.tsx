@@ -453,6 +453,20 @@ describe('Reader Component', () => {
         expect(screen.queryByTestId('play-overlay')).not.toBeInTheDocument();
     });
 
+    it('resets the lower river scroll position when the cursor moves', async () => {
+        render(<Reader book={mockBook} />);
+
+        const bottomRiver = await screen.findByTestId('reader-context-bottom');
+        await waitFor(() => {
+            expect(bottomRiver.querySelector('[data-index="2"]')).toBeInTheDocument();
+        });
+
+        bottomRiver.scrollTop = 120;
+        fireEvent.click(bottomRiver.querySelector('[data-index="2"]')!);
+
+        expect(bottomRiver.scrollTop).toBe(0);
+    });
+
     it('should keep river typography stable on hover', async () => {
         const { container } = render(<Reader book={mockBook} />);
 

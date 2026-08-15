@@ -567,7 +567,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                 `;
             }).join('');
             nextContainerRef.current.innerHTML = html;
-            // Scroll to top (default)
+            nextContainerRef.current.scrollTop = 0;
         }
     }, [commonPhraseRankLimit, riverTopEnabled, riverBottomEnabled, applyLensScaleToElement]);
 
