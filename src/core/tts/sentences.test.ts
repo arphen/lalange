@@ -89,6 +89,25 @@ describe('splitIntoSentences', () => {
         expect(sentences[0].endWordIndex).toBe(59);
     });
 
+    it('splits an over-limit sentence at authored clause punctuation', () => {
+        const text = 'From the highly select bank, with its Louis XVI- style safes reserved for 800 choice clients (Americans who must keep at least 25,000 dollars in their current accounts) to the managing director’s desk which is antique or Premier Empire (for senior managers, opulent functional suffices), from the arrogant prestige of nouveau riche villas to the nonchalance of high- class clothing, all these marginal differences mark out the most rigorous social discrimination, in accordance with a general law of the distribution of distinctive matter (and against that law – even more than against the criminal law – ignorance is no defence).';
+        const sentences = splitIntoSentences(text.split(' '));
+
+        expect(sentences).toHaveLength(2);
+        expect(sentences[0]).toEqual({
+            index: 0,
+            text: 'From the highly select bank, with its Louis XVI- style safes reserved for 800 choice clients (Americans who must keep at least 25,000 dollars in their current accounts) to the managing director’s desk which is antique or Premier Empire (for senior managers, opulent functional suffices),',
+            startWordIndex: 0,
+            endWordIndex: 44,
+        });
+        expect(sentences[1]).toEqual({
+            index: 1,
+            text: 'from the arrogant prestige of nouveau riche villas to the nonchalance of high- class clothing, all these marginal differences mark out the most rigorous social discrimination, in accordance with a general law of the distribution of distinctive matter (and against that law – even more than against the criminal law – ignorance is no defence).',
+            startWordIndex: 45,
+            endWordIndex: 99,
+        });
+    });
+
     it('should maintain correct word indices across sentences', () => {
         const words = ['First.', 'Second.', 'Third.'];
         const sentences = splitIntoSentences(words);

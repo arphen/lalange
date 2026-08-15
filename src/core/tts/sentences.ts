@@ -17,7 +17,10 @@ export interface SentenceBoundary {
 
 const SENTENCE_END_PATTERN = /(?:[.!?\u0589\u061f\u0964\u0965\u2026\u3002\uff01\uff1f\u1362])["'\u2019\u201d)\]}]*$/;
 const TRAILING_PUNCTUATION_PATTERN = /[.!?,:;\u0589\u061b\u061f\u0964\u0965\u2026\u3001\u3002\uff01\uff0c\uff1a\uff1b\uff1f\u1362]["'\u2019\u201d)\]}]*$/;
+const CLAUSE_END_PATTERN = /(?:[,;:\u061b\u3001\uff0c\uff1a\uff1b]["'\u2019\u201d)\]}]*|[\u2013\u2014])$/;
 const NUMBERED_HEADING_PATTERN = /^(?:\d+|[ivxlcdm]+)[.)]$/i;
+const MAX_UTTERANCE_CHARACTER_COUNT = 450;
+const MIN_CLAUSE_CHARACTER_COUNT = 80;
 const HEADING_CONNECTORS = new Set([
     'a', 'an', 'and', 'as', 'at', 'by', 'for', 'from', 'in', 'into', 'of',
     'on', 'or', 'the', 'to', 'with', 'without',
@@ -70,6 +73,56 @@ const findInferredHeadingBreaks = (words: string[]): Set<number> => {
 const closeStructuralUtterance = (text: string): string =>
     TRAILING_PUNCTUATION_PATTERN.test(text) ? text : `${text}.`;
 
+interface WordRange {
+    startWordIndex: number;
+    endWordIndex: number;
+}
+
+const splitOverlongUtterance = (
+    words: string[],
+    startWordIndex: number,
+    endWordIndex: number,
+): WordRange[] => {
+    const text = words.slice(startWordIndex, endWordIndex + 1).join(' ');
+    if (text.length <= MAX_UTTERANCE_CHARACTER_COUNT || startWordIndex === endWordIndex) {
+        return [{ startWordIndex, endWordIndex }];
+    }
+
+    const midpoint = text.length / 2;
+    let currentLength = 0;
+    let clauseSplitIndex = -1;
+    let clauseSplitDistance = Infinity;
+    let fallbackSplitIndex = startWordIndex;
+    let fallbackSplitDistance = Infinity;
+
+    for (let wordIndex = startWordIndex; wordIndex < endWordIndex; wordIndex++) {
+        currentLength += words[wordIndex].length + (wordIndex === startWordIndex ? 0 : 1);
+        const distance = Math.abs(currentLength - midpoint);
+
+        if (distance < fallbackSplitDistance) {
+            fallbackSplitIndex = wordIndex;
+            fallbackSplitDistance = distance;
+        }
+
+        const remainingLength = text.length - currentLength - 1;
+        if (
+            CLAUSE_END_PATTERN.test(words[wordIndex])
+            && currentLength >= MIN_CLAUSE_CHARACTER_COUNT
+            && remainingLength >= MIN_CLAUSE_CHARACTER_COUNT
+            && distance < clauseSplitDistance
+        ) {
+            clauseSplitIndex = wordIndex;
+            clauseSplitDistance = distance;
+        }
+    }
+
+    const splitIndex = clauseSplitIndex >= 0 ? clauseSplitIndex : fallbackSplitIndex;
+    return [
+        ...splitOverlongUtterance(words, startWordIndex, splitIndex),
+        ...splitOverlongUtterance(words, splitIndex + 1, endWordIndex),
+    ];
+};
+
 /**
  * Split text into sentences for TTS processing
  * This enables smooth reading <-> listening transitions
@@ -96,12 +149,18 @@ export function splitIntoSentences(
         const isStructuralBreak = structuralBreaks.has(i);
 
         if (isEnd || isStructuralBreak || i === words.length - 1) {
-            const text = currentSentence.join(' ');
-            sentences.push({
-                index: sentences.length,
-                text: isStructuralBreak && !isEnd ? closeStructuralUtterance(text) : text,
-                startWordIndex: sentenceStartIndex,
-                endWordIndex: i,
+            const utteranceRanges = splitOverlongUtterance(words, sentenceStartIndex, i);
+            utteranceRanges.forEach((range, rangeIndex) => {
+                const text = words.slice(range.startWordIndex, range.endWordIndex + 1).join(' ');
+                const isLastRange = rangeIndex === utteranceRanges.length - 1;
+                sentences.push({
+                    index: sentences.length,
+                    text: isStructuralBreak && !isEnd && isLastRange
+                        ? closeStructuralUtterance(text)
+                        : text,
+                    startWordIndex: range.startWordIndex,
+                    endWordIndex: range.endWordIndex,
+                });
             });
             currentSentence = [];
             sentenceStartIndex = i + 1;
