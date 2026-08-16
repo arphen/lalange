@@ -29,6 +29,11 @@ export const SyncPage: React.FC = () => {
             return;
         }
 
+        let disposed = false;
+        let pollTimeout: ReturnType<typeof setTimeout> | null = null;
+        let pollInFlight = false;
+        let syncComplete = false;
+
         const start = async () => {
             try {
                 addLog('Starting sync...');
@@ -37,14 +42,21 @@ export const SyncPage: React.FC = () => {
                 addLog(`BookId: ${bookId || 'none'}`);
                 
                 const states = await startBookSync(room, key, (isActive) => {
+                    if (disposed) return;
                     addLog(`Peer active: ${isActive}`);
                     setStatus(isActive ? 'Connected! Receiving data...' : 'Waiting for host...');
                 }, (err) => {
+                    if (disposed) return;
                     addLog(`Error: ${err}`);
                     setError('Connection failed.');
                 }, (debugMsg) => {
+                    if (disposed) return;
                     addLog(debugMsg);
                 });
+                if (disposed) {
+                    states.forEach((state) => void state.cancel());
+                    return;
+                }
                 replicationStatesRef.current = states;
                 addLog(`Sync started with ${states.length} pools`);
                 
@@ -52,29 +64,46 @@ export const SyncPage: React.FC = () => {
                 // For now, simpler: check if the book exists every few seconds.
                 if (bookId) {
                     const db = await initDB();
+                    if (disposed) return;
                     addLog('DB initialized, monitoring for book...');
-                    const interval = setInterval(async () => {
-                        const doc = await db.books.findOne(bookId).exec();
-                        if (doc) {
-                            setStatus('Book metadata received. Downloading chapters...');
-                            addLog('Book found in DB!');
-                            // Check chapters count
-                            const chapterCount = await db.chapters.count({ selector: { bookId } }).exec();
-                            if (doc.chapterIds && chapterCount >= doc.chapterIds.length) {
-                                setStatus('Sync Complete!');
-                                setProgress(100);
-                                addLog('Sync complete!');
-                                clearInterval(interval);
-                            } else {
-                                const expected = doc.chapterIds ? doc.chapterIds.length : 1;
-                                setProgress(Math.floor((chapterCount / expected) * 100));
+
+                    const poll = async () => {
+                        if (disposed || pollInFlight || syncComplete) return;
+                        pollInFlight = true;
+
+                        try {
+                            const doc = await db.books.findOne(bookId).exec();
+                            if (disposed) return;
+
+                            if (doc) {
+                                setStatus('Book metadata received. Downloading chapters...');
+                                addLog('Book found in DB!');
+                                const chapterCount = await db.chapters.count({ selector: { bookId } }).exec();
+                                if (disposed) return;
+
+                                if (doc.chapterIds && chapterCount >= doc.chapterIds.length) {
+                                    syncComplete = true;
+                                    setStatus('Sync Complete!');
+                                    setProgress(100);
+                                    addLog('Sync complete!');
+                                } else {
+                                    const expected = doc.chapterIds ? doc.chapterIds.length : 1;
+                                    setProgress(Math.floor((chapterCount / expected) * 100));
+                                }
+                            }
+                        } finally {
+                            pollInFlight = false;
+                            if (!disposed && !syncComplete) {
+                                pollTimeout = setTimeout(() => void poll(), 1000);
                             }
                         }
-                    }, 1000);
-                    return () => clearInterval(interval);
+                    };
+
+                    void poll();
                 }
 
             } catch (e) {
+                if (disposed) return;
                 console.error(e);
                 addLog(`Exception: ${e}`);
                 setError('Failed to start sync service.');
@@ -84,6 +113,10 @@ export const SyncPage: React.FC = () => {
         start();
 
         return () => {
+            disposed = true;
+            if (pollTimeout !== null) {
+                clearTimeout(pollTimeout);
+            }
             const states = replicationStatesRef.current;
             if (Array.isArray(states)) {
                 states.forEach(rs => rs.cancel());
