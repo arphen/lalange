@@ -53,7 +53,14 @@ function App() {
   const navSidebarCollapsed = useSettingsStore((state) => state.navSidebarCollapsed);
   const aiEnabled = useSettingsStore((state) => state.aiEnabled);
   const showReaderAIStatus = useAIStore((state) => (
-    aiEnabled && !state.isSetupOpen && (state.isLoading || Boolean(state.activity))
+    aiEnabled
+    && !state.isSetupOpen
+    && (
+      state.lifecycleState === 'downloading'
+      || state.lifecycleState === 'loading'
+      || state.lifecycleState === 'unloading'
+      || Boolean(state.activity)
+    )
   ));
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
   const navigate = useNavigate();

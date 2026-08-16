@@ -1,18 +1,31 @@
 import React from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { useAIStore } from '../../core/store/ai';
 import { reloadModel } from '../../core/ai/service';
 
 export const ModelStatus: React.FC = () => {
     const { 
-        isReady, 
-        isLoading, 
+        lifecycleState,
         activeModelName, 
         activity, 
         progress, 
         progressValue, 
         error, 
         tps 
-    } = useAIStore();
+    } = useAIStore(useShallow((state) => ({
+        lifecycleState: state.lifecycleState,
+        activeModelName: state.activeModelName,
+        activity: state.activity,
+        progress: state.progress,
+        progressValue: state.progressValue,
+        error: state.error,
+        tps: state.tps,
+    })));
+
+    const isLoading = lifecycleState === 'downloading'
+        || lifecycleState === 'loading'
+        || lifecycleState === 'unloading';
+    const isReady = lifecycleState === 'ready';
 
     const handleReload = async () => {
         if (confirm('Reload the AI model? This will clear the current session cache.')) {

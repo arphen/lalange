@@ -141,8 +141,12 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
     // AI toggle - disable AI features to save battery
     const aiEnabled = useSettingsStore((s) => s.aiEnabled);
     const setAiEnabled = useSettingsStore((s) => s.setAiEnabled);
-    const aiIsReady = useAIStore((s) => s.isReady);
-    const aiIsLoading = useAIStore((s) => s.isLoading);
+    const aiIsReady = useAIStore((s) => s.lifecycleState === 'ready');
+    const aiIsLoading = useAIStore((s) => (
+        s.lifecycleState === 'downloading'
+        || s.lifecycleState === 'loading'
+        || s.lifecycleState === 'unloading'
+    ));
     const aiSetupProgress = useAIStore((s) => s.progressValue);
     const requestAiSetup = useAIStore((s) => s.requestSetup);
     const aiSetupPercent = Math.round(aiSetupProgress * 100);

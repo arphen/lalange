@@ -88,7 +88,11 @@ export const Archive: React.FC<ArchiveProps> = ({ onOpenBook, onScanHandoff }) =
     const [exchangeBookIds, setExchangeBookIds] = useState<string[]>([]);
     
     // Only subscribe to the specific AI state properties we need
-    const aiIsLoading = useAIStore((s) => s.isLoading);
+    const aiIsLoading = useAIStore((s) => (
+        s.lifecycleState === 'downloading'
+        || s.lifecycleState === 'loading'
+        || s.lifecycleState === 'unloading'
+    ));
     const aiProgress = useAIStore((s) => s.progress);
     const requestAISetup = useAIStore((s) => s.requestSetup);
     const aiEnabled = useSettingsStore((s) => s.aiEnabled);

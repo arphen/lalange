@@ -120,7 +120,14 @@ describe('Reader Component', () => {
         useSettingsStore.getState().riverBottomEnabled = true;
         mockChapter1.notes = [];
         mockChapter1.noteAnchors = [];
-        useAIStore.getState().isLoading = false;
+        useAIStore.setState({
+            lifecycleState: 'idle',
+            isLoading: false,
+            isReady: false,
+            isSetupOpen: false,
+            error: null,
+            progressValue: 0,
+        });
         // Reset the reading_states.findOne mock to return default state (chapter-1, word 0)
         mockDb.reading_states.findOne.mockReturnValue({
             exec: vi.fn().mockResolvedValue(mockReadingState)
@@ -739,7 +746,7 @@ describe('Reader Component', () => {
         });
         settings.aiEnabled = false;
         settings.setAiEnabled = setAiEnabled;
-        useAIStore.setState({ isReady: true, isLoading: false, isSetupOpen: false });
+        useAIStore.setState({ lifecycleState: 'ready', isSetupOpen: false });
         render(<Reader book={mockBook} />);
 
         await waitFor(() => {
@@ -756,7 +763,7 @@ describe('Reader Component', () => {
 
     it('should open setup from unavailable adaptive pacing control', async () => {
         useSettingsStore.getState().aiEnabled = false;
-        useAIStore.setState({ isReady: false, isLoading: false, isSetupOpen: false });
+        useAIStore.setState({ lifecycleState: 'idle', isSetupOpen: false });
         render(<Reader book={mockBook} />);
 
         const unavailableButton = await screen.findByRole('button', { name: 'Set up adaptive pacing' });
@@ -768,7 +775,7 @@ describe('Reader Component', () => {
 
     it('should show pacing setup progress in the toolbar icon', async () => {
         useSettingsStore.getState().aiEnabled = false;
-        useAIStore.setState({ isReady: false, isLoading: true, progressValue: 0.42, isSetupOpen: false });
+        useAIStore.setState({ lifecycleState: 'loading', progressValue: 0.42, isSetupOpen: false });
         render(<Reader book={mockBook} />);
 
         const pacingButton = await screen.findByRole('button', { name: 'Adaptive pacing setup 42%' });
