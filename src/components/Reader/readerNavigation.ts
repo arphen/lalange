@@ -12,6 +12,34 @@ export const isReadableChapter = (chapter: ChapterDocType): boolean => (
     (chapter.status === 'ready' || chapter.status === 'processing')
 );
 
+export interface ChapterWordIndex {
+    totalWords: number;
+    offsets: ReadonlyMap<string, number>;
+}
+
+export const buildChapterWordIndex = (chapters: readonly ChapterDocType[]): ChapterWordIndex => {
+    const offsets = new Map<string, number>();
+    let totalWords = 0;
+
+    for (const chapter of chapters) {
+        offsets.set(chapter.id, totalWords);
+        totalWords += chapter.content.length;
+    }
+
+    return { totalWords, offsets };
+};
+
+export const getGlobalWordIndexFromIndex = (
+    chapterWordIndex: ChapterWordIndex,
+    currentChapterId: string,
+    currentWordIndex: number,
+): number => {
+    const chapterOffset = chapterWordIndex.offsets.get(currentChapterId);
+    return chapterOffset === undefined
+        ? Math.max(0, currentWordIndex)
+        : chapterOffset + Math.max(0, currentWordIndex);
+};
+
 export const findNextReadableChapter = (
     chapters: ChapterDocType[],
     currentChapterId: string,
@@ -37,14 +65,9 @@ export const getGlobalWordIndex = (
     currentChapterId: string,
     currentWordIndex: number,
 ): number => {
-    let globalWordIndex = 0;
-
-    for (const chapter of chapters) {
-        if (chapter.id === currentChapterId) {
-            return globalWordIndex + Math.max(0, currentWordIndex);
-        }
-        globalWordIndex += chapter.content.length;
-    }
-
-    return Math.max(0, currentWordIndex);
+    return getGlobalWordIndexFromIndex(
+        buildChapterWordIndex(chapters),
+        currentChapterId,
+        currentWordIndex,
+    );
 };

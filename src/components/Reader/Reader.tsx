@@ -2,7 +2,7 @@ import React, { useEffect, useLayoutEffect, useRef, useState, useCallback, useMe
 import { clsx } from 'clsx';
 import { ArrowLeft, BookOpenText, Focus, Gauge, Headphones, List, Moon, Play, Share2, Sun, X } from 'lucide-react';
 import { type BookDocType, type ChapterDocType, type ReadingStateDocType, type GlobalSummaryType, type ImageDocType, initDB } from '../../core/sync/db';
-import { getDisplayPlugin, renderDisplayFrame, type DisplayPlugin, getVelocireaderORPIndex } from '../../core/rsvp/display';
+import { getDisplayPlugin, projectDisplayFrame, renderDisplayFrame, type DisplayPlugin, getVelocireaderORPIndex } from '../../core/rsvp/display';
 import { getFrameTargetInterval, getTargetInterval, isLikelyProperNoun } from '../../core/rsvp/timing';
 import { isPauseToken, isReferenceToken, splitLongWordForRSVP } from '../../core/rsvp/tokenize';
 import { planRsvpFrame, type RsvpFrame } from '../../core/rsvp/phrases/grouping';
@@ -19,7 +19,13 @@ import {
 import { useSettingsStore } from '../../core/store/settings';
 import { useAIStore } from '../../core/store/ai';
 import { useTTSStore } from '../../core/store/tts';
-import { findNextReadableChapter, findPreviousReadableChapter, getGlobalWordIndex, isReadableChapter } from './readerNavigation';
+import {
+    buildChapterWordIndex,
+    findNextReadableChapter,
+    findPreviousReadableChapter,
+    getGlobalWordIndexFromIndex,
+    isReadableChapter,
+} from './readerNavigation';
 import { buildImageCueAssignments, findImageBreakAfterChapter, type ImageBreakCue } from './imageCue';
 
 import { scheduler } from '../../core/ingest/scheduler';
@@ -34,6 +40,10 @@ interface ChapterHandoffSelection {
     chapterId: string;
     startWordIndex: number | null;
 }
+
+type ReadingStatePatch = (
+    patch: Partial<Pick<ReadingStateDocType, 'currentChapterId' | 'currentWordIndex' | 'lastRead'>>,
+) => Promise<unknown>;
 
 const getDensityColor = (score: number) => {
     if (score === 0) return 'text-gray-700 opacity-50'; // Pending
@@ -245,13 +255,26 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
     const segmentedWordSourceRef = useRef('');
     const activeFrameRef = useRef<RsvpFrame | null>(null);
     const blockedIndexesRef = useRef<ReadonlySet<number>>(new Set());
+    const readingStatePatchRef = useRef<ReadingStatePatch | null>(null);
+    const saveInFlightRef = useRef<Promise<void> | null>(null);
+    const lastSavedPositionRef = useRef<{ chapterId: string; wordIndex: number } | null>(null);
+
+    const chapterWordIndex = useMemo(() => buildChapterWordIndex(chapters), [chapters]);
+    const readableChapterWordIndex = useMemo(
+        () => buildChapterWordIndex(chapters.filter(isReadableChapter)),
+        [chapters],
+    );
+    const chapterWordIndexRef = useRef(chapterWordIndex);
+    const readableChapterWordIndexRef = useRef(readableChapterWordIndex);
+    chapterWordIndexRef.current = chapterWordIndex;
+    readableChapterWordIndexRef.current = readableChapterWordIndex;
 
     const syncSchedulerCursor = useCallback((chapterId: string, wordIndex: number) => {
         scheduler.setCursor(
             book.id,
             chapterId,
             wordIndex,
-            getGlobalWordIndex(chaptersRef.current, chapterId, wordIndex),
+            getGlobalWordIndexFromIndex(chapterWordIndexRef.current, chapterId, wordIndex),
         );
     }, [book.id]);
 
@@ -325,11 +348,11 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
     }, [activeImageCue]);
 
     const updateProgressMilestone = useCallback((chapterId: string, wordIndex: number, announce: boolean) => {
-        const readableChapters = chaptersRef.current.filter(isReadableChapter);
-        const totalWords = readableChapters.reduce((total, chapter) => total + chapter.content.length, 0);
+        const readableWordIndex = readableChapterWordIndexRef.current;
+        const totalWords = readableWordIndex.totalWords;
         if (totalWords === 0) return;
 
-        const globalIndex = getGlobalWordIndex(readableChapters, chapterId, wordIndex);
+        const globalIndex = getGlobalWordIndexFromIndex(readableWordIndex, chapterId, wordIndex);
         const milestone = Math.floor((globalIndex / totalWords) * 10) * 10;
         const previousMilestone = lastProgressMilestoneRef.current;
 
@@ -458,8 +481,10 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                 if (referenceWord) {
                     rsvpRef.current.innerHTML = '<span class="uppercase tracking-[0.35em] text-sm md:text-base font-semibold text-gray-400">REF</span>';
                 } else {
-                    // Use the active display plugin for rendering
-                    rsvpRef.current.innerHTML = renderDisplayFrame(plugin, frameTokens);
+                    const projected = projectDisplayFrame(rsvpRef.current, plugin, frameTokens);
+                    if (!projected) {
+                        rsvpRef.current.innerHTML = renderDisplayFrame(plugin, frameTokens);
+                    }
                 }
                 
                 // Reset common style properties potentially set by other plugins
@@ -878,16 +903,35 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
 
     const saveProgress = React.useCallback(async () => {
         if (loading || !readingState || !currentChapter) return;
-        const db = await initDB();
-        const doc = await db.reading_states.findOne(book.id).exec();
-        if (doc) {
-            await doc.incrementalPatch({
-                currentChapterId: currentChapter.id,
-                currentWordIndex: indexRef.current,
-                lastRead: Date.now()
-            });
-        }
-    }, [loading, readingState, currentChapter, book.id]);
+        const patchReadingState = readingStatePatchRef.current;
+        if (!patchReadingState) return;
+
+        const position = {
+            chapterId: currentChapter.id,
+            wordIndex: indexRef.current,
+        };
+        const lastSavedPosition = lastSavedPositionRef.current;
+        if (
+            lastSavedPosition?.chapterId === position.chapterId
+            && lastSavedPosition.wordIndex === position.wordIndex
+        ) return;
+        if (saveInFlightRef.current) return;
+
+        const save = (async () => {
+            try {
+                await patchReadingState({
+                    currentChapterId: position.chapterId,
+                    currentWordIndex: position.wordIndex,
+                    lastRead: Date.now(),
+                });
+                lastSavedPositionRef.current = position;
+            } finally {
+                saveInFlightRef.current = null;
+            }
+        })();
+        saveInFlightRef.current = save;
+        await save;
+    }, [loading, readingState, currentChapter]);
     const saveProgressRef = useRef(saveProgress);
 
     useEffect(() => {
@@ -1812,6 +1856,13 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
 
             const stateDoc = state.toJSON() as ReadingStateDocType;
             setReadingState(stateDoc);
+            readingStatePatchRef.current = (patch) => state.incrementalPatch(patch);
+            lastSavedPositionRef.current = stateDoc.currentChapterId
+                ? {
+                    chapterId: stateDoc.currentChapterId,
+                    wordIndex: stateDoc.currentWordIndex,
+                }
+                : null;
 
             // Only run the initial chapter load once per book.id. Subsequent re-runs of
             // this effect (e.g. when book.chapterIds reference or loadChapter identity
@@ -2031,12 +2082,12 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
     }
 
     const readableChapters = chapters.filter(isReadableChapter);
-    const totalReadableWords = readableChapters.reduce((total, chapter) => total + chapter.content.length, 0);
+    const totalReadableWords = readableChapterWordIndex.totalWords;
     const currentChapterNumber = currentChapter
         ? readableChapters.findIndex((chapter) => chapter.id === currentChapter.id) + 1
         : 0;
     const globalWordIndex = currentChapter
-        ? getGlobalWordIndex(readableChapters, currentChapter.id, currentWordIndex)
+        ? getGlobalWordIndexFromIndex(readableChapterWordIndex, currentChapter.id, currentWordIndex)
         : 0;
     const bookProgress = totalReadableWords > 0
         ? Math.min(100, Math.max(0, Math.round((globalWordIndex / totalReadableWords) * 100)))
