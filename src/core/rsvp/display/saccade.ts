@@ -11,7 +11,7 @@
  * creating a more natural visual flow.
  */
 
-import { type DisplayPlugin, type WordSplit } from './types';
+import { type DisplayPlugin, type DisplayWordModel, type WordSplit } from './types';
 import { isPauseToken } from '../tokenize';
 
 /**
@@ -94,6 +94,36 @@ export const getSaccadeGradientHtml = (word: string): string => {
     return html;
 };
 
+const getSaccadeWordModel = (word: string): DisplayWordModel => {
+    if (!word) return { runs: [] };
+    if (isPauseToken(word)) {
+        return { runs: [{ text: '—', className: 'rsvp-dash font-light opacity-80 text-gray-400' }] };
+    }
+    if (word.includes('-') && !word.endsWith('-')) {
+        const runs: DisplayWordModel['runs'] = [];
+        const parts = word.split('-');
+        parts.forEach((part, index) => {
+            runs.push(...getSaccadeWordModel(part).runs);
+            if (index < parts.length - 1) {
+                runs.push({ text: '-', className: 'opacity-50', breakAfter: true });
+            }
+        });
+        return { runs };
+    }
+
+    const runs: DisplayWordModel['runs'] = [];
+    const addCharacter = (text: string, className: string) => runs.push({ text, className });
+    const length = word.length;
+
+    if (length > 0) addCharacter(word[0], 'font-bold opacity-100');
+    if (length > 1) addCharacter(word[1], 'font-semibold opacity-90');
+    if (length > 2) addCharacter(word[2], 'font-medium opacity-80');
+    if (length > 3) addCharacter(word[3], 'font-normal opacity-70');
+    if (length > 4) addCharacter(word.slice(4), 'font-light opacity-50');
+
+    return { runs };
+};
+
 /**
  * The Saccade Display Plugin implementation.
  */
@@ -104,6 +134,10 @@ export const saccadePlugin: DisplayPlugin = {
     
     renderWord(word: string): string {
         return getSaccadeGradientHtml(word);
+    },
+
+    renderWordModel(word: string): DisplayWordModel {
+        return getSaccadeWordModel(word);
     },
     
     renderContextWord(word: string): string {

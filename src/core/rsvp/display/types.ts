@@ -4,7 +4,7 @@
  * This module defines the interface for display plugins that control how
  * words are visually rendered in the RSVP reader. Each plugin provides:
  * 
- * 1. HTML rendering for the main RSVP display
+ * 1. Rendering for the main RSVP display
  * 2. HTML rendering for the context "river" (previous/next words)
  * 3. Metadata about the plugin for UI/settings
  * 
@@ -21,6 +21,17 @@ export interface WordSplit {
     bold: string;
     /** The de-emphasized portion of the word (typically the rest) */
     light: string;
+}
+
+/** Structured, inert output for DOM projectors. */
+export interface DisplayGlyphRun {
+    text: string;
+    className?: string;
+    breakAfter?: boolean;
+}
+
+export interface DisplayWordModel {
+    runs: DisplayGlyphRun[];
 }
 
 /**
@@ -59,6 +70,9 @@ export interface DisplayPlugin {
      * @returns HTML string for displaying the word
      */
     renderWord(word: string, options?: RenderOptions): string;
+
+    /** Optional text-safe rendering model used by the DOM projector. */
+    renderWordModel?(word: string, options?: RenderOptions): DisplayWordModel;
     
     /**
      * Render a word as HTML for the context stream ("river").
