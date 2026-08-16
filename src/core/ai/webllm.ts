@@ -215,11 +215,22 @@ export const downloadModelToCache = async (
     const { CreateMLCEngine, hasModelInCache } = await loadWebLLM();
     const modelId = MODEL_MAPPING[tier];
     console.log(`[WebLLM] Downloading model to cache: ${tier} (${modelId})`);
+    const { setProgress, setLoading, setError } = useAIStore.getState();
+    const operation = createOperationHandle({
+        kind: 'model-load',
+        publish: (update) => {
+            const progress = update.state === 'completed'
+                ? 1
+                : update.completed ?? 0;
+            setProgress(update.message || update.phase, progress);
+        },
+    });
     
     // Check if already cached
     const isCached = await hasModelInCache(modelId, APP_CONFIG);
     if (isCached) {
         console.log(`[WebLLM] Model ${tier} already in cache, skipping download.`);
+        operation.complete('Already cached');
         onProgress?.(1, 'Already cached');
         return;
     }
@@ -227,11 +238,11 @@ export const downloadModelToCache = async (
     const compatibilityError = await getCompatibilityError();
     if (compatibilityError) {
         const { userMessage, propagatedError } = normalizeWebLLMError(compatibilityError);
-        useAIStore.getState().setError(userMessage);
+        operation.fail(propagatedError);
+        setError(userMessage);
         throw propagatedError;
     }
 
-    const { setProgress, setLoading } = useAIStore.getState();
     const startTime = Date.now();
     
     setLoading(true, tier);
@@ -259,7 +270,14 @@ export const downloadModelToCache = async (
             displayStatus = "Downloading from Network";
         }
 
-        setProgress(`[${info.name}] (${info.size})${timeInfo} ${displayStatus}`, report.progress);
+        operation.report({
+            kind: 'model-load',
+            phase: displayStatus.includes('Downloading') ? 'download' : 'load',
+            completed: report.progress,
+            total: 1,
+            message: `[${info.name}] (${info.size})${timeInfo} ${displayStatus}`,
+            state: 'running',
+        });
         onProgress?.(report.progress, cleanText);
     };
 
@@ -273,6 +291,10 @@ export const downloadModelToCache = async (
         // Immediately unload to free GPU memory
         await tempEngine.unload();
         console.log(`[WebLLM] Model ${tier} downloaded and unloaded from memory.`);
+        operation.complete('Model downloaded and cached');
+    } catch (error) {
+        operation.fail(error);
+        throw error;
     } finally {
         setLoading(false);
     }
