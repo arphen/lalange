@@ -1,5 +1,6 @@
 import type { AppConfig, InitProgressCallback, MLCEngine } from "@mlc-ai/web-llm";
 import { useAIStore } from "../store/ai";
+import { createOperationHandle } from "../operations/progressReporter";
 
 type WebLLMModule = typeof import("@mlc-ai/web-llm");
 
@@ -309,6 +310,16 @@ export const getEngine = async (
     const modelConfig = tier === 'tiny' ? TINYLLAMA_LOGPROBS_CONFIG : QWEN_LOGPROBS_CONFIG;
     const modelSizeBytes = modelConfig.vram_required_MB * 1024 * 1024;
 
+    const operation = createOperationHandle({
+        kind: 'model-load',
+        publish: (update) => {
+            const progress = update.state === 'completed'
+                ? 1
+                : update.completed ?? 0;
+            setProgress(update.message || update.phase, progress);
+        },
+    });
+
     const onProgress: InitProgressCallback = (report) => {
         console.log(`[WebLLM] Init Progress: ${report.text} (${report.progress})`);
         const info = MODEL_INFO[tier];
@@ -326,7 +337,14 @@ export const getEngine = async (
             setLifecycleState('loading');
         }
 
-        setProgress(`[${info.name}] ${cleanText}`, report.progress);
+        operation.report({
+            kind: 'model-load',
+            phase: cleanText.includes('Downloading') ? 'download' : 'load',
+            completed: report.progress,
+            total: 1,
+            message: `[${info.name}] ${cleanText}`,
+            state: 'running',
+        });
     };
 
     setLoading(true, tier);
@@ -366,10 +384,12 @@ export const getEngine = async (
         setReady(true);
         setActiveModelName(MODEL_INFO[tier].name);
         completeModelLoad(); // Mark loading as complete
+        operation.complete('AI model ready');
         return engineInstance;
     } catch (error) {
         console.error("Failed to load WebLLM engine:", error);
         const { userMessage, propagatedError } = normalizeWebLLMError(error);
+        operation.fail(propagatedError);
         setError(userMessage);
         throw propagatedError;
     } finally {
