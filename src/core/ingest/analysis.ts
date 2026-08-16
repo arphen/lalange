@@ -1,6 +1,7 @@
 import PQueue from 'p-queue';
 import { getPromptLogprobs } from '../ai/service';
 import { PACING_MODEL_TIER } from '../ai/webllm';
+import { createOperationHandle } from '../operations/progressReporter';
 import { useAIStore } from '../store/ai';
 import { useSettingsStore } from '../store/settings';
 
@@ -35,6 +36,18 @@ export const analyzeDensityRange = async (
     signal?: AbortSignal,
 ): Promise<AnalysisResult> => {
     const WINDOW_SIZE = 250;
+    const operation = createOperationHandle({
+        kind: 'analysis',
+        publish: (update) => {
+            const aiStore = useAIStore.getState();
+            if (update.message) {
+                aiStore.setActivity(update.message, PACING_MODEL_TIER);
+            }
+            if (typeof update.completed === 'number' && typeof update.total === 'number') {
+                aiStore.updateTaskProgress(update.completed, update.total);
+            }
+        },
+    });
 
     console.log(`[Analysis] analyzeDensityRange called for ${words.length} words. Tier: ${PACING_MODEL_TIER}. Window: ${WINDOW_SIZE}`);
 
@@ -55,13 +68,19 @@ export const analyzeDensityRange = async (
             // Track window-level results for incremental save
             const windowRawSurprisals: number[] = [];
             const windowAnalysisData: { tokens: string[], surprisals: number[] }[] = [];
+            const chunkNum = Math.floor(i / WINDOW_SIZE) + 1;
+            const totalChunks = Math.ceil(words.length / WINDOW_SIZE);
+
+            operation.report({
+                kind: 'analysis',
+                phase: 'window',
+                completed: i,
+                total: words.length,
+                message: `Scanning Density (Window ${chunkNum}/${totalChunks})`,
+                state: 'running',
+            });
 
             const logprobs = await analysisQueue.add(async () => {
-                const chunkNum = Math.floor(i / WINDOW_SIZE) + 1;
-                const totalChunks = Math.ceil(words.length / WINDOW_SIZE);
-                useAIStore.getState().setActivity(`Scanning Density (Window ${chunkNum}/${totalChunks})`, PACING_MODEL_TIER);
-                // Update progress with words processed so far
-                useAIStore.getState().updateTaskProgress(i, words.length);
                 console.log(`[Analysis] Analyzing density for chunk ${i}-${i + chunkWords.length} (${chunkWords.length} words)...`);
                 return await getPromptLogprobs(chunkText, PACING_MODEL_TIER);
             });
@@ -143,11 +162,23 @@ export const analyzeDensityRange = async (
             }
             
             // Update progress after window completion
-            useAIStore.getState().updateTaskProgress(i + chunkWords.length, words.length);
+            operation.report({
+                kind: 'analysis',
+                phase: 'window',
+                completed: i + chunkWords.length,
+                total: words.length,
+                message: `Scanning Density (Window ${chunkNum}/${totalChunks})`,
+                state: 'running',
+            });
         }
 
         // === PHASE 2: Calculate final percentiles for relative scoring across ALL words ===
         if (rawSurprisals.length === 0) {
+            if (signal?.aborted) {
+                operation.cancel();
+            } else {
+                operation.complete('No words to analyze');
+            }
             return { densities: [], analysisData: [], completed: words.length === 0 };
         }
 
@@ -193,6 +224,12 @@ export const analyzeDensityRange = async (
             densities.push(clamped);
         }
 
+        if (signal?.aborted) {
+            operation.cancel();
+        } else {
+            operation.complete('Density analysis complete');
+        }
+
         return {
             densities,
             analysisData,
@@ -201,6 +238,11 @@ export const analyzeDensityRange = async (
 
     } catch (e) {
         console.warn('LLM failed for density analysis (Forward Pass)', e);
+        if (signal?.aborted) {
+            operation.cancel();
+        } else {
+            operation.fail(e);
+        }
         const defaultAnalysisData = [];
         for (let i = 0; i < words.length; i++) {
             defaultAnalysisData.push({ tokens: [], surprisals: [] });
