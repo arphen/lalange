@@ -1,6 +1,7 @@
 import { MAX_PDF_PAGES, type ParsedPdfDocument, type PdfParseOptions } from './pdfReader';
 import { TesseractPdfOcrEngine, type PdfOcrEngine, type PdfOcrWord } from './pdfOcrAdapter';
 import { normalizePdfBox, type PdfLayoutWord, type PdfTextDirection } from './pdfLayout';
+import { createOperationHandle } from '../../operations/progressReporter';
 
 interface PdfTextItem {
     str: string;
@@ -240,6 +241,23 @@ export const parsePdfWithPdfJs = async (
     onProgress?: (message: string) => void,
     options: PdfParseOptions = {},
 ): Promise<ParsedPdfDocument> => {
+    const operation = createOperationHandle({
+        kind: 'ingest',
+        intervalMs: 0,
+        publish: (update) => {
+            if (update.state === 'running') {
+                onProgress?.(update.message ?? update.phase);
+            }
+        },
+    });
+    const report = (message: string, phase: string): void => {
+        operation.report({
+            kind: 'ingest',
+            phase,
+            message,
+            state: 'running',
+        });
+    };
     let loadingTask: PdfLoadingTask | undefined;
     let pdfDocument: PdfDocument | undefined;
     let ocrEngine: PdfOcrEngine | undefined;
@@ -276,7 +294,7 @@ export const parsePdfWithPdfJs = async (
 
         for (let pageNumber = 1; pageNumber <= loadedDocument.numPages; pageNumber++) {
             throwIfAborted(options.signal);
-            onProgress?.(`Extracting PDF page ${pageNumber} of ${loadedDocument.numPages}...`);
+            report(`Extracting PDF page ${pageNumber} of ${loadedDocument.numPages}...`, 'pdf-page');
             const page = await loadedDocument.getPage(pageNumber);
             const textContent = await page.getTextContent({
                 disableNormalization: false,
@@ -290,17 +308,17 @@ export const parsePdfWithPdfJs = async (
                 .trim();
 
             if (!text && ocrEngine) {
-                onProgress?.(`Rendering PDF page ${pageNumber} for local OCR...`);
+                report(`Rendering PDF page ${pageNumber} for local OCR...`, 'ocr-render');
                 let canvas: HTMLCanvasElement | OffscreenCanvas | undefined;
                 try {
                     canvas = await renderPageForOcr(page, options.signal);
                     const ocrResult = await ocrEngine.recognize(canvas, (progress) => {
-                        onProgress?.(`OCR page ${pageNumber} of ${loadedDocument.numPages}: ${progress.status} ${Math.round(progress.progress * 100)}%`);
+                        report(`OCR page ${pageNumber} of ${loadedDocument.numPages}: ${progress.status} ${Math.round(progress.progress * 100)}%`, 'ocr');
                     });
                     text = ocrResult.text;
                     words = extractOcrWords(pageNumber, ocrResult.words, canvas.width, canvas.height);
                 } catch (error) {
-                    onProgress?.(`OCR failed for PDF page ${pageNumber}: ${error instanceof Error ? error.message : String(error)}`);
+                    report(`OCR failed for PDF page ${pageNumber}: ${error instanceof Error ? error.message : String(error)}`, 'ocr-error');
                 } finally {
                     if (canvas) releaseCanvas(canvas);
                 }
@@ -315,13 +333,21 @@ export const parsePdfWithPdfJs = async (
             pages.push(parsedPage);
         }
 
-        return {
+        const result = {
             title: readMetadataValue(metadata, 'Title', 'dc:title'),
             author: readMetadataValue(metadata, 'Author', 'dc:creator'),
             pages,
         };
+        operation.complete('PDF parsed');
+        return result;
     } catch (error) {
-        throw describePdfError(error);
+        const normalizedError = describePdfError(error);
+        if (options.signal?.aborted) {
+            operation.cancel();
+        } else {
+            operation.fail(normalizedError);
+        }
+        throw normalizedError;
     } finally {
         if (ownsOcrEngine && ocrEngine) {
             await ocrEngine.close().catch(() => undefined);
