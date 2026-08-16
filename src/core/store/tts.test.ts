@@ -54,6 +54,18 @@ describe('TTS settings persistence', () => {
         expect(storage.setItem).toHaveBeenCalledTimes(1);
     });
 
+    it('can dispose and restart settings persistence', () => {
+        useTTSStore.persist.dispose();
+        useTTSStore.getState().setVolume(0.75);
+        expect(storage.setItem).not.toHaveBeenCalled();
+
+        useTTSStore.persist.start();
+        useTTSStore.getState().setVolume(0.8);
+
+        expect(storage.setItem).toHaveBeenCalledTimes(1);
+        expect(JSON.parse(storage.setItem.mock.calls[0][1]).state.volume).toBe(0.8);
+    });
+
     it('hydrates legacy settings and ignores obsolete fields', async () => {
         storage.getItem.mockReturnValue(JSON.stringify({
             state: {

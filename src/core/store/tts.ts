@@ -151,6 +151,7 @@ function selectPersistedTTSSettings(state: TTSState): TTSPersistedSettings {
 
 let ttsSettingsStorage = getTTSSettingsStorage();
 let lastPersistedTTSSettings: string | null = null;
+let unsubscribeTTSSettingsPersistence: (() => void) | null = null;
 
 const ttsStore = create<TTSState>()(
     subscribeWithSelector((set) => ({
@@ -211,21 +212,32 @@ const ttsStore = create<TTSState>()(
         ...readPersistedTTSSettings(ttsSettingsStorage),
     });
 
-    ttsStore.subscribe(
-        selectPersistedTTSSettings,
-        (settings) => {
-            const payload = JSON.stringify({ state: settings, version: 0 });
-            if (payload === lastPersistedTTSSettings) return;
+    const startTTSSettingsPersistence = () => {
+        if (unsubscribeTTSSettingsPersistence) return;
+        lastPersistedTTSSettings = null;
+        unsubscribeTTSSettingsPersistence = ttsStore.subscribe(
+            selectPersistedTTSSettings,
+            (settings) => {
+                const payload = JSON.stringify({ state: settings, version: 0 });
+                if (payload === lastPersistedTTSSettings) return;
 
-            try {
-                ttsSettingsStorage?.setItem(TTS_SETTINGS_STORAGE_KEY, payload);
-                lastPersistedTTSSettings = payload;
-            } catch {
-                // Storage can be unavailable or full; playback must continue.
-            }
-        },
-        { equalityFn: shallow },
-    );
+                try {
+                    ttsSettingsStorage?.setItem(TTS_SETTINGS_STORAGE_KEY, payload);
+                    lastPersistedTTSSettings = payload;
+                } catch {
+                    // Storage can be unavailable or full; playback must continue.
+                }
+            },
+            { equalityFn: shallow },
+        );
+    };
+
+    const disposeTTSSettingsPersistence = () => {
+        unsubscribeTTSSettingsPersistence?.();
+        unsubscribeTTSSettingsPersistence = null;
+    };
+
+    startTTSSettingsPersistence();
 
     export const useTTSStore = Object.assign(ttsStore, {
         persist: {
@@ -234,10 +246,14 @@ const ttsStore = create<TTSState>()(
                     ttsSettingsStorage = options.storage;
                     lastPersistedTTSSettings = null;
                 }
+                startTTSSettingsPersistence();
             },
             rehydrate: async () => {
+                startTTSSettingsPersistence();
                 ttsStore.setState(readPersistedTTSSettings(ttsSettingsStorage));
             },
+            start: startTTSSettingsPersistence,
+            dispose: disposeTTSSettingsPersistence,
         },
     });
 
