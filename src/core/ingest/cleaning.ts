@@ -179,8 +179,8 @@ const PAGE_NUMBER_HEURISTICS = {
 
 export const REFERENCE_MARKER_TOKEN = '[ref]';
 
-const BRACKET_REFERENCE_PATTERN = /\[(?:\d{1,4}[a-z]?|fnl?)\](?=[\s.,;:!?)]|$)/gi;
-const BRACKET_PAGE_REFERENCE_PATTERN = /\[(?:p|pp)\.?\s*\d{1,4}(?:\s*[—-]\s*\d{1,4})?\](?=[\s.,;:!?)]|$)/gi;
+const BRACKET_REFERENCE_PATTERN = /\[(?:\d{1,4}[a-z]?|fnl?)\](?=[\s.,;:!?)[]|$)/gi;
+const BRACKET_PAGE_REFERENCE_PATTERN = /\[(?:p|pp)\.?\s*\d{1,4}(?:\s*[—-]\s*\d{1,4})?\](?=[\s.,;:!?)[]|$)/gi;
 const PAREN_CANDIDATE_PATTERN = /\(([^)\n]{1,24})\)(?=[\s.,;:!?]|$)/g;
 const REFERENCE_LINE_PATTERN = /^\s*(?:\[\d{1,4}\]|\(\d{1,4}[.,]\d{1,4}(?:\[\d+\])?\)|\(\d{1,4},\s*[a-z]{2,4}(?:\[\d+\])?\)|\(\d{1,4}[—-]\d{1,4}\))\s+.+$/gim;
 
@@ -567,15 +567,23 @@ function normalizeInlineReferences(
         return ` ${REFERENCE_MARKER_TOKEN} `;
     };
 
-    cleaned = cleaned.replace(BRACKET_PAGE_REFERENCE_PATTERN, () => replaceReference());
-    cleaned = cleaned.replace(BRACKET_REFERENCE_PATTERN, () => replaceReference());
-
-    cleaned = cleaned.replace(PAREN_CANDIDATE_PATTERN, (fullMatch, innerText) => {
-        if (!isLikelyReferenceParenthetical(String(innerText))) {
-            return fullMatch;
-        }
-        return replaceReference();
-    });
+    // Run to a fixed point: converting one marker can expose an adjacent one
+    // to the trailing-boundary lookahead (e.g. "(1)[2]" only exposes "[2]" on
+    // the first pass), so a single pass can leave markers unconverted.
+    let previous: string;
+    let iterations = 0;
+    do {
+        previous = cleaned;
+        cleaned = cleaned.replace(BRACKET_PAGE_REFERENCE_PATTERN, () => replaceReference());
+        cleaned = cleaned.replace(BRACKET_REFERENCE_PATTERN, () => replaceReference());
+        cleaned = cleaned.replace(PAREN_CANDIDATE_PATTERN, (fullMatch, innerText) => {
+            if (!isLikelyReferenceParenthetical(String(innerText))) {
+                return fullMatch;
+            }
+            return replaceReference();
+        });
+        iterations++;
+    } while (cleaned !== previous && iterations < 20);
 
     // Drop full reference lines when suppressing (typically endnote entries).
     if (mode === 'suppress') {
@@ -662,12 +670,14 @@ export function cleanText(text: string, options: {
 
     // Normalize whitespace
     if (normalizeWhitespace) {
+        // Remove leading/trailing whitespace from lines first, so a line left
+        // with only stray whitespace (e.g. after boilerplate removal) counts
+        // as blank for the newline-collapsing step below.
+        cleaned = cleaned.split('\n').map(line => line.trim()).join('\n');
         // Collapse multiple newlines to double newline
         cleaned = cleaned.replace(/\n{3,}/g, '\n\n');
         // Collapse multiple spaces to single space
         cleaned = cleaned.replace(/[ \t]+/g, ' ');
-        // Remove leading/trailing whitespace from lines
-        cleaned = cleaned.split('\n').map(line => line.trim()).join('\n');
     }
 
     return {
