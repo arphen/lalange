@@ -13,6 +13,16 @@ export type ModelLifecycleState =
 
 export type AISetupIntent = 'pacing' | 'summaries';
 
+export const selectAIIsLoading = (state: Pick<AIState, 'lifecycleState'>): boolean => (
+    state.lifecycleState === 'downloading'
+    || state.lifecycleState === 'loading'
+    || state.lifecycleState === 'unloading'
+);
+
+export const selectAIIsReady = (state: Pick<AIState, 'lifecycleState'>): boolean => (
+    state.lifecycleState === 'ready'
+);
+
 interface ModelStats {
     /** Model name/tier */
     name: string | null;
@@ -143,18 +153,22 @@ export const useAIStore = create<AIState>((set, get) => ({
     setupIntent: 'pacing',
 
     // Legacy actions (updated to also set lifecycle state)
-    setLoading: (isLoading, model) => set(state => ({ 
+    setLoading: (isLoading, model) => set(state => ({
         isLoading, 
         loadingModel: model || null, 
         error: null,
-        lifecycleState: isLoading ? 'loading' : state.lifecycleState,
+        lifecycleState: isLoading
+            ? state.lifecycleState === 'downloading' ? 'downloading' : 'loading'
+            : state.error ? 'crashed' : state.isReady ? 'ready' : 'idle',
     })),
     
     setProgress: (progress, progressValue) => set({ progress, progressValue }),
     
     setReady: (isReady) => set(state => ({ 
         isReady,
-        lifecycleState: isReady ? 'ready' : state.lifecycleState,
+        lifecycleState: isReady
+            ? 'ready'
+            : state.lifecycleState === 'ready' ? 'idle' : state.lifecycleState,
     })),
     
     setActivity: (activity, model) => set({ activity, activeModel: model || null }),
@@ -178,6 +192,8 @@ export const useAIStore = create<AIState>((set, get) => ({
     // New actions
     setLifecycleState: (lifecycleState, error) => set(state => ({
         lifecycleState,
+        isLoading: selectAIIsLoading({ lifecycleState }),
+        isReady: selectAIIsReady({ lifecycleState }),
         error: error || state.error,
         modelStats: error ? {
             ...state.modelStats,
@@ -209,6 +225,7 @@ export const useAIStore = create<AIState>((set, get) => ({
 
     startModelLoad: (modelName, sizeBytes) => set(state => ({
         isLoading: true,
+        isReady: false,
         loadingModel: modelName,
         lifecycleState: 'downloading',
         progress: `Loading ${modelName}...`,
