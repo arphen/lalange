@@ -35,4 +35,13 @@ describe('Reader session controller', () => {
         expect(firstListener).toHaveBeenCalledTimes(1);
         expect(secondListener).not.toHaveBeenCalled();
     });
+
+    it('cancels session sequences when disposed', async () => {
+        const controller = createReaderSessionControllerForBook('book-1', 'chapter-1');
+        const pending = controller.createSequence().delay(100);
+
+        controller.dispose();
+
+        await expect(pending).resolves.toBe(false);
+    });
 });

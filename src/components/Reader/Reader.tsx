@@ -31,6 +31,7 @@ import { readerPerformanceCounters } from './readerPerformance';
 import { ContextWindowProjector } from './contextWindowProjector';
 import { createReaderSessionControllerForBook } from '../../core/reader/controller';
 import { createRsvpPlaybackClock } from '../../core/reader/rsvpPlaybackClock';
+import type { ReaderSessionSequence } from '../../core/reader/sessionSequence';
 
 import { scheduler } from '../../core/ingest/scheduler';
 import { processChaptersInBackground, resumeIncompleteAnalysis } from '../../core/ingest/pipeline';
@@ -329,15 +330,10 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
     const [chapterTransitionPhase, setChapterTransitionPhase] = useState<ChapterTransitionPhase | null>(null);
     const [chapterPulseActive, setChapterPulseActive] = useState(false);
     const [progressReminder, setProgressReminder] = useState<number | null>(null);
-    const countdownIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-    const momentumAnimationFrameRef = useRef<number | null>(null);
-    const momentumCompletionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const chapterTransitionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const chapterChooserHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const transitionSequenceRef = useRef<ReaderSessionSequence | null>(null);
     const chapterTransitionActiveRef = useRef(false);
     const pauseAfterChapterTransitionRef = useRef(false);
     const playbackMomentumRef = useRef(1);
-    const chapterPulseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const progressReminderTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const lastProgressMilestoneRef = useRef<number | null>(null);
     const autoPausedNoteRef = useRef<string | null>(null);
@@ -662,45 +658,25 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
     }, [showChapters, chapterHandoffSelection]);
 
     const animatePlaybackMomentum = useCallback((
+        sequence: ReaderSessionSequence,
         from: number,
         to: number,
         durationMs: number,
         onComplete: () => void,
         easing: 'easeOut' | 'easeIn' = 'easeOut',
     ) => {
-        if (momentumAnimationFrameRef.current) cancelAnimationFrame(momentumAnimationFrameRef.current);
-        if (momentumCompletionTimerRef.current) clearTimeout(momentumCompletionTimerRef.current);
-
-        let startedAt: number | null = null;
-        let isComplete = false;
         playbackMomentumRef.current = from;
 
-        const finish = () => {
-            if (isComplete) return;
-            isComplete = true;
-            if (momentumAnimationFrameRef.current) cancelAnimationFrame(momentumAnimationFrameRef.current);
-            if (momentumCompletionTimerRef.current) clearTimeout(momentumCompletionTimerRef.current);
-            momentumAnimationFrameRef.current = null;
-            momentumCompletionTimerRef.current = null;
-            playbackMomentumRef.current = to;
-            onComplete();
-        };
-
-        const updateMomentum = (timestamp: number) => {
-            if (startedAt === null) startedAt = timestamp;
-            const elapsedMs = timestamp - startedAt;
-            const progress = Math.min(1, elapsedMs / durationMs);
+        void sequence.animate(durationMs, (progress) => {
             const easedProgress = easing === 'easeIn'
                 ? Math.pow(progress, 3)
                 : 1 - Math.pow(1 - progress, 3);
             playbackMomentumRef.current = from + ((to - from) * easedProgress);
-
-            if (progress >= 1) finish();
-            else momentumAnimationFrameRef.current = requestAnimationFrame(updateMomentum);
-        };
-
-        momentumAnimationFrameRef.current = requestAnimationFrame(updateMomentum);
-        momentumCompletionTimerRef.current = setTimeout(finish, durationMs);
+        }).then((completed) => {
+            if (!completed || sequence.signal.aborted) return;
+            playbackMomentumRef.current = to;
+            onComplete();
+        });
     }, []);
 
     const startTransition = useCallback((
@@ -718,18 +694,23 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
             resumeAfterComplete = true,
         } = options;
 
-        if (kind === 'chapter') {
-            if (chapterTransitionActiveRef.current) return;
+        if (kind === 'chapter' && chapterTransitionActiveRef.current) return;
 
+        transitionSequenceRef.current?.cancel();
+        transitionSequenceRef.current = null;
+        const sequence = readerSessionController.createSequence();
+        transitionSequenceRef.current = sequence;
+        const releaseSequence = () => {
+            if (transitionSequenceRef.current !== sequence) return;
+            sequence.cancel();
+            transitionSequenceRef.current = null;
+        };
+
+        if (kind === 'chapter') {
             chapterTransitionActiveRef.current = true;
             pauseAfterChapterTransitionRef.current = false;
             const wasPlaying = isPlayingRef.current;
             const shouldLingerContents = closeContents && showChapters;
-
-            if (chapterChooserHideTimerRef.current) {
-                clearTimeout(chapterChooserHideTimerRef.current);
-                chapterChooserHideTimerRef.current = null;
-            }
 
             if (closeContents && !shouldLingerContents) {
                 setShowChapters(false);
@@ -740,6 +721,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
             setChapterTransitionPhase(wasPlaying ? 'braking' : 'crossing');
 
             const crossIntoChapter = () => {
+                if (sequence.signal.aborted) return;
                 setIsPlaying(false);
                 isPlayingRef.current = false;
                 playbackMomentumRef.current = 0;
@@ -747,16 +729,16 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
 
                 Promise.resolve(onComplete())
                     .then(() => {
+                        if (sequence.signal.aborted) return;
                         playbackMomentumRef.current = CHAPTER_LAUNCH_SPEED;
                         accumulatorRef.current = 0;
                         lastTimeRef.current = undefined;
                         setChapterTransitionPhase('launching');
                         setChapterPulseActive(true);
-                        if (chapterPulseTimerRef.current) clearTimeout(chapterPulseTimerRef.current);
-                        chapterPulseTimerRef.current = setTimeout(() => {
+                        void sequence.delay(1400).then((completed) => {
+                            if (!completed) return;
                             setChapterPulseActive(false);
-                            chapterPulseTimerRef.current = null;
-                        }, 1400);
+                        });
                         const shouldPlay = !pauseAfterChapterTransitionRef.current;
                         isPlayingRef.current = shouldPlay;
                         setIsPlaying(shouldPlay);
@@ -764,11 +746,11 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
 
                         if (closeContents) {
                             if (shouldPlay && shouldLingerContents) {
-                                chapterChooserHideTimerRef.current = setTimeout(() => {
+                                void sequence.delay(CHAPTER_CHOOSER_HIDE_AFTER_PLAYBACK_MS).then((completed) => {
+                                    if (!completed) return;
                                     setShowChapters(false);
                                     setChapterHandoffSelection(null);
-                                    chapterChooserHideTimerRef.current = null;
-                                }, CHAPTER_CHOOSER_HIDE_AFTER_PLAYBACK_MS);
+                                });
                             } else {
                                 setShowChapters(false);
                                 setChapterHandoffSelection(null);
@@ -776,6 +758,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                         }
 
                         animatePlaybackMomentum(
+                            sequence,
                             CHAPTER_LAUNCH_SPEED,
                             1,
                             CHAPTER_LAUNCH_DURATION_MS,
@@ -784,11 +767,13 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                                 setChapterTransitionPhase(null);
                                 setTransitionLabel(null);
                                 setTransitionKind(null);
+                                releaseSequence();
                             },
                             'easeIn',
                         );
                     })
                     .catch((error) => {
+                        if (sequence.signal.aborted) return;
                         console.error('Reader transition failed', error);
                         playbackMomentumRef.current = 1;
                         chapterTransitionActiveRef.current = false;
@@ -800,16 +785,16 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                         setChapterTransitionPhase(null);
                         setTransitionLabel(null);
                         setTransitionKind(null);
+                        releaseSequence();
                     });
             };
 
             if (wasPlaying) {
-                animatePlaybackMomentum(1, CHAPTER_BRAKE_SPEED, CHAPTER_BRAKE_DURATION_MS, crossIntoChapter);
+                animatePlaybackMomentum(sequence, 1, CHAPTER_BRAKE_SPEED, CHAPTER_BRAKE_DURATION_MS, crossIntoChapter);
             } else {
-                chapterTransitionTimerRef.current = setTimeout(() => {
-                    chapterTransitionTimerRef.current = null;
-                    crossIntoChapter();
-                }, CHAPTER_PAUSED_CROSSING_DELAY_MS);
+                void sequence.delay(CHAPTER_PAUSED_CROSSING_DELAY_MS).then((completed) => {
+                    if (completed) crossIntoChapter();
+                });
             }
             return;
         }
@@ -832,39 +817,49 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
         setCountdown(count);
         setTransitionLabel(label);
         setTransitionKind(kind);
-        
-        if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
-        
-        countdownIntervalRef.current = setInterval(() => {
+
+        readerSessionController.dispatch({ type: 'set-mode', mode: 'summary' });
+        let stopCountdown: () => void = () => undefined;
+        const completeSummaryTransition = () => {
+            stopCountdown();
+            Promise.resolve(onComplete())
+                .then(() => {
+                    if (sequence.signal.aborted) return;
+                    setCountdown(null);
+                    setTransitionLabel(null);
+                    setTransitionKind(null);
+                    readerSessionController.dispatch({ type: 'set-mode', mode: 'text' });
+                    if (resumeAfterComplete) setIsPlaying(true);
+                    releaseSequence();
+                })
+                .catch((error) => {
+                    if (sequence.signal.aborted) return;
+                    console.error('Reader transition failed', error);
+                    setCountdown(null);
+                    setTransitionLabel(null);
+                    setTransitionKind(null);
+                    readerSessionController.dispatch({ type: 'set-mode', mode: 'text' });
+                    releaseSequence();
+                });
+        };
+
+        stopCountdown = sequence.repeat(1000, () => {
             count--;
             if (count > 0) {
                 setCountdown(count);
             } else {
-                if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
-                countdownIntervalRef.current = null;
-                Promise.resolve(onComplete())
-                    .then(() => {
-                        setCountdown(null);
-                        setTransitionLabel(null);
-                        setTransitionKind(null);
-                        if (resumeAfterComplete) setIsPlaying(true);
-                    })
-                    .catch((error) => {
-                        console.error('Reader transition failed', error);
-                        setCountdown(null);
-                        setTransitionLabel(null);
-                        setTransitionKind(null);
-                    });
+                completeSummaryTransition();
             }
-        }, 1000);
+        });
     }, [animatePlaybackMomentum, readerSessionController, setIsPlaying, setCountdown, setTransitionLabel, setShowChapters, showChapters]);
 
     const handleSkipSummary = useCallback(() => {
-        // Clear countdown if running
-        if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
+        transitionSequenceRef.current?.cancel();
+        transitionSequenceRef.current = null;
         setCountdown(null);
         setTransitionLabel(null);
         setTransitionKind(null);
+        readerSessionController.dispatch({ type: 'set-mode', mode: 'text' });
 
         // Logic to skip directly to post-summary state
         if (isSummaryActiveRef.current || countdown) {
@@ -886,7 +881,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
             accumulatorRef.current = 0;
             setIsPlaying(true);
         }
-    }, [wpm, renderWord, countdown, setIsPlaying, setCountdown, setTransitionLabel, resetDisplaySegments]);
+    }, [wpm, renderWord, countdown, readerSessionController, setIsPlaying, setCountdown, setTransitionLabel, resetDisplaySegments]);
 
     const handlePlayGlobalSummary = useCallback((summary: GlobalSummaryType) => {
         // Stop current playback
@@ -1009,12 +1004,13 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                     }
 
                     if (autoPlay) {
-                        if (chapterPulseTimerRef.current) clearTimeout(chapterPulseTimerRef.current);
+                        const pulseSequence = readerSessionController.createSequence();
                         setChapterPulseActive(true);
-                        chapterPulseTimerRef.current = setTimeout(() => {
+                        void pulseSequence.delay(1400).then((completed) => {
+                            if (!completed) return;
                             setChapterPulseActive(false);
-                            chapterPulseTimerRef.current = null;
-                        }, 1400);
+                            pulseSequence.cancel();
+                        });
                         setIsPlaying(true);
                     }
 
@@ -1044,12 +1040,13 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
         initialIndex: number = 0,
         selectionStartWordIndex?: number | null,
     ) => {
-        if (countdownIntervalRef.current && transitionKind === 'summary') {
-            clearInterval(countdownIntervalRef.current);
-            countdownIntervalRef.current = null;
+        if (transitionKind === 'summary') {
+            transitionSequenceRef.current?.cancel();
+            transitionSequenceRef.current = null;
             setCountdown(null);
             setTransitionLabel(null);
             setTransitionKind(null);
+            readerSessionController.dispatch({ type: 'set-mode', mode: 'text' });
         }
 
         if (isSummaryActiveRef.current) {
@@ -1853,12 +1850,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
     // Save on unmount
     useEffect(() => {
         return () => {
-            if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
-            if (momentumAnimationFrameRef.current) cancelAnimationFrame(momentumAnimationFrameRef.current);
-            if (momentumCompletionTimerRef.current) clearTimeout(momentumCompletionTimerRef.current);
-            if (chapterTransitionTimerRef.current) clearTimeout(chapterTransitionTimerRef.current);
-            if (chapterChooserHideTimerRef.current) clearTimeout(chapterChooserHideTimerRef.current);
-            if (chapterPulseTimerRef.current) clearTimeout(chapterPulseTimerRef.current);
+            transitionSequenceRef.current?.cancel();
             if (progressReminderTimerRef.current) clearTimeout(progressReminderTimerRef.current);
             void saveProgressRef.current();
         };

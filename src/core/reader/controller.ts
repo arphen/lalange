@@ -4,6 +4,7 @@ import {
     type ReaderSessionCommand,
     type ReaderSessionSnapshot,
 } from './session';
+import { createReaderSessionSequence, type ReaderSessionSequence } from './sessionSequence';
 
 export type ReaderSessionListener = () => void;
 
@@ -11,6 +12,7 @@ export interface ReaderSessionController {
     getSnapshot: () => ReaderSessionSnapshot;
     subscribe: (listener: ReaderSessionListener) => () => void;
     dispatch: (command: ReaderSessionCommand) => void;
+    createSequence: () => ReaderSessionSequence;
     dispose: () => void;
 }
 
@@ -19,6 +21,7 @@ export const createReaderSessionController = (
 ): ReaderSessionController => {
     let snapshot = initialSnapshot;
     let disposed = false;
+    const sessionAbortController = new AbortController();
     const listeners = new Set<ReaderSessionListener>();
 
     return {
@@ -35,8 +38,11 @@ export const createReaderSessionController = (
             snapshot = nextSnapshot;
             listeners.forEach((listener) => listener());
         },
+        createSequence: () => createReaderSessionSequence(sessionAbortController.signal),
         dispose: () => {
+            if (disposed) return;
             disposed = true;
+            sessionAbortController.abort();
             listeners.clear();
         },
     };
