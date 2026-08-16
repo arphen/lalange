@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { appendDisplayWordModel, getDisplayPlugin, projectDisplayFrame } from '../core/rsvp/display';
+import { getDisplayPlugin, projectDisplayFrame } from '../core/rsvp/display';
 import { getFrameTargetInterval } from '../core/rsvp/timing';
 import { planRsvpFrame } from '../core/rsvp/phrases/grouping';
 import { useSettingsStore } from '../core/store/settings';
+import { ContextWindowProjector } from './Reader/contextWindowProjector';
 
 const getDensityColor = (score: number) => {
   if (score === 0) return 'text-gray-700 opacity-50';
@@ -25,27 +26,6 @@ const createContextWordModel = (displayPlugin: ReturnType<typeof getDisplayPlugi
   };
 };
 
-const appendContextWord = (
-  container: HTMLElement,
-  displayPlugin: ReturnType<typeof getDisplayPlugin>,
-  word: string,
-  actualIndex: number,
-  colorClass: string,
-  isCurrent: boolean,
-): void => {
-  const wordSpan = document.createElement('span');
-  wordSpan.className = `word-span inline-block mr-1.5 mb-1 transition-all duration-200 cursor-pointer ${colorClass} ${isCurrent ? 'opacity-100 text-white' : 'opacity-60 hover:opacity-100 hover:text-white'}`;
-  wordSpan.dataset.index = String(actualIndex);
-  appendDisplayWordModel(wordSpan, createContextWordModel(displayPlugin, word));
-  container.appendChild(wordSpan);
-
-  if (/[.!?]["']?$/.test(word)) {
-    const breakElement = document.createElement('div');
-    breakElement.className = 'w-full h-2';
-    container.appendChild(breakElement);
-  }
-};
-
 interface ManifestoRsvpProps {
   words: string[];
   densities: number[];
@@ -66,6 +46,11 @@ export function ManifestoRsvp({ words, densities, currentIndex, onJumpToIndex }:
   const rsvpRef = useRef<HTMLDivElement>(null);
   const prevRef = useRef<HTMLDivElement>(null);
   const nextRef = useRef<HTMLDivElement>(null);
+  const prevProjectorRef = useRef<ContextWindowProjector | null>(null);
+  const nextProjectorRef = useRef<ContextWindowProjector | null>(null);
+
+  if (prevProjectorRef.current == null) prevProjectorRef.current = new ContextWindowProjector();
+  if (nextProjectorRef.current == null) nextProjectorRef.current = new ContextWindowProjector();
 
   const indexRef = useRef(currentIndex);
   const accumulatorRef = useRef(0);
@@ -110,33 +95,30 @@ export function ManifestoRsvp({ words, densities, currentIndex, onJumpToIndex }:
 
     const startPrev = Math.max(0, idx - 150);
     const endPrev = frame.startIndex;
-    const prevWords = words.slice(startPrev, endPrev);
 
     if (prevRef.current) {
       const prevContainer = prevRef.current;
-      prevContainer.replaceChildren();
-      prevWords.forEach((w, i) => {
-        const actualIndex = startPrev + i;
-        const density = densities[actualIndex] ?? 1.0;
-        const colorClass = getDensityColor(density);
-        const isCurrent = actualIndex === idx;
-        appendContextWord(prevContainer, displayPlugin, w, actualIndex, colorClass, isCurrent);
+      prevProjectorRef.current?.project(prevContainer, words, startPrev, endPrev, {
+        getColorClass: (actualIndex) => getDensityColor(densities[actualIndex] ?? 1.0),
+        createWordModel: (word) => createContextWordModel(displayPlugin, word),
+        getWordClassName: (_word, colorClass) => `word-span inline-block mr-1.5 mb-1 transition-all duration-200 cursor-pointer ${colorClass} opacity-60 hover:opacity-100 hover:text-white`,
+        isParagraphEnd: (word) => /[.!?]["']?$/.test(word),
+        modelKey: displayPlugin.id,
       });
       prevContainer.scrollTop = prevContainer.scrollHeight;
     }
 
     const startNext = frameEnd;
     const endNext = Math.min(words.length, frameEnd + 150);
-    const nextWords = words.slice(startNext, endNext);
 
     if (nextRef.current) {
       const nextContainer = nextRef.current;
-      nextContainer.replaceChildren();
-      nextWords.forEach((w, i) => {
-        const actualIndex = startNext + i;
-        const density = densities[actualIndex] ?? 1.0;
-        const colorClass = getDensityColor(density);
-        appendContextWord(nextContainer, displayPlugin, w, actualIndex, colorClass, false);
+      nextProjectorRef.current?.project(nextContainer, words, startNext, endNext, {
+        getColorClass: (actualIndex) => getDensityColor(densities[actualIndex] ?? 1.0),
+        createWordModel: (word) => createContextWordModel(displayPlugin, word),
+        getWordClassName: (_word, colorClass) => `word-span inline-block mr-1.5 mb-1 transition-all duration-200 cursor-pointer ${colorClass} opacity-60 hover:opacity-100 hover:text-white`,
+        isParagraphEnd: (word) => /[.!?]["']?$/.test(word),
+        modelKey: displayPlugin.id,
       });
       nextContainer.scrollTop = 0;
     }

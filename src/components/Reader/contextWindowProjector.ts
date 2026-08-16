@@ -2,6 +2,16 @@ import { appendDisplayWordModel, getVelocireaderORPIndex, type DisplayWordModel 
 
 const CONTEXT_WORD_BASE_CLASS = 'word-span inline-block mr-1.5 mb-1 cursor-pointer';
 
+export type ContextWordModelFactory = (word: string) => DisplayWordModel;
+
+export interface ContextWindowProjectorOptions {
+    getColorClass: (index: number) => string;
+    createWordModel?: ContextWordModelFactory;
+    getWordClassName?: (word: string, colorClass: string) => string;
+    isParagraphEnd?: (word: string) => boolean;
+    modelKey?: string;
+}
+
 interface ContextWordEntry {
     word: string;
     wordElement: HTMLSpanElement;
@@ -15,7 +25,7 @@ export interface ContextWindowProjectionResult {
     rebuilt: boolean;
 }
 
-const createContextWordModel = (word: string): DisplayWordModel => {
+export const createVelocireaderContextWordModel: ContextWordModelFactory = (word: string): DisplayWordModel => {
     const orp = getVelocireaderORPIndex(word);
     const runs: DisplayWordModel['runs'] = [];
 
@@ -35,14 +45,16 @@ const createContextWordModel = (word: string): DisplayWordModel => {
 const createContextWordEntry = (
     word: string,
     actualIndex: number,
-    colorClass: string,
+    options: ContextWindowProjectorOptions,
 ): ContextWordEntry => {
+    const colorClass = options.getColorClass(actualIndex);
     const wordElement = document.createElement('span');
-    wordElement.className = `${CONTEXT_WORD_BASE_CLASS} ${colorClass}`;
+    wordElement.className = options.getWordClassName?.(word, colorClass)
+        ?? `${CONTEXT_WORD_BASE_CLASS} ${colorClass}`;
     wordElement.dataset.index = String(actualIndex);
-    appendDisplayWordModel(wordElement, createContextWordModel(word));
+    appendDisplayWordModel(wordElement, (options.createWordModel ?? createVelocireaderContextWordModel)(word));
 
-    const breakElement = /[.!?]$/.test(word)
+    const breakElement = (options.isParagraphEnd?.(word) ?? /[.!?]$/.test(word))
         ? document.createElement('div')
         : null;
     if (breakElement) {
@@ -52,17 +64,19 @@ const createContextWordEntry = (
     return { word, wordElement, breakElement };
 };
 
-const countCreatedNodes = (word: string): number => (
-    1 + word.length + (/[.!?]$/.test(word) ? 1 : 0)
+const countEntryNodes = (entry: ContextWordEntry): number => (
+    1 + entry.word.length + (entry.breakElement ? 1 : 0)
 );
 
 export class ContextWindowProjector {
     private readonly entries = new Map<number, ContextWordEntry>();
     private sourceWords: readonly string[] | null = null;
+    private modelKey: string | undefined;
 
     reset(container?: HTMLElement | null): void {
         this.entries.clear();
         this.sourceWords = null;
+        this.modelKey = undefined;
         if (container) container.replaceChildren();
     }
 
@@ -71,11 +85,11 @@ export class ContextWindowProjector {
         words: readonly string[],
         start: number,
         end: number,
-        getColorClass: (index: number) => string,
+        options: ContextWindowProjectorOptions,
     ): ContextWindowProjectionResult {
         const safeStart = Math.max(0, Math.min(words.length, start));
         const safeEnd = Math.max(safeStart, Math.min(words.length, end));
-        const sourceChanged = this.sourceWords !== words;
+        const sourceChanged = this.sourceWords !== words || this.modelKey !== options.modelKey;
         const hasDetachedEntries = [...this.entries.values()].some((entry) => (
             entry.wordElement.parentElement !== container
             || (entry.breakElement !== null && entry.breakElement.parentElement !== container)
@@ -95,7 +109,7 @@ export class ContextWindowProjector {
                 entry.wordElement.remove();
                 entry.breakElement?.remove();
                 this.entries.delete(index);
-                removedNodes += countCreatedNodes(entry.word);
+                removedNodes += countEntryNodes(entry);
             }
         }
 
@@ -103,7 +117,7 @@ export class ContextWindowProjector {
             const word = words[index] || '';
             const existingEntry = this.entries.get(index);
             if (existingEntry && existingEntry.word === word) {
-                this.updateColorClass(existingEntry.wordElement, getColorClass(index));
+                this.updateColorClass(existingEntry.wordElement, options, index, word);
                 reusedWords++;
                 continue;
             }
@@ -112,10 +126,10 @@ export class ContextWindowProjector {
                 existingEntry.wordElement.remove();
                 existingEntry.breakElement?.remove();
                 this.entries.delete(index);
-                removedNodes += countCreatedNodes(existingEntry.word);
+                removedNodes += countEntryNodes(existingEntry);
             }
 
-            const entry = createContextWordEntry(word, index, getColorClass(index));
+            const entry = createContextWordEntry(word, index, options);
             const nextEntry = [...this.entries.entries()]
                 .filter(([entryIndex]) => entryIndex > index)
                 .sort(([left], [right]) => left - right)[0]?.[1];
@@ -127,15 +141,23 @@ export class ContextWindowProjector {
                 if (entry.breakElement) container.appendChild(entry.breakElement);
             }
             this.entries.set(index, entry);
-            createdNodes += countCreatedNodes(word);
+            createdNodes += countEntryNodes(entry);
         }
 
         this.sourceWords = words;
+        this.modelKey = options.modelKey;
 
         return { createdNodes, removedNodes, reusedWords, rebuilt };
     }
 
-    private updateColorClass(wordElement: HTMLSpanElement, colorClass: string): void {
-        wordElement.className = `${CONTEXT_WORD_BASE_CLASS} ${colorClass}`;
+    private updateColorClass(
+        wordElement: HTMLSpanElement,
+        options: ContextWindowProjectorOptions,
+        index: number,
+        word: string,
+    ): void {
+        const colorClass = options.getColorClass(index);
+        wordElement.className = options.getWordClassName?.(word, colorClass)
+            ?? `${CONTEXT_WORD_BASE_CLASS} ${colorClass}`;
     }
 }

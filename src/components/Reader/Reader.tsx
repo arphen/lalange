@@ -568,7 +568,10 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                     words,
                     start,
                     end,
-                    (actualIndex) => getDensityColor(densitiesRef.current[actualIndex] || 1.0),
+                    {
+                        getColorClass: (actualIndex) => getDensityColor(densitiesRef.current[actualIndex] || 1.0),
+                        modelKey: 'velocireader',
+                    },
                 );
                 if (result.rebuilt) {
                     readerPerformanceCounters.record('riverRebuilds');
@@ -592,7 +595,10 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                     words,
                     start,
                     end,
-                    (actualIndex) => getDensityColor(densitiesRef.current[actualIndex] || 1.0),
+                    {
+                        getColorClass: (actualIndex) => getDensityColor(densitiesRef.current[actualIndex] || 1.0),
+                        modelKey: 'velocireader',
+                    },
                 );
                 if (result.rebuilt) {
                     readerPerformanceCounters.record('riverRebuilds');
