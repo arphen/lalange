@@ -663,7 +663,9 @@ describe('Reader Component', () => {
         });
 
         expect(rsvpContainer).toHaveTextContent('this');
-        expect(screen.getByText(/\d+% through book/i)).toBeInTheDocument();
+        await waitFor(() => {
+            expect(screen.getByText(/\d+% through book/i)).toBeInTheDocument();
+        });
 
         fireEvent.touchStart(touchSurface, {
             touches: [{ identifier: 1, clientX: 100, clientY: 64 }],
