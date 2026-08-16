@@ -75,6 +75,7 @@ vi.mock('../../core/tts', () => ({
 
 vi.mock('../../core/tts/player', () => ({
     ttsPlayer: {
+        dispose: vi.fn(),
         stop: vi.fn(),
         clearQueue: vi.fn(),
         getQueueSize: vi.fn(() => 0),
@@ -374,6 +375,14 @@ describe('TTSPlayer voice changes', () => {
         expect(ttsPlayer.stop).toHaveBeenCalled();
         expect(ttsPlayer.clearQueue).toHaveBeenCalled();
         expect(mocks.setGenerating).toHaveBeenCalledWith(false);
+    });
+
+    it('disposes the audio player when unmounted', () => {
+        const { unmount } = render(<TTSPlayer words={['Hello', 'world.']} currentWordIndex={0} />);
+
+        unmount();
+
+        expect(ttsPlayer.dispose).toHaveBeenCalledOnce();
     });
 
     it('keeps replacement generation state when an aborted generator finishes', async () => {

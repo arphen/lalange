@@ -327,8 +327,7 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
                 abortControllerRef.current.abort();
             }
             isGeneratingRef.current = false;
-            ttsPlayer.stop();
-            ttsPlayer.clearQueue();
+            ttsPlayer.dispose();
         };
     }, []);
     
