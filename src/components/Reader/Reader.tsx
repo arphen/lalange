@@ -1747,6 +1747,14 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
     }, [showTTSPlayer, isPlaying, setIsPlaying]);
 
     useEffect(() => {
+        if (ttsPlaybackActive) {
+            readerSessionController.dispatch({ type: 'claim-transport', transport: 'tts' });
+        } else if (readerSessionSnapshot.transport === 'tts') {
+            readerSessionController.dispatch({ type: 'release-transport', transport: 'tts' });
+        }
+    }, [readerSessionController, readerSessionSnapshot.transport, ttsPlaybackActive]);
+
+    useEffect(() => {
         const wasActive = wasTTSPlaybackActiveRef.current;
         wasTTSPlaybackActiveRef.current = ttsPlaybackActive;
 
