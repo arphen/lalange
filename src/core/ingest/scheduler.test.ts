@@ -10,7 +10,8 @@ import { generateUnifiedCompletion } from '../ai/service';
 // Mocks
 vi.mock('../store/settings', () => ({
     useSettingsStore: {
-        getState: vi.fn()
+        getState: vi.fn(),
+        subscribe: vi.fn(() => vi.fn())
     }
 }));
 
@@ -44,7 +45,6 @@ describe('IngestionScheduler', () => {
 
     beforeEach(() => {
         vi.clearAllMocks();
-        scheduler = new IngestionScheduler();
 
         // Setup default store mocks
         (useSettingsStore.getState as any).mockReturnValue({
@@ -55,6 +55,7 @@ describe('IngestionScheduler', () => {
             enableJunkRemoval: false,
             aiEnabled: true
         });
+        scheduler = new IngestionScheduler();
 
         (useAIStore.getState as any).mockReturnValue({
             lifecycleState: 'ready',
@@ -102,6 +103,29 @@ describe('IngestionScheduler', () => {
             };
         });
         (generateUnifiedCompletion as any).mockResolvedValue({ response: 'Test Summary' });
+    });
+
+    it('disposes its settings subscription and rejects work after disposal', () => {
+        const unsubscribe = vi.fn();
+        (useSettingsStore.subscribe as any).mockReturnValueOnce(unsubscribe);
+        const disposableScheduler = new IngestionScheduler();
+        const processNext = vi.spyOn(disposableScheduler as any, 'processNext');
+
+        disposableScheduler.dispose();
+        disposableScheduler.dispose();
+
+        expect(unsubscribe).toHaveBeenCalledOnce();
+        disposableScheduler.addTask({
+            id: 'disposed-task',
+            bookId: 'book1',
+            chapterId: 'chapter1',
+            subchapterIndex: 0,
+            startWordIndex: 0,
+            endWordIndex: 10,
+            type: 'DENSITY',
+            text: 'some text'
+        });
+        expect(processNext).not.toHaveBeenCalled();
     });
 
     it('should add tasks and process them', async () => {

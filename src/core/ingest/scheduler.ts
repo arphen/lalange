@@ -63,15 +63,19 @@ export class IngestionScheduler {
     private previousAiEnabled: boolean = true;
     private previousSummariesEnabled: boolean = false;
     private crashPauseLogged = false;
+    private settingsUnsubscribe: (() => void) | null = null;
+    private disposed = false;
 
     constructor() {
         // Subscribe to aiEnabled changes to resume processing when re-enabled
         // Guard for test environment where subscribe may not be available
         if (typeof useSettingsStore.subscribe === 'function') {
             // Track previous state to only trigger on false→true transitions
-            this.previousAiEnabled = useSettingsStore.getState().aiEnabled ?? true;
-            this.previousSummariesEnabled = useSettingsStore.getState().summariesEnabled ?? false;
-            useSettingsStore.subscribe((state) => {
+            const settings = useSettingsStore.getState();
+            this.previousAiEnabled = settings?.aiEnabled ?? true;
+            this.previousSummariesEnabled = settings?.summariesEnabled ?? false;
+            this.settingsUnsubscribe = useSettingsStore.subscribe((state) => {
+                if (this.disposed) return;
                 const wasDisabled = !this.previousAiEnabled;
                 const isNowEnabled = state.aiEnabled;
                 const summariesWereDisabled = !this.previousSummariesEnabled;
@@ -96,7 +100,18 @@ export class IngestionScheduler {
         }
     }
 
+    public dispose() {
+        if (this.disposed) return;
+        this.disposed = true;
+        this.settingsUnsubscribe?.();
+        this.settingsUnsubscribe = null;
+        this.activeTaskAbortController?.abort();
+        this.activeTaskAbortController = null;
+        this.activeTask = null;
+    }
+
     public setCursor(bookId: string, chapterId: string, wordIndex: number, globalWordIndex?: number) {
+        if (this.disposed) return;
         this.currentBookId = bookId;
         this.currentChapterId = chapterId;
         this.currentWordIndex = wordIndex;
@@ -114,6 +129,7 @@ export class IngestionScheduler {
     }
 
     public removeTasksForBook(bookId: string) {
+        if (this.disposed) return;
         if (this.activeTask?.bookId === bookId) {
             this.activeTaskAbortController?.abort();
         }
@@ -125,6 +141,7 @@ export class IngestionScheduler {
     }
 
     public addTask(task: Omit<IngestionTask, 'priority' | 'status'>, initialStatus: 'pending' | 'dormant' = 'pending') {
+        if (this.disposed) return;
         // Check if task already exists
         const exists = this.tasks.find(t => 
             t.bookId === task.bookId && 
@@ -155,6 +172,7 @@ export class IngestionScheduler {
     }
 
     public addGlobalSummaryTask(task: Omit<GlobalSummaryTask, 'priority' | 'status' | 'type'>, initialStatus: 'pending' | 'dormant' = 'pending') {
+        if (this.disposed) return;
         // Check if task already exists
         const exists = this.globalSummaryTasks.find(t => 
             t.bookId === task.bookId && 
@@ -364,6 +382,7 @@ export class IngestionScheduler {
     }
 
     private async processNext() {
+        if (this.disposed) return;
         if (this.isRunning) {
             console.log("[Scheduler] processNext called but already running.");
             return;
@@ -416,7 +435,7 @@ export class IngestionScheduler {
                 nextGlobalSummary.status = 'failed';
             } finally {
                 this.isRunning = false;
-                this.processNext();
+                if (!this.disposed) this.processNext();
             }
             return;
         }
@@ -460,7 +479,7 @@ export class IngestionScheduler {
             this.activeTask = null;
             this.activeTaskAbortController = null;
             this.isRunning = false;
-            this.processNext(); // Loop
+            if (!this.disposed) this.processNext(); // Loop
         }
     }
 
