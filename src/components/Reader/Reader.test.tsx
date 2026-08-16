@@ -165,6 +165,27 @@ describe('Reader Component', () => {
         expect(rsvpContainer).toHaveTextContent('Hello');
     });
 
+    it('renders markup-like book text as text in the center and context rivers', async () => {
+        const originalContent = mockChapter1.content;
+        const originalWordIndex = mockReadingState.currentWordIndex;
+        mockChapter1.content = ['<strong>literal</strong>', 'next', 'word'];
+        mockReadingState.currentWordIndex = 1;
+
+        try {
+            const { container } = render(<Reader book={mockBook} />);
+
+            await waitFor(() => {
+                expect(screen.getByTestId('rsvp-container')).toHaveTextContent('next');
+            });
+
+            expect(container.querySelector('strong')).toBeNull();
+            expect(screen.getByTestId('reader-context-top')).toHaveTextContent('<strong>literal</strong>');
+        } finally {
+            mockChapter1.content = originalContent;
+            mockReadingState.currentWordIndex = originalWordIndex;
+        }
+    });
+
     it('shows a linked PDF note without adding note text to the body cursor', async () => {
         mockChapter1.notes = [{
             id: 'chapter-1-r1-n0',

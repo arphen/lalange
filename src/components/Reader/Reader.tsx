@@ -2,7 +2,7 @@ import React, { useEffect, useLayoutEffect, useRef, useState, useCallback, useMe
 import { clsx } from 'clsx';
 import { ArrowLeft, BookOpenText, Focus, Gauge, Headphones, List, Moon, Play, Share2, Sun, X } from 'lucide-react';
 import { type BookDocType, type ChapterDocType, type ReadingStateDocType, type GlobalSummaryType, type ImageDocType, initDB } from '../../core/sync/db';
-import { getDisplayPlugin, projectDisplayFrame, renderDisplayFrame, type DisplayPlugin, getVelocireaderORPIndex } from '../../core/rsvp/display';
+import { appendDisplayWordModel, getDisplayPlugin, projectDisplayFrame, type DisplayPlugin, getVelocireaderORPIndex, type DisplayWordModel } from '../../core/rsvp/display';
 import { getFrameTargetInterval, getTargetInterval, isLikelyProperNoun } from '../../core/rsvp/timing';
 import { isPauseToken, isReferenceToken, splitLongWordForRSVP } from '../../core/rsvp/tokenize';
 import { planRsvpFrame, type RsvpFrame } from '../../core/rsvp/phrases/grouping';
@@ -99,6 +99,45 @@ const assertFrameDoesNotSkipProtectedIndex = (
             throw new Error(`RSVP frame skipped protected source index ${index}`);
         }
     }
+};
+
+const createReaderContextWordModel = (word: string): DisplayWordModel => {
+    const orp = getVelocireaderORPIndex(word);
+    const runs: DisplayWordModel['runs'] = [];
+
+    for (let characterIndex = 0; characterIndex < word.length; characterIndex++) {
+        const distance = Math.abs(characterIndex - orp);
+        const className = distance === 0
+            ? 'font-extrabold opacity-100'
+            : distance === 1
+                ? 'font-medium opacity-80'
+                : 'font-light opacity-60';
+        runs.push({ text: word[characterIndex], className });
+    }
+
+    return { runs };
+};
+
+const appendReaderContextWord = (
+    container: HTMLElement,
+    word: string,
+    actualIndex: number,
+    colorClass: string,
+): number => {
+    const wordSpan = document.createElement('span');
+    wordSpan.className = `word-span inline-block mr-1.5 mb-1 cursor-pointer ${colorClass}`;
+    wordSpan.dataset.index = String(actualIndex);
+    appendDisplayWordModel(wordSpan, createReaderContextWordModel(word));
+    container.appendChild(wordSpan);
+
+    const isEnd = /[.!?]$/.test(word);
+    if (isEnd) {
+        const breakElement = document.createElement('div');
+        breakElement.className = 'w-full h-2';
+        container.appendChild(breakElement);
+    }
+
+    return 1 + word.length + (isEnd ? 1 : 0);
 };
 
 export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
@@ -490,12 +529,13 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                 readerPerformanceCounters.record('centerProjections');
 
                 if (referenceWord) {
-                    rsvpRef.current.innerHTML = '<span class="uppercase tracking-[0.35em] text-sm md:text-base font-semibold text-gray-400">REF</span>';
+                    rsvpRef.current.replaceChildren();
+                    const referenceLabel = document.createElement('span');
+                    referenceLabel.className = 'uppercase tracking-[0.35em] text-sm md:text-base font-semibold text-gray-400';
+                    referenceLabel.textContent = 'REF';
+                    rsvpRef.current.appendChild(referenceLabel);
                 } else {
-                    const projected = projectDisplayFrame(rsvpRef.current, plugin, frameTokens);
-                    if (!projected) {
-                        rsvpRef.current.innerHTML = renderDisplayFrame(plugin, frameTokens);
-                    }
+                    projectDisplayFrame(rsvpRef.current, plugin, frameTokens);
                 }
                 
                 // Reset common style properties potentially set by other plugins
@@ -528,45 +568,22 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
             const start = Math.max(contextHistoryStartRef.current, idx - 150);
             const end = frame.startIndex;
             const prevWords = words.slice(start, end);
+            const prevContainer = prevContainerRef.current;
+            prevContainer.replaceChildren();
             let createdNodes = 0;
-            const html = prevWords.map((w, i) => {
+            prevWords.forEach((w, i) => {
                 const actualIndex = start + i;
-                
-                // Gradient Bolding Logic
-                const orp = getVelocireaderORPIndex(w);
-                let innerHtml = '';
-                for (let j = 0; j < w.length; j++) {
-                    const d = Math.abs(j - orp);
-                    let c = 'font-light opacity-60';
-                    if (d === 0) c = 'font-extrabold opacity-100';
-                    // Neighbors: Medium weight (less than bold), slightly reduced opacity
-                    else if (d === 1) c = 'font-medium opacity-80';
-                    innerHtml += `<span class="${c}">${w[j]}</span>`;
-                }
-                
-                // Add line break after punctuation to simulate structure
                 const isEnd = /[.!?]$/.test(w);
-                const breakHtml = isEnd ? '<div class="w-full h-2"></div>' : '';
                 createdNodes += 1 + w.length + (isEnd ? 1 : 0);
 
                 const density = densitiesRef.current[actualIndex] || 1.0;
                 const colorClass = getDensityColor(density);
-
-                return `
-                    <span 
-                        class="word-span inline-block mr-1.5 mb-1 cursor-pointer ${colorClass}"
-                        data-index="${actualIndex}"
-                    >
-                        ${innerHtml}
-                    </span>
-                    ${breakHtml}
-                `;
-            }).join('');
-            prevContainerRef.current.innerHTML = html;
+                appendReaderContextWord(prevContainer, w, actualIndex, colorClass);
+            });
             readerPerformanceCounters.record('riverRebuilds');
             readerPerformanceCounters.record('riverNodesCreated', createdNodes);
             // Scroll to bottom
-            prevContainerRef.current.scrollTop = prevContainerRef.current.scrollHeight;
+            prevContainer.scrollTop = prevContainer.scrollHeight;
         }
 
         // Render Next Context (Next ~150 words)
@@ -575,43 +592,21 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
             const start = frameEnd;
             const end = Math.min(words.length, frameEnd + 150);
             const nextWords = words.slice(start, end);
+            const nextContainer = nextContainerRef.current;
+            nextContainer.replaceChildren();
             let createdNodes = 0;
-            const html = nextWords.map((w, i) => {
+            nextWords.forEach((w, i) => {
                 const actualIndex = start + i;
-                
-                // Gradient Bolding Logic
-                const orp = getVelocireaderORPIndex(w);
-                let innerHtml = '';
-                for (let j = 0; j < w.length; j++) {
-                    const d = Math.abs(j - orp);
-                    let c = 'font-light opacity-60';
-                    if (d === 0) c = 'font-extrabold opacity-100';
-                    // Neighbors: Medium weight (less than bold), slightly reduced opacity
-                    else if (d === 1) c = 'font-medium opacity-80';
-                    innerHtml += `<span class="${c}">${w[j]}</span>`;
-                }
-                
                 const isEnd = /[.!?]$/.test(w);
-                const breakHtml = isEnd ? '<div class="w-full h-2"></div>' : '';
                 createdNodes += 1 + w.length + (isEnd ? 1 : 0);
 
                 const density = densitiesRef.current[actualIndex] || 1.0;
                 const colorClass = getDensityColor(density);
-
-                return `
-                    <span 
-                        class="word-span inline-block mr-1.5 mb-1 cursor-pointer ${colorClass}"
-                        data-index="${actualIndex}"
-                    >
-                        ${innerHtml}
-                    </span>
-                    ${breakHtml}
-                `;
-            }).join('');
-            nextContainerRef.current.innerHTML = html;
+                appendReaderContextWord(nextContainer, w, actualIndex, colorClass);
+            });
             readerPerformanceCounters.record('riverRebuilds');
             readerPerformanceCounters.record('riverNodesCreated', createdNodes);
-            nextContainerRef.current.scrollTop = 0;
+            nextContainer.scrollTop = 0;
         }
     }, [commonPhraseRankLimit, riverTopEnabled, riverBottomEnabled, applyLensScaleToElement]);
 
@@ -623,13 +618,13 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
     // Clear river content when disabled
     useEffect(() => {
         if (!riverTopEnabled && prevContainerRef.current) {
-            prevContainerRef.current.innerHTML = '';
+            prevContainerRef.current.replaceChildren();
         }
     }, [riverTopEnabled]);
 
     useEffect(() => {
         if (!riverBottomEnabled && nextContainerRef.current) {
-            nextContainerRef.current.innerHTML = '';
+            nextContainerRef.current.replaceChildren();
         }
     }, [riverBottomEnabled]);
 
@@ -830,7 +825,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
 
         // Clear RSVP display
         if (rsvpRef.current) {
-            rsvpRef.current.innerHTML = '';
+            rsvpRef.current.replaceChildren();
         }
         
         let count = 3;
