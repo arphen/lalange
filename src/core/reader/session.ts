@@ -49,6 +49,7 @@ export const reduceReaderSession = (
     switch (command.type) {
         case 'play':
             if (snapshot.mode === 'chapter-transition') return snapshot;
+            if (snapshot.transport === command.transport && snapshot.playing) return snapshot;
             return {
                 ...snapshot,
                 transport: command.transport,
@@ -57,6 +58,7 @@ export const reduceReaderSession = (
         case 'pause':
             return snapshot.playing ? { ...snapshot, playing: false } : snapshot;
         case 'claim-transport':
+            if (snapshot.transport === command.transport && !snapshot.playing) return snapshot;
             return {
                 ...snapshot,
                 transport: command.transport,
@@ -75,6 +77,7 @@ export const reduceReaderSession = (
                 playing: false,
             };
         case 'set-mode':
+            if (snapshot.mode === command.mode) return snapshot;
             return {
                 ...snapshot,
                 mode: command.mode,
