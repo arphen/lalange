@@ -48,7 +48,9 @@ function NotFound() {
 }
 
 function App() {
-  const { theme, setTheme, navSidebarCollapsed } = useSettingsStore()
+  const theme = useSettingsStore((state) => state.theme);
+  const setTheme = useSettingsStore((state) => state.setTheme);
+  const navSidebarCollapsed = useSettingsStore((state) => state.navSidebarCollapsed);
   const aiEnabled = useSettingsStore((state) => state.aiEnabled);
   const showReaderAIStatus = useAIStore((state) => (
     aiEnabled && !state.isSetupOpen && (state.isLoading || Boolean(state.activity))

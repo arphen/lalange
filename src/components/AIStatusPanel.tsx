@@ -1,5 +1,6 @@
 import React from 'react';
 import { clsx } from 'clsx';
+import { useShallow } from 'zustand/react/shallow';
 import { useAIStore, type ModelLifecycleState } from '../core/store/ai';
 
 /**
@@ -84,7 +85,21 @@ export const AIStatusPanel: React.FC<AIStatusPanelProps> = ({
         currentTask,
         summaryTiming,
         getSummaryProgress,
-    } = useAIStore();
+    } = useAIStore(useShallow((state) => ({
+        lifecycleState: state.lifecycleState,
+        error: state.error,
+        activeModelName: state.activeModelName,
+        progress: state.progress,
+        progressValue: state.progressValue,
+        tps: state.tps,
+        activity: state.activity,
+        modelStats: state.modelStats,
+        isPanelExpanded: state.isPanelExpanded,
+        togglePanelExpanded: state.togglePanelExpanded,
+        currentTask: state.currentTask,
+        summaryTiming: state.summaryTiming,
+        getSummaryProgress: state.getSummaryProgress,
+    })));
 
     const status = getStatusIndicator(lifecycleState, error);
     const isLoading = lifecycleState === 'downloading' || lifecycleState === 'loading';

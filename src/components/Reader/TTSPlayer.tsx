@@ -141,8 +141,6 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
         voice,
         backendPreference,
         bufferAhead,
-        currentWordIndex: ttsWordIndex,
-        currentSentence,
         currentTime,
         setVolume,
         setSpeed,
@@ -159,8 +157,6 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
         voice: state.voice,
         backendPreference: state.backendPreference,
         bufferAhead: state.bufferAhead,
-        currentWordIndex: state.currentWordIndex,
-        currentSentence: state.currentSentence,
         currentTime: state.currentTime,
         duration: state.duration,
         setVolume: state.setVolume,
@@ -223,6 +219,8 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
         if (!shouldPersist) return;
         lastHandoffPersistedAtRef.current = now;
 
+        const { currentSentence, currentWordIndex: ttsWordIndex } = useTTSStore.getState();
+
         const position = {
             bookId,
             chapterId,
@@ -238,12 +236,10 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
     }, [
         bookId,
         chapterId,
-        currentSentence,
         currentTime,
         effectiveVoice,
         playbackState,
         speed,
-        ttsWordIndex,
     ]);
     
     // Full reset when book or chapter changes - this MUST come before words effect

@@ -30,14 +30,19 @@ vi.mock('./components/Exchange/ExchangePage', () => ({
 
 // Mock stores
 vi.mock('./core/store/settings', () => ({
-    useSettingsStore: () => ({ 
-        theme: mockTheme,
-        editorModel: 'tiny',
-        setTheme: mockSetTheme,
-        setEditorModel: vi.fn(),
-        setLibrarianModelTier: vi.fn(),
-        setSummarizerModel: vi.fn()
-    })
+    useSettingsStore: (selector?: (state: Record<string, unknown>) => unknown) => {
+        const state = {
+            theme: mockTheme,
+            navSidebarCollapsed: false,
+            aiEnabled: false,
+            editorModel: 'tiny',
+            setTheme: mockSetTheme,
+            setEditorModel: vi.fn(),
+            setLibrarianModelTier: vi.fn(),
+            setSummarizerModel: vi.fn(),
+        };
+        return selector ? selector(state) : state;
+    }
 }));
 
 vi.mock('./core/store/ai', () => ({
