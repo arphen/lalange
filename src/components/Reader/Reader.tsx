@@ -2,7 +2,7 @@ import React, { useEffect, useLayoutEffect, useRef, useState, useCallback, useMe
 import { clsx } from 'clsx';
 import { ArrowLeft, BookOpenText, Focus, Gauge, Headphones, List, Moon, Play, Share2, Sun, X } from 'lucide-react';
 import { type BookDocType, type ChapterDocType, type ReadingStateDocType, type GlobalSummaryType, type ImageDocType, initDB } from '../../core/sync/db';
-import { appendDisplayWordModel, getDisplayPlugin, projectDisplayFrame, type DisplayPlugin, getVelocireaderORPIndex, type DisplayWordModel } from '../../core/rsvp/display';
+import { getDisplayPlugin, projectDisplayFrame, type DisplayPlugin } from '../../core/rsvp/display';
 import { getFrameTargetInterval, getTargetInterval, isLikelyProperNoun } from '../../core/rsvp/timing';
 import { isPauseToken, isReferenceToken, splitLongWordForRSVP } from '../../core/rsvp/tokenize';
 import { planRsvpFrame, type RsvpFrame } from '../../core/rsvp/phrases/grouping';
@@ -28,6 +28,7 @@ import {
 } from './readerNavigation';
 import { buildImageCueAssignments, findImageBreakAfterChapter, type ImageBreakCue } from './imageCue';
 import { readerPerformanceCounters } from './readerPerformance';
+import { ContextWindowProjector } from './contextWindowProjector';
 import { createReaderSessionControllerForBook } from '../../core/reader/controller';
 
 import { scheduler } from '../../core/ingest/scheduler';
@@ -100,45 +101,6 @@ const assertFrameDoesNotSkipProtectedIndex = (
             throw new Error(`RSVP frame skipped protected source index ${index}`);
         }
     }
-};
-
-const createReaderContextWordModel = (word: string): DisplayWordModel => {
-    const orp = getVelocireaderORPIndex(word);
-    const runs: DisplayWordModel['runs'] = [];
-
-    for (let characterIndex = 0; characterIndex < word.length; characterIndex++) {
-        const distance = Math.abs(characterIndex - orp);
-        const className = distance === 0
-            ? 'font-extrabold opacity-100'
-            : distance === 1
-                ? 'font-medium opacity-80'
-                : 'font-light opacity-60';
-        runs.push({ text: word[characterIndex], className });
-    }
-
-    return { runs };
-};
-
-const appendReaderContextWord = (
-    container: HTMLElement,
-    word: string,
-    actualIndex: number,
-    colorClass: string,
-): number => {
-    const wordSpan = document.createElement('span');
-    wordSpan.className = `word-span inline-block mr-1.5 mb-1 cursor-pointer ${colorClass}`;
-    wordSpan.dataset.index = String(actualIndex);
-    appendDisplayWordModel(wordSpan, createReaderContextWordModel(word));
-    container.appendChild(wordSpan);
-
-    const isEnd = /[.!?]$/.test(word);
-    if (isEnd) {
-        const breakElement = document.createElement('div');
-        breakElement.className = 'w-full h-2';
-        container.appendChild(breakElement);
-    }
-
-    return 1 + word.length + (isEnd ? 1 : 0);
 };
 
 export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
@@ -280,9 +242,18 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
 
     const prevContainerRef = useRef<HTMLDivElement>(null);
     const nextContainerRef = useRef<HTMLDivElement>(null);
+    const previousContextProjectorRef = useRef<ContextWindowProjector | null>(null);
+    const nextContextProjectorRef = useRef<ContextWindowProjector | null>(null);
     const rsvpRef = useRef<HTMLDivElement>(null);
     const rsvpTouchSurfaceRef = useRef<HTMLDivElement | null>(null);
     const contextHistoryStartRef = useRef(0);
+
+    if (!previousContextProjectorRef.current) {
+        previousContextProjectorRef.current = new ContextWindowProjector();
+    }
+    if (!nextContextProjectorRef.current) {
+        nextContextProjectorRef.current = new ContextWindowProjector();
+    }
     
     // Track if initial render has been done (to trigger full render once all refs are mounted)
     const initialRenderDoneRef = useRef(false);
@@ -589,21 +560,21 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
         if (renderContext && riverTopEnabled && prevContainerRef.current) {
             const start = Math.max(contextHistoryStartRef.current, idx - 150);
             const end = frame.startIndex;
-            const prevWords = words.slice(start, end);
             const prevContainer = prevContainerRef.current;
-            prevContainer.replaceChildren();
-            let createdNodes = 0;
-            prevWords.forEach((w, i) => {
-                const actualIndex = start + i;
-                const isEnd = /[.!?]$/.test(w);
-                createdNodes += 1 + w.length + (isEnd ? 1 : 0);
-
-                const density = densitiesRef.current[actualIndex] || 1.0;
-                const colorClass = getDensityColor(density);
-                appendReaderContextWord(prevContainer, w, actualIndex, colorClass);
-            });
-            readerPerformanceCounters.record('riverRebuilds');
-            readerPerformanceCounters.record('riverNodesCreated', createdNodes);
+            const projector = previousContextProjectorRef.current;
+            if (projector) {
+                const result = projector.project(
+                    prevContainer,
+                    words,
+                    start,
+                    end,
+                    (actualIndex) => getDensityColor(densitiesRef.current[actualIndex] || 1.0),
+                );
+                if (result.rebuilt) {
+                    readerPerformanceCounters.record('riverRebuilds');
+                }
+                readerPerformanceCounters.record('riverNodesCreated', result.createdNodes);
+            }
             // Scroll to bottom
             prevContainer.scrollTop = prevContainer.scrollHeight;
         }
@@ -613,21 +584,21 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
         if (renderContext && riverBottomEnabled && nextContainerRef.current) {
             const start = frameEnd;
             const end = Math.min(words.length, frameEnd + 150);
-            const nextWords = words.slice(start, end);
             const nextContainer = nextContainerRef.current;
-            nextContainer.replaceChildren();
-            let createdNodes = 0;
-            nextWords.forEach((w, i) => {
-                const actualIndex = start + i;
-                const isEnd = /[.!?]$/.test(w);
-                createdNodes += 1 + w.length + (isEnd ? 1 : 0);
-
-                const density = densitiesRef.current[actualIndex] || 1.0;
-                const colorClass = getDensityColor(density);
-                appendReaderContextWord(nextContainer, w, actualIndex, colorClass);
-            });
-            readerPerformanceCounters.record('riverRebuilds');
-            readerPerformanceCounters.record('riverNodesCreated', createdNodes);
+            const projector = nextContextProjectorRef.current;
+            if (projector) {
+                const result = projector.project(
+                    nextContainer,
+                    words,
+                    start,
+                    end,
+                    (actualIndex) => getDensityColor(densitiesRef.current[actualIndex] || 1.0),
+                );
+                if (result.rebuilt) {
+                    readerPerformanceCounters.record('riverRebuilds');
+                }
+                readerPerformanceCounters.record('riverNodesCreated', result.createdNodes);
+            }
             nextContainer.scrollTop = 0;
         }
     }, [commonPhraseRankLimit, riverTopEnabled, riverBottomEnabled, applyLensScaleToElement]);
@@ -640,13 +611,13 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
     // Clear river content when disabled
     useEffect(() => {
         if (!riverTopEnabled && prevContainerRef.current) {
-            prevContainerRef.current.replaceChildren();
+            previousContextProjectorRef.current?.reset(prevContainerRef.current);
         }
     }, [riverTopEnabled]);
 
     useEffect(() => {
         if (!riverBottomEnabled && nextContainerRef.current) {
-            nextContainerRef.current.replaceChildren();
+            nextContextProjectorRef.current?.reset(nextContainerRef.current);
         }
     }, [riverBottomEnabled]);
 
@@ -1110,8 +1081,8 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
             : `${direction} / ${targetChapter.title}`;
         const activateDestination = (activate: () => void | Promise<void>) => {
             contextHistoryStartRef.current = targetIndex;
-            if (prevContainerRef.current) prevContainerRef.current.replaceChildren();
-            if (nextContainerRef.current) nextContainerRef.current.replaceChildren();
+            previousContextProjectorRef.current?.reset(prevContainerRef.current);
+            nextContextProjectorRef.current?.reset(nextContainerRef.current);
             return activate();
         };
         const activateTarget = isSameChapter
