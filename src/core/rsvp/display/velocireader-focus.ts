@@ -8,7 +8,7 @@
  * 3. Standard Velocireader effects (Luma-weight, Vortex slant).
  */
 
-import { type DisplayPlugin, type WordSplit } from './types';
+import { type DisplayPlugin, type DisplayWordModel, type WordSplit } from './types';
 import { isPauseToken } from '../tokenize';
 import { 
     getVelocireaderORPIndex, 
@@ -17,6 +17,7 @@ import {
     getSlantAngle,
     getVelocireaderSplit
 } from './velocireader';
+import { createVelocireaderWordModel } from './velocireader';
 
 /**
  * Calculate the character width scale (85-130) based on distance from ORP.
@@ -116,6 +117,15 @@ export const getVelocireaderFocusHtml = (word: string): string => {
     return html;
 };
 
+const getVelocireaderFocusWordModel = (word: string): DisplayWordModel => (
+    createVelocireaderWordModel(word, (characterIndex, orpIndex, wordLength) => ({
+        width: getFocusCharWidth(characterIndex, orpIndex, wordLength),
+        slant: getSlantAngle(characterIndex, wordLength),
+        sizeScale: getFocusFontSizeScale(characterIndex, orpIndex, wordLength),
+        margin: getFocusMargin(characterIndex, orpIndex),
+    }))
+);
+
 export const velocireaderFocusPlugin: DisplayPlugin = {
     id: 'velocireader-focus',
     name: 'Velocireader Focus',
@@ -123,6 +133,10 @@ export const velocireaderFocusPlugin: DisplayPlugin = {
     
     renderWord(word: string): string {
         return getVelocireaderFocusHtml(word);
+    },
+
+    renderWordModel(word: string): DisplayWordModel {
+        return getVelocireaderFocusWordModel(word);
     },
     
     renderContextWord(word: string): string {

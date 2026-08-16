@@ -67,7 +67,7 @@ export function isValidPluginId(id: string): id is DisplayPluginId {
 // Re-export types and plugins for convenience
 export { type DisplayPlugin, type DisplayPluginId, type WordSplit, type RenderOptions } from './types';
 export { renderDisplayFrame } from './frame';
-export { createDisplayFrameModel, projectDisplayFrame } from './model';
+export { appendDisplayWordModel, createDisplayFrameModel, projectDisplayFrame } from './model';
 export type { DisplayFrameModel } from './model';
 export type { DisplayGlyphRun, DisplayWordModel } from './types';
 export { saccadePlugin, getSaccadeSplit, getSaccadeGradientHtml } from './saccade';
@@ -78,5 +78,7 @@ export {
     getLuminance, 
     getFontWeight, 
     getCharWidth, 
-    getSlantAngle 
+    getSlantAngle,
+    createVelocireaderWordModel,
+    getVelocireaderWordModel,
 } from './velocireader';

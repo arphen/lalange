@@ -17,7 +17,7 @@
  * Target: 600+ WPM with high comprehension and low cognitive load.
  */
 
-import { type DisplayPlugin, type WordSplit } from './types';
+import { type DisplayPlugin, type DisplayWordModel, type WordSplit } from './types';
 import { isPauseToken } from '../tokenize';
 
 /**
@@ -150,6 +150,53 @@ export const getVelocireaderHtml = (word: string): string => {
     return html;
 };
 
+interface VelocireaderCharacterStyle {
+    width: number;
+    slant: number;
+    sizeScale?: number;
+    margin?: number;
+}
+
+export const createVelocireaderWordModel = (
+    word: string,
+    getCharacterStyle: (characterIndex: number, orpIndex: number, wordLength: number) => VelocireaderCharacterStyle = (characterIndex, orpIndex, wordLength) => ({
+        width: getCharWidth(characterIndex, orpIndex, wordLength),
+        slant: getSlantAngle(characterIndex, wordLength),
+    }),
+): DisplayWordModel => {
+    if (!word) return { runs: [] };
+    if (isPauseToken(word)) {
+        return { runs: [{ text: '—', className: 'text-gray-400 font-light' }] };
+    }
+
+    const orpIndex = getVelocireaderORPIndex(word);
+    const runs = [];
+    for (let characterIndex = 0; characterIndex < word.length; characterIndex++) {
+        const style = getCharacterStyle(characterIndex, orpIndex, word.length);
+        const transforms = [`skewX(${-style.slant}deg)`, `scaleX(${style.width / 100})`];
+        if (style.sizeScale !== undefined) transforms.push(`scale(${style.sizeScale})`);
+
+        runs.push({
+            text: word[characterIndex],
+            className: characterIndex === orpIndex ? 'velocireader-orp' : undefined,
+            style: {
+                fontWeight: getFontWeight(characterIndex, orpIndex, word.length),
+                opacity: (getLuminance(characterIndex, orpIndex, word.length) / 100).toFixed(2),
+                display: 'inline-block',
+                transform: transforms.join(' '),
+                transformOrigin: 'bottom center',
+                ...(style.margin === undefined ? {} : { margin: `0 ${style.margin}px` }),
+            },
+        });
+    }
+
+    return { runs };
+};
+
+export const getVelocireaderWordModel = (word: string): DisplayWordModel => (
+    createVelocireaderWordModel(word)
+);
+
 /**
  * Split word for context display.
  * For Velocireader, we emphasize up to the ORP.
@@ -175,6 +222,10 @@ export const velocireaderPlugin: DisplayPlugin = {
     
     renderWord(word: string): string {
         return getVelocireaderHtml(word);
+    },
+
+    renderWordModel(word: string): DisplayWordModel {
+        return getVelocireaderWordModel(word);
     },
     
     renderContextWord(word: string): string {

@@ -11,7 +11,7 @@
  * 4. Standard Velocireader effects (Luma-weight).
  */
 
-import { type DisplayPlugin, type WordSplit } from './types';
+import { type DisplayPlugin, type DisplayWordModel, type WordSplit } from './types';
 import { isPauseToken } from '../tokenize';
 import { 
     getVelocireaderORPIndex, 
@@ -19,6 +19,7 @@ import {
     getFontWeight, 
     getVelocireaderSplit
 } from './velocireader';
+import { createVelocireaderWordModel } from './velocireader';
 import {
     getFocusCharWidth,
     getFocusFontSizeScale,
@@ -91,6 +92,15 @@ export const getVelocireaderFocusCenterHtml = (word: string): string => {
     return html;
 };
 
+const getVelocireaderFocusCenterWordModel = (word: string): DisplayWordModel => (
+    createVelocireaderWordModel(word, (characterIndex, orpIndex, wordLength) => ({
+        width: getFocusCharWidth(characterIndex, orpIndex, wordLength),
+        slant: getAnchoredSlantAngle(characterIndex, orpIndex),
+        sizeScale: getFocusFontSizeScale(characterIndex, orpIndex, wordLength),
+        margin: getCenterFocusMargin(characterIndex, wordLength),
+    }))
+);
+
 export const velocireaderFocusCenterPlugin: DisplayPlugin = {
     id: 'velocireader-focus-center',
     name: 'Velocireader Focus Center',
@@ -98,6 +108,10 @@ export const velocireaderFocusCenterPlugin: DisplayPlugin = {
     
     renderWord(word: string): string {
         return getVelocireaderFocusCenterHtml(word);
+    },
+
+    renderWordModel(word: string): DisplayWordModel {
+        return getVelocireaderFocusCenterWordModel(word);
     },
     
     renderContextWord(word: string): string {

@@ -28,6 +28,7 @@ export interface DisplayGlyphRun {
     text: string;
     className?: string;
     breakAfter?: boolean;
+    style?: Record<string, string | number>;
 }
 
 export interface DisplayWordModel {

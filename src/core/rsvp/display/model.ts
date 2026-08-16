@@ -16,11 +16,12 @@ export const createDisplayFrameModel = (
     };
 };
 
-const appendWordModel = (container: HTMLElement, model: DisplayWordModel): void => {
+export const appendDisplayWordModel = (container: HTMLElement, model: DisplayWordModel): void => {
     for (const run of model.runs) {
         const span = document.createElement('span');
         span.textContent = run.text;
         if (run.className) span.className = run.className;
+        if (run.style) Object.assign(span.style, run.style);
         container.appendChild(span);
         if (run.breakAfter) container.appendChild(document.createElement('br'));
     }
@@ -38,7 +39,7 @@ export const projectDisplayFrame = (
     container.replaceChildren();
 
     if (model.tokens.length <= 1) {
-        appendWordModel(container, model.tokens[0] ?? { runs: [] });
+        appendDisplayWordModel(container, model.tokens[0] ?? { runs: [] });
         return true;
     }
 
@@ -56,7 +57,7 @@ export const projectDisplayFrame = (
 
         const tokenContainer = document.createElement('span');
         tokenContainer.className = 'rsvp-frame-token';
-        appendWordModel(tokenContainer, token);
+        appendDisplayWordModel(tokenContainer, token);
         group.appendChild(tokenContainer);
     });
 

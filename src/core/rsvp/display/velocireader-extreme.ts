@@ -8,7 +8,7 @@
  * 3. Standard Velocireader effects (Luma-weight, Vortex slant).
  */
 
-import { type DisplayPlugin, type WordSplit } from './types';
+import { type DisplayPlugin, type DisplayWordModel, type WordSplit } from './types';
 import { isPauseToken } from '../tokenize';
 import { 
     getVelocireaderORPIndex, 
@@ -17,6 +17,7 @@ import {
     getSlantAngle,
     getVelocireaderSplit
 } from './velocireader';
+import { createVelocireaderWordModel } from './velocireader';
 
 /**
  * Calculate the character width scale (100-130) based on distance from ORP.
@@ -103,6 +104,18 @@ export const getVelocireaderExtremeHtml = (word: string): string => {
     return html;
 };
 
+const getVelocireaderExtremeWordModel = (word: string): DisplayWordModel => (
+    createVelocireaderWordModel(word, (characterIndex, orpIndex, wordLength) => {
+        const sizeScale = getFontSizeScale(characterIndex, orpIndex, wordLength);
+        return {
+            width: getExtremeCharWidth(characterIndex, orpIndex, wordLength),
+            slant: getSlantAngle(characterIndex, wordLength),
+            sizeScale,
+            margin: sizeScale > 1.2 ? 1 : 0,
+        };
+    })
+);
+
 export const velocireaderExtremePlugin: DisplayPlugin = {
     id: 'velocireader-extreme',
     name: 'Velocireader X',
@@ -110,6 +123,10 @@ export const velocireaderExtremePlugin: DisplayPlugin = {
     
     renderWord(word: string): string {
         return getVelocireaderExtremeHtml(word);
+    },
+
+    renderWordModel(word: string): DisplayWordModel {
+        return getVelocireaderExtremeWordModel(word);
     },
     
     renderContextWord(word: string): string {

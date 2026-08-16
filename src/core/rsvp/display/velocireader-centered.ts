@@ -5,8 +5,8 @@
  * but centers the word on the screen instead of left-aligning it.
  */
 
-import { type DisplayPlugin, type WordSplit } from './types';
-import { getVelocireaderHtml, getVelocireaderSplit } from './velocireader';
+import { type DisplayPlugin, type DisplayWordModel, type WordSplit } from './types';
+import { getVelocireaderHtml, getVelocireaderSplit, getVelocireaderWordModel } from './velocireader';
 
 export const velocireaderCenteredPlugin: DisplayPlugin = {
     id: 'velocireader-centered',
@@ -15,6 +15,10 @@ export const velocireaderCenteredPlugin: DisplayPlugin = {
     
     renderWord(word: string): string {
         return getVelocireaderHtml(word);
+    },
+
+    renderWordModel(word: string): DisplayWordModel {
+        return getVelocireaderWordModel(word);
     },
     
     renderContextWord(word: string): string {

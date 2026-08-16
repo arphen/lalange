@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { getAllDisplayPlugins } from './index';
 import { projectDisplayFrame } from './model';
 import { saccadePlugin } from './saccade';
 
@@ -20,5 +21,15 @@ describe('projectDisplayFrame', () => {
         expect(container.querySelector('.rsvp-frame-group')).not.toBeNull();
         expect(container.querySelectorAll('.rsvp-frame-token')).toHaveLength(2);
         expect(container.textContent).toBe('one two');
+    });
+
+    it('provides text-safe models for every registered plugin', () => {
+        for (const plugin of getAllDisplayPlugins()) {
+            const container = document.createElement('div');
+
+            expect(projectDisplayFrame(container, plugin, ['<safe>'])).toBe(true);
+            expect(container.textContent).toBe('<safe>');
+            expect(container.querySelector('safe')).toBeNull();
+        }
     });
 });

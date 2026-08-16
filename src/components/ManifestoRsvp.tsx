@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { getDisplayPlugin, renderDisplayFrame } from '../core/rsvp/display';
+import { appendDisplayWordModel, getDisplayPlugin, projectDisplayFrame } from '../core/rsvp/display';
 import { getFrameTargetInterval } from '../core/rsvp/timing';
 import { planRsvpFrame } from '../core/rsvp/phrases/grouping';
 import { useSettingsStore } from '../core/store/settings';
@@ -13,6 +13,37 @@ const getDensityColor = (score: number) => {
   if (score <= 1.5) return 'text-yellow-500';
   if (score <= 2.0) return 'text-orange-500';
   return 'text-white font-bold';
+};
+
+const createContextWordModel = (displayPlugin: ReturnType<typeof getDisplayPlugin>, word: string) => {
+  const { bold, light } = displayPlugin.splitWord(word);
+  return {
+    runs: [
+      ...(bold ? [{ text: bold, className: 'font-bold' }] : []),
+      ...(light ? [{ text: light, className: 'font-light opacity-80' }] : []),
+    ],
+  };
+};
+
+const appendContextWord = (
+  container: HTMLElement,
+  displayPlugin: ReturnType<typeof getDisplayPlugin>,
+  word: string,
+  actualIndex: number,
+  colorClass: string,
+  isCurrent: boolean,
+): void => {
+  const wordSpan = document.createElement('span');
+  wordSpan.className = `word-span inline-block mr-1.5 mb-1 transition-all duration-200 cursor-pointer ${colorClass} ${isCurrent ? 'opacity-100 text-white' : 'opacity-60 hover:opacity-100 hover:text-white'}`;
+  wordSpan.dataset.index = String(actualIndex);
+  appendDisplayWordModel(wordSpan, createContextWordModel(displayPlugin, word));
+  container.appendChild(wordSpan);
+
+  if (/[.!?]["']?$/.test(word)) {
+    const breakElement = document.createElement('div');
+    breakElement.className = 'w-full h-2';
+    container.appendChild(breakElement);
+  }
 };
 
 interface ManifestoRsvpProps {
@@ -61,7 +92,11 @@ export function ManifestoRsvp({ words, densities, currentIndex, onJumpToIndex }:
     const frameEnd = frame.startIndex + frame.sourceWordCount;
 
     if (rsvpRef.current) {
-      rsvpRef.current.innerHTML = frame.displayText ? renderDisplayFrame(displayPlugin, frame.tokens) : '';
+      if (frame.displayText) {
+        projectDisplayFrame(rsvpRef.current, displayPlugin, frame.tokens);
+      } else {
+        rsvpRef.current.replaceChildren();
+      }
       
       // Apply plugin container styling
       const containerStyle = displayPlugin.getContainerStyle?.(frame.displayText);
@@ -78,28 +113,16 @@ export function ManifestoRsvp({ words, densities, currentIndex, onJumpToIndex }:
     const prevWords = words.slice(startPrev, endPrev);
 
     if (prevRef.current) {
-      const html = prevWords.map((w, i) => {
+      const prevContainer = prevRef.current;
+      prevContainer.replaceChildren();
+      prevWords.forEach((w, i) => {
         const actualIndex = startPrev + i;
-        const { bold, light } = displayPlugin.splitWord(w);
-        const isEnd = /[.!?]["']?$/.test(w);
-        const breakHtml = isEnd ? '<div class="w-full h-2"></div>' : '';
         const density = densities[actualIndex] ?? 1.0;
         const colorClass = getDensityColor(density);
         const isCurrent = actualIndex === idx;
-
-        return `
-          <span
-            class="word-span inline-block mr-1.5 mb-1 transition-all duration-200 cursor-pointer ${colorClass} ${isCurrent ? 'opacity-100 text-white' : 'opacity-60 hover:opacity-100 hover:text-white'}"
-            data-index="${actualIndex}"
-          >
-            <span class="font-bold">${bold}</span><span class="font-light opacity-80">${light}</span>
-          </span>
-          ${breakHtml}
-        `;
-      }).join('');
-
-      prevRef.current.innerHTML = html;
-      prevRef.current.scrollTop = prevRef.current.scrollHeight;
+        appendContextWord(prevContainer, displayPlugin, w, actualIndex, colorClass, isCurrent);
+      });
+      prevContainer.scrollTop = prevContainer.scrollHeight;
     }
 
     const startNext = frameEnd;
@@ -107,27 +130,15 @@ export function ManifestoRsvp({ words, densities, currentIndex, onJumpToIndex }:
     const nextWords = words.slice(startNext, endNext);
 
     if (nextRef.current) {
-      const html = nextWords.map((w, i) => {
+      const nextContainer = nextRef.current;
+      nextContainer.replaceChildren();
+      nextWords.forEach((w, i) => {
         const actualIndex = startNext + i;
-        const { bold, light } = displayPlugin.splitWord(w);
-        const isEnd = /[.!?]["']?$/.test(w);
-        const breakHtml = isEnd ? '<div class="w-full h-2"></div>' : '';
         const density = densities[actualIndex] ?? 1.0;
         const colorClass = getDensityColor(density);
-
-        return `
-          <span
-            class="word-span inline-block mr-1.5 mb-1 transition-all duration-200 cursor-pointer ${colorClass} opacity-60 hover:opacity-100 hover:text-white"
-            data-index="${actualIndex}"
-          >
-            <span class="font-bold">${bold}</span><span class="font-light opacity-80">${light}</span>
-          </span>
-          ${breakHtml}
-        `;
-      }).join('');
-
-      nextRef.current.innerHTML = html;
-      nextRef.current.scrollTop = 0;
+        appendContextWord(nextContainer, displayPlugin, w, actualIndex, colorClass, false);
+      });
+      nextContainer.scrollTop = 0;
     }
   }, [commonPhraseRankLimit, densities, words, displayPlugin]);
 

@@ -1,6 +1,18 @@
-import React, { useState, useMemo } from 'react';
-import { getDisplayPlugin } from '../core/rsvp/display';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { getDisplayPlugin, projectDisplayFrame, type DisplayPlugin } from '../core/rsvp/display';
 import { useSettingsStore } from '../core/store/settings';
+
+const ProjectedWord: React.FC<{ plugin: DisplayPlugin; word: string }> = ({ plugin, word }) => {
+    const containerRef = useRef<HTMLSpanElement>(null);
+
+    useEffect(() => {
+        if (containerRef.current) {
+            projectDisplayFrame(containerRef.current, plugin, [word]);
+        }
+    }, [plugin, word]);
+
+    return <span ref={containerRef} />;
+};
 
 export const FontPlayground: React.FC = () => {
     const { displayPlugin: displayPluginId } = useSettingsStore();
@@ -58,7 +70,7 @@ export const FontPlayground: React.FC = () => {
                     <div>
                         <h3 className="text-xs text-gray-500 mb-4">LARGE DISPLAY (RSVP) - {displayPlugin.name}</h3>
                         <div className={`text-8xl ${baseColor} tracking-tight ${displayPlugin.getContainerClass()}`}>
-                            <span dangerouslySetInnerHTML={{ __html: displayPlugin.renderWord(testWord) }} />
+                            <ProjectedWord plugin={displayPlugin} word={testWord} />
                         </div>
                     </div>
 
@@ -66,7 +78,7 @@ export const FontPlayground: React.FC = () => {
                     <div>
                         <h3 className="text-xs text-gray-500 mb-4">MEDIUM DISPLAY</h3>
                         <div className={`text-4xl ${baseColor} tracking-tight ${displayPlugin.getContainerClass()}`}>
-                            <span dangerouslySetInnerHTML={{ __html: displayPlugin.renderWord(testWord) }} />
+                            <ProjectedWord plugin={displayPlugin} word={testWord} />
                         </div>
                     </div>
 
@@ -76,7 +88,7 @@ export const FontPlayground: React.FC = () => {
                         <div className="flex flex-wrap gap-4">
                             {words.map(w => (
                                 <div key={w} className={`text-2xl ${baseColor}`}>
-                                    <span dangerouslySetInnerHTML={{ __html: displayPlugin.renderWord(w) }} />
+                                    <ProjectedWord plugin={displayPlugin} word={w} />
                                 </div>
                             ))}
                         </div>
