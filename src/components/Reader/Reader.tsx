@@ -80,6 +80,23 @@ const CHAPTER_CHOOSER_HIDE_AFTER_PLAYBACK_MS = 320;
 type ChapterTransitionPhase = 'braking' | 'crossing' | 'launching';
 const TTS_RIVER_REFRESH_INTERVAL_MS = 1000;
 
+const useDeferredResourceDisposal = <Resource extends { dispose: () => void }>(resource: Resource) => {
+    const resourceLifecycleRef = useRef({ active: resource, generation: 0 });
+
+    useEffect(() => {
+        const resourceLifecycle = resourceLifecycleRef.current;
+        resourceLifecycle.active = resource;
+        const generation = ++resourceLifecycle.generation;
+        return () => {
+            queueMicrotask(() => {
+                if (resourceLifecycle.active !== resource || resourceLifecycle.generation === generation) {
+                    resource.dispose();
+                }
+            });
+        };
+    }, [resource]);
+};
+
 const buildReaderBlockedIndexes = (
     words: readonly string[],
     chapter: ChapterDocType | null,
@@ -138,8 +155,8 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
     });
     const [lensScale, setLensScale] = useState(LENS_SCALE_DEFAULT);
 
-    useEffect(() => () => readerSessionController.dispose(), [readerSessionController]);
-    useEffect(() => () => readerDataSource.dispose(), [readerDataSource]);
+    useDeferredResourceDisposal(readerSessionController);
+    useDeferredResourceDisposal(readerDataSource);
 
     useEffect(() => {
         readerPerformanceCounters.record('readerCommits');

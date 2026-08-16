@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { act, render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { StrictMode } from 'react';
 import type { MyDatabase } from '../../core/sync/db';
 import { Reader } from './Reader';
 import * as dbModule from '../../core/sync/db';
@@ -138,6 +139,19 @@ describe('Reader Component', () => {
     it('should render loading state initially', () => {
         render(<Reader book={mockBook} />);
         expect(screen.getByRole('status')).toHaveTextContent('Loading book...');
+    });
+
+    it('keeps session resources alive through StrictMode effect replay', async () => {
+        render(
+            <StrictMode>
+                <Reader book={mockBook} />
+            </StrictMode>,
+        );
+
+        await waitFor(() => {
+            expect(screen.queryByText('Loading book...')).not.toBeInTheDocument();
+        });
+        expect(screen.getByTestId('rsvp-container')).toHaveTextContent('Hello');
     });
 
     it('should let the user return to the library while loading', () => {
