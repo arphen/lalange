@@ -1,4 +1,4 @@
-import React, { useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo, useSyncExternalStore } from 'react';
 import { clsx } from 'clsx';
 import { ArrowLeft, BookOpenText, Focus, Gauge, Headphones, List, Moon, Play, Share2, Sun, X } from 'lucide-react';
 import { type BookDocType, type ChapterDocType, type ReadingStateDocType, type GlobalSummaryType, type ImageDocType, initDB } from '../../core/sync/db';
@@ -28,6 +28,7 @@ import {
 } from './readerNavigation';
 import { buildImageCueAssignments, findImageBreakAfterChapter, type ImageBreakCue } from './imageCue';
 import { readerPerformanceCounters } from './readerPerformance';
+import { createReaderSessionControllerForBook } from '../../core/reader/controller';
 
 import { scheduler } from '../../core/ingest/scheduler';
 import { processChaptersInBackground, resumeIncompleteAnalysis } from '../../core/ingest/pipeline';
@@ -141,13 +142,34 @@ const appendReaderContextWord = (
 };
 
 export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
-    const [isPlaying, setIsPlaying] = useState(false);
+    const initialChapterId = book.chapterIds[0] || '';
+    const readerSessionController = useMemo(
+        () => createReaderSessionControllerForBook(book.id, initialChapterId),
+        [book.id, initialChapterId],
+    );
+    const readerSessionSnapshot = useSyncExternalStore(
+        readerSessionController.subscribe,
+        readerSessionController.getSnapshot,
+        readerSessionController.getSnapshot,
+    );
+    const isPlaying = readerSessionSnapshot.playing;
+    const setIsPlaying = useCallback((next: boolean | ((current: boolean) => boolean)) => {
+        const current = readerSessionController.getSnapshot().playing;
+        const shouldPlay = typeof next === 'function' ? next(current) : next;
+        readerSessionController.dispatch(
+            shouldPlay
+                ? { type: 'play', transport: 'rsvp' }
+                : { type: 'pause' },
+        );
+    }, [readerSessionController]);
     const [playbackSession, setPlaybackSession] = useState(0);
     const [isCompactLandscape, setIsCompactLandscape] = useState(() => {
         if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
         return window.matchMedia(COMPACT_LANDSCAPE_MEDIA_QUERY).matches;
     });
     const [lensScale, setLensScale] = useState(LENS_SCALE_DEFAULT);
+
+    useEffect(() => () => readerSessionController.dispose(), [readerSessionController]);
 
     useEffect(() => {
         readerPerformanceCounters.record('readerCommits');
@@ -374,7 +396,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
     const openNote = useCallback((noteId: string) => {
         setIsPlaying(false);
         setOpenNoteId(noteId);
-    }, []);
+    }, [setIsPlaying]);
 
     const openedNote = useMemo(() => (
         currentChapter?.notes?.find((note) => note.id === openNoteId) || null
@@ -980,6 +1002,11 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
 
                 if (isFirstEmission) {
                     isFirstEmission = false;
+                    readerSessionController.dispatch({
+                        type: 'seek',
+                        chapterId,
+                        wordIndex: initialIndex,
+                    });
                     setCurrentChapter(chapterDoc);
                     wordsRef.current = chapterDoc.content;
                     densitiesRef.current = chapterDoc.densities || [];
@@ -1032,7 +1059,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                 }
             });
         });
-    }, [renderWord, book.id, resetDisplaySegments, updateProgressMilestone]);
+    }, [readerSessionController, renderWord, book.id, resetDisplaySegments, setIsPlaying, updateProgressMilestone]);
 
     const beginChapterTransition = useCallback((
         chapterId: string,
@@ -1083,6 +1110,11 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
         const activateTarget = isSameChapter
             ? () => activateDestination(() => {
                 indexRef.current = targetIndex;
+                readerSessionController.dispatch({
+                    type: 'seek',
+                    chapterId,
+                    wordIndex: targetIndex,
+                });
                 setCurrentWordIndex(targetIndex);
                 updateProgressMilestone(chapterId, targetIndex, false);
                 lastTriggeredBoundaryRef.current = -1;
@@ -1103,6 +1135,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
         );
     }, [
         loadChapter,
+        readerSessionController,
         renderWord,
         resetDisplaySegments,
         startTransition,
@@ -1163,13 +1196,18 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
         if (nextIndex === indexRef.current) return;
 
         indexRef.current = nextIndex;
+        readerSessionController.dispatch({
+            type: 'seek',
+            chapterId: currentChapterRef.current?.id || '',
+            wordIndex: nextIndex,
+        });
         setCurrentWordIndex(nextIndex);
         if (currentChapterRef.current) {
             updateProgressMilestone(currentChapterRef.current.id, nextIndex, true);
         }
         const displayWord = resetDisplaySegments(wordsRef.current[nextIndex] || '');
         renderWord(nextIndex, wordsRef.current, true, displayWord);
-    }, [beginChapterTransition, renderWord, resetDisplaySegments, updateProgressMilestone]);
+    }, [beginChapterTransition, readerSessionController, renderWord, resetDisplaySegments, updateProgressMilestone]);
 
     // Wheel/touchpad scroll handler for navigating through words.
     // This is intentionally used only on the center RSVP lane.
@@ -1302,7 +1340,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
         const ratio = currentDistance / pinchGestureRef.current.distance;
         updateLensScale(pinchGestureRef.current.scale * ratio);
         suppressNextRsvpTapRef.current = true;
-    }, [moveToWord, updateLensScale]);
+    }, [moveToWord, setIsPlaying, updateLensScale]);
 
     const handleRsvpTouchEnd = useCallback((e: React.TouchEvent<HTMLDivElement>) => {
         const wasPinching = pinchGestureRef.current !== null;
@@ -1349,7 +1387,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
         const shouldPlay = !isPlayingRef.current;
         isPlayingRef.current = shouldPlay;
         setIsPlaying(shouldPlay);
-    }, [countdown, chapterTransitionPhase]);
+    }, [countdown, chapterTransitionPhase, setIsPlaying]);
 
     const handleRsvpKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
         if (event.key !== 'Enter' && event.key !== ' ') return;
@@ -1381,7 +1419,16 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                         if (!showTTSPlayerRef.current) setIsPlaying(!isPlayingRef.current);
                     } else {
                         // Jump to new word while preserving current playback state.
+                        const wasPlaying = isPlayingRef.current;
                         indexRef.current = newIndex;
+                        readerSessionController.dispatch({
+                            type: 'seek',
+                            chapterId: currentChapterRef.current?.id || '',
+                            wordIndex: newIndex,
+                        });
+                        if (wasPlaying) {
+                            readerSessionController.dispatch({ type: 'play', transport: 'rsvp' });
+                        }
                         setCurrentWordIndex(newIndex);
                         const displayWord = resetDisplaySegments(wordsRef.current[newIndex] || '');
                         renderWord(newIndex, wordsRef.current, true, displayWord);
@@ -1653,7 +1700,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
 
         // Continue loop - use rAF for precision timing in final approach
         requestRef.current = requestAnimationFrame(loopInternal);
-    }, [commonPhraseRankLimit, wpm, renderWord, beginChapterTransition, summaryWpm, startTransition, calculateTargetInterval, resetDisplaySegments, syncSchedulerCursor, updateProgressMilestone, imageCueAssignments]);
+    }, [commonPhraseRankLimit, wpm, renderWord, beginChapterTransition, summaryWpm, startTransition, calculateTargetInterval, resetDisplaySegments, syncSchedulerCursor, setIsPlaying, updateProgressMilestone, imageCueAssignments]);
 
     // Sync refs
     useEffect(() => {
@@ -1697,7 +1744,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
         if (showTTSPlayer && isPlaying) {
             setIsPlaying(false);
         }
-    }, [showTTSPlayer, isPlaying]);
+    }, [showTTSPlayer, isPlaying, setIsPlaying]);
 
     useEffect(() => {
         const wasActive = wasTTSPlaybackActiveRef.current;
@@ -1741,7 +1788,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
             if (requestRef.current) cancelAnimationFrame(requestRef.current);
             if (timeoutRef.current) clearTimeout(timeoutRef.current);
         };
-    }, [isPlaying, playbackSession, saveProgress, loop, renderWord, getDisplayWordForCurrentSegment]);
+    }, [isPlaying, playbackSession, saveProgress, loop, renderWord, getDisplayWordForCurrentSegment, setIsPlaying]);
 
     // Spacebar to toggle play/pause
     useEffect(() => {
@@ -1757,7 +1804,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
 
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, []);
+    }, [setIsPlaying]);
 
     // Auto-save progress every 5 seconds while playing
     useEffect(() => {
@@ -2043,7 +2090,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
             autoPausedNoteRef.current = activeNoteAnchor.id;
             setIsPlaying(false);
         }
-    }, [activeNoteAnchor, isPlaying, noteAutoPause]);
+    }, [activeNoteAnchor, isPlaying, noteAutoPause, setIsPlaying]);
 
     if (loading && !currentChapter) {
         return (
