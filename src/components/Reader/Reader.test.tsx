@@ -101,6 +101,7 @@ describe('Reader Component', () => {
 
     beforeEach(() => {
         vi.clearAllMocks();
+        mockReadingState.incrementalPatch.mockReset();
         useSettingsStore.persist.setOptions({
             storage: {
                 getItem: vi.fn(() => null),
@@ -121,6 +122,8 @@ describe('Reader Component', () => {
         useSettingsStore.getState().riverBottomEnabled = true;
         mockChapter1.notes = [];
         mockChapter1.noteAnchors = [];
+        mockReadingState.currentChapterId = 'chapter-1';
+        mockReadingState.currentWordIndex = 0;
         useAIStore.setState({
             lifecycleState: 'idle',
             isLoading: false,
@@ -847,6 +850,39 @@ describe('Reader Component', () => {
         });
     });
 
+    it('flushes a newer cursor after an older progress save completes', async () => {
+        const { container } = render(<Reader book={mockBook} />);
+        await waitFor(() => expect(screen.getByTestId('rsvp-container')).toHaveTextContent('Hello'));
+
+        let releaseFirstSave: (() => void) | undefined;
+        const firstSave = new Promise<void>((resolve) => {
+            releaseFirstSave = resolve;
+        });
+        let patchCount = 0;
+        mockReadingState.incrementalPatch.mockImplementation(async (patchData) => {
+            patchCount += 1;
+            if (patchCount === 1) await firstSave;
+            Object.assign(mockReadingState, patchData);
+            return mockReadingState;
+        });
+
+        fireEvent.click(container.querySelector('[data-index="2"]')!);
+        await waitFor(() => expect(patchCount).toBe(1));
+
+        fireEvent.click(container.querySelector('[data-index="3"]')!);
+        expect(patchCount).toBe(1);
+
+        await act(async () => {
+            releaseFirstSave?.();
+        });
+
+        await waitFor(() => {
+            expect(mockReadingState.incrementalPatch).toHaveBeenCalledWith(expect.objectContaining({
+                currentWordIndex: 3,
+            }));
+        });
+    });
+
     it('should toggle play/pause with spacebar', async () => {
         render(<Reader book={mockBook} />);
         await waitFor(() => {
@@ -917,6 +953,33 @@ describe('Reader Component', () => {
 
         await waitFor(() => {
             expect(mockSetSchedulerCursor).toHaveBeenCalledWith('book-1', 'chapter-2', 1, 7);
+        });
+    });
+
+    it('should resume from a newer persisted TTS position', async () => {
+        const savedState = {
+            ...mockReadingState,
+            currentWordIndex: 0,
+            lastRead: 100,
+            ttsPosition: {
+                chapterId: 'chapter-1',
+                sentenceIndex: 1,
+                wordIndex: 3,
+                audioTime: 4,
+                timestamp: 200,
+            },
+            toJSON: function () { return this; },
+            patch: vi.fn(),
+            incrementalPatch: vi.fn(),
+        };
+        mockDb.reading_states.findOne.mockReturnValue({
+            exec: vi.fn().mockResolvedValue(savedState),
+        });
+
+        render(<Reader book={mockBook} />);
+
+        await waitFor(() => {
+            expect(screen.getByTestId('rsvp-container')).toHaveTextContent('is');
         });
     });
 

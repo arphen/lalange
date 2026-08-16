@@ -15,6 +15,9 @@ export async function persistListeningHandoff({
     const db = await initDB();
     const readingState = await db.reading_states.findOne(position.bookId).exec();
     const patch = {
+        currentChapterId: position.chapterId,
+        currentWordIndex: position.wordIndex,
+        lastRead: position.timestamp,
         ttsPosition: {
             chapterId: position.chapterId,
             sentenceIndex: position.sentenceIndex,
@@ -32,9 +35,6 @@ export async function persistListeningHandoff({
 
     await db.reading_states.insert({
         bookId: position.bookId,
-        currentChapterId: position.chapterId,
-        currentWordIndex: position.wordIndex,
-        lastRead: position.timestamp,
         highlights: [],
         ...patch,
     });

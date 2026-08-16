@@ -104,6 +104,8 @@ interface TTSPlayerProps {
     getCurrentWordIndex?: () => number;
     /** Called when TTS position changes (for syncing reading position) */
     onPositionChange?: (wordIndex: number) => void;
+    /** Called before the audio runtime resets its cursor during teardown or refresh */
+    onPositionCommit?: (wordIndex: number) => void;
     /** Book and chapter IDs for position tracking */
     bookId?: string;
     chapterId?: string;
@@ -123,6 +125,7 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
     currentWordIndex,
     getCurrentWordIndex,
     onPositionChange,
+    onPositionCommit,
     bookId,
     chapterId,
     autoPlayChapterId = null,
@@ -190,6 +193,17 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
     const chapterIdRef = useRef<string | undefined>(chapterId);
     const chapterEndHandledRef = useRef(false);
     const autoPlayRequestHandledRef = useRef<string | null>(null);
+    const wordsChapterIdRef = useRef(chapterId);
+    const onPositionCommitRef = useRef(onPositionCommit);
+
+    useEffect(() => {
+        onPositionCommitRef.current = onPositionCommit;
+    }, [onPositionCommit]);
+
+    const commitCurrentPosition = useCallback(() => {
+        if (!hasStartedPlaybackRef.current) return;
+        onPositionCommitRef.current?.(useTTSStore.getState().currentWordIndex);
+    }, []);
 
     useEffect(() => {
         const repairedInvalidVoice = voice !== effectiveVoice;
@@ -284,6 +298,9 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
         );
         
         if (wordsChanged) {
+            if (wordsChapterIdRef.current === chapterId) {
+                commitCurrentPosition();
+            }
             generationIdRef.current += 1;
 
             // Stop generation
@@ -302,7 +319,8 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
         }
         
         wordsRef.current = words;
-    }, [words]);
+        wordsChapterIdRef.current = chapterId;
+    }, [chapterId, commitCurrentPosition, words]);
     
     // Initialize TTS engine
     const handleInit = useCallback(async (): Promise<boolean> => {
@@ -322,6 +340,7 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
     // Cleanup on unmount
     useEffect(() => {
         return () => {
+            commitCurrentPosition();
             generationIdRef.current += 1;
             if (abortControllerRef.current) {
                 abortControllerRef.current.abort();
@@ -329,7 +348,7 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
             isGeneratingRef.current = false;
             ttsPlayer.dispose();
         };
-    }, []);
+    }, [commitCurrentPosition]);
     
     // Generate audio starting from a sentence index
     const generateFrom = useCallback(async (fromSentenceIndex: number, sentenceCount: number) => {
@@ -469,13 +488,16 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
         if (autoPlayRequestHandledRef.current === requestKey) return;
         autoPlayRequestHandledRef.current = requestKey;
 
-        void startFromSentence(0).catch((err) => {
+        const readerWordIndex = getCurrentWordIndex?.() ?? currentWordIndex;
+        const sentenceIndex = findNearestSentenceIndex(sentences, readerWordIndex);
+
+        void startFromSentence(Math.max(0, sentenceIndex)).catch((err) => {
             console.error('[TTS UI] Automatic chapter continuation failed:', err);
             const message = err instanceof Error ? err.message : 'Audio playback failed.';
             useTTSStore.getState().setError(message);
             ttsPlayer.stop();
         });
-    }, [autoPlayChapterId, chapterId, startFromSentence]);
+    }, [autoPlayChapterId, chapterId, currentWordIndex, getCurrentWordIndex, sentences, startFromSentence]);
 
     // Handle play/pause toggle - PAUSE MUST BE INSTANT
     const handleToggle = useCallback(async () => {

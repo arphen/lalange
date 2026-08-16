@@ -938,32 +938,39 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
         const patchReadingState = readingStatePatchRef.current;
         if (!patchReadingState) return;
 
-        const position = {
-            chapterId: currentChapter.id,
-            wordIndex: indexRef.current,
-        };
-        const lastSavedPosition = lastSavedPositionRef.current;
-        if (
-            lastSavedPosition?.chapterId === position.chapterId
-            && lastSavedPosition.wordIndex === position.wordIndex
-        ) return;
-        if (saveInFlightRef.current) return;
+        while (true) {
+            const position = {
+                chapterId: currentChapter.id,
+                wordIndex: indexRef.current,
+            };
+            const lastSavedPosition = lastSavedPositionRef.current;
+            if (
+                lastSavedPosition?.chapterId === position.chapterId
+                && lastSavedPosition.wordIndex === position.wordIndex
+            ) return;
 
-        const save = (async () => {
-            try {
-                await patchReadingState({
-                    currentChapterId: position.chapterId,
-                    currentWordIndex: position.wordIndex,
-                    lastRead: Date.now(),
-                });
-                lastSavedPositionRef.current = position;
-                readerPerformanceCounters.record('persistenceWrites');
-            } finally {
-                saveInFlightRef.current = null;
+            const inFlightSave = saveInFlightRef.current;
+            if (inFlightSave) {
+                await inFlightSave;
+                continue;
             }
-        })();
-        saveInFlightRef.current = save;
-        await save;
+
+            const save = (async () => {
+                try {
+                    await patchReadingState({
+                        currentChapterId: position.chapterId,
+                        currentWordIndex: position.wordIndex,
+                        lastRead: Date.now(),
+                    });
+                    lastSavedPositionRef.current = position;
+                    readerPerformanceCounters.record('persistenceWrites');
+                } finally {
+                    saveInFlightRef.current = null;
+                }
+            })();
+            saveInFlightRef.current = save;
+            await save;
+        }
     }, [loading, readingState, currentChapter]);
     const saveProgressRef = useRef(saveProgress);
 
@@ -1873,12 +1880,16 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
             if (!state) return;
 
             const stateDoc = state.toJSON() as ReadingStateDocType;
+            const latestTTSPosition = stateDoc.ttsPosition
+                && stateDoc.ttsPosition.timestamp >= stateDoc.lastRead
+                ? stateDoc.ttsPosition
+                : null;
             setReadingState(stateDoc);
             readingStatePatchRef.current = (patch) => state.incrementalPatch(patch);
-            lastSavedPositionRef.current = stateDoc.currentChapterId
+            lastSavedPositionRef.current = (latestTTSPosition?.chapterId || stateDoc.currentChapterId)
                 ? {
-                    chapterId: stateDoc.currentChapterId,
-                    wordIndex: stateDoc.currentWordIndex,
+                    chapterId: latestTTSPosition?.chapterId || stateDoc.currentChapterId!,
+                    wordIndex: latestTTSPosition?.wordIndex ?? stateDoc.currentWordIndex,
                 }
                 : null;
 
@@ -1889,14 +1900,19 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
             // throttled to 5s).
             if (initialLoadAppliedForBookRef.current !== book.id) {
                 initialLoadAppliedForBookRef.current = book.id;
-                const requestedChapterId = stateDoc.currentChapterId || book.chapterIds?.[0];
+                const requestedChapterId = latestTTSPosition?.chapterId
+                    || stateDoc.currentChapterId
+                    || book.chapterIds?.[0];
                 const requestedChapterDoc = requestedChapterId
                     ? await readerDataSource.findChapter(requestedChapterId)
                     : null;
                 const requestedChapter = requestedChapterDoc || undefined;
 
                 if (requestedChapter && isReadableChapter(requestedChapter)) {
-                    loadChapter(requestedChapter.id, stateDoc.currentWordIndex);
+                    loadChapter(
+                        requestedChapter.id,
+                        latestTTSPosition?.wordIndex ?? stateDoc.currentWordIndex,
+                    );
                 } else {
                     const chapterDocs = await readerDataSource.listChapters(book.id);
                     const firstReadableChapter = chapterDocs.find(isReadableChapter);
@@ -2848,6 +2864,13 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                             indexRef.current = wordIndex;
                             const displayWord = resetDisplaySegments(wordsRef.current[wordIndex] || '');
                             renderWord(wordIndex, wordsRef.current, false, displayWord);
+                        }}
+                        onPositionCommit={(wordIndex) => {
+                            indexRef.current = wordIndex;
+                            setCurrentWordIndex(wordIndex);
+                            const displayWord = resetDisplaySegments(wordsRef.current[wordIndex] || '');
+                            renderWord(wordIndex, wordsRef.current, false, displayWord);
+                            void saveProgressRef.current();
                         }}
                         bookId={book.id}
                         chapterId={currentChapter.id}

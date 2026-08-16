@@ -359,6 +359,66 @@ describe('TTSPlayer voice changes', () => {
         });
     });
 
+    it('resumes automatic continuation from the live reader cursor after a remount', async () => {
+        mocks.sentences = [
+            { index: 0, text: 'First sentence.', startWordIndex: 0, endWordIndex: 1 },
+            { index: 1, text: 'Second sentence.', startWordIndex: 2, endWordIndex: 3 },
+            { index: 2, text: 'Third sentence.', startWordIndex: 4, endWordIndex: 5 },
+        ];
+        vi.mocked(streamSpeech).mockReturnValue((async function* () {})());
+
+        const firstRender = render(
+            <TTSPlayer
+                words={['Next', 'chapter.']}
+                currentWordIndex={0}
+                getCurrentWordIndex={() => 0}
+                chapterId="chapter-2"
+                autoPlayChapterId="chapter-2"
+            />,
+        );
+        await waitFor(() => expect(ttsPlayer.play).toHaveBeenCalledWith(0, 1));
+
+        firstRender.unmount();
+        vi.mocked(ttsPlayer.play).mockClear();
+
+        render(
+            <TTSPlayer
+                words={['Next', 'chapter.']}
+                currentWordIndex={0}
+                getCurrentWordIndex={() => 4}
+                chapterId="chapter-2"
+                autoPlayChapterId="chapter-2"
+            />,
+        );
+
+        await waitFor(() => expect(ttsPlayer.play).toHaveBeenCalledWith(2, 1));
+    });
+
+    it('commits the live audio cursor before resetting for a content update', async () => {
+        vi.mocked(streamSpeech).mockReturnValue((async function* () {})());
+        const onPositionCommit = vi.fn();
+        const { container, rerender } = render(
+            <TTSPlayer
+                words={['Hello', 'world.']}
+                currentWordIndex={0}
+                onPositionCommit={onPositionCommit}
+            />,
+        );
+        fireEvent.click(container.querySelector('button')!);
+        await waitFor(() => expect(ttsPlayer.play).toHaveBeenCalled());
+
+        mocks.ttsWordIndex = 1;
+        rerender(
+            <TTSPlayer
+                words={['Hello', 'updated', 'world.']}
+                currentWordIndex={0}
+                onPositionCommit={onPositionCommit}
+            />,
+        );
+
+        expect(onPositionCommit).toHaveBeenCalledWith(1);
+    });
+
     it('exposes and applies the full speed range including 0.5x', () => {
         const { getByText } = render(<TTSPlayer words={['Hello', 'world.']} currentWordIndex={0} />);
 
