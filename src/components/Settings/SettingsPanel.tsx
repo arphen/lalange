@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, Navigate } from 'react-router';
+import { useShallow } from 'zustand/react/shallow';
 import { useSettingsStore, type NotePresentationMode, type PromptFragment } from '../../core/store/settings';
-import { useAIStore } from '../../core/store/ai';
+import { selectAIIsLoading, useAIStore } from '../../core/store/ai';
 import { useTTSStore, type TTSBackendPreference } from '../../core/store/tts';
 import { getEngine, MODEL_INFO, PACING_MODEL_TIER, type ModelTier, isModelCached, deleteModel } from '../../core/ai/webllm';
 import { getAvailableStrategies, type DurationStrategyId } from '../../core/rsvp/duration';
@@ -59,7 +60,14 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
 
     const [cachedModels, setCachedModels] = useState<Record<string, boolean>>({});
     const settings = useSettingsStore();
-    const aiState = useAIStore();
+    const aiState = useAIStore(useShallow((state) => ({
+        lifecycleState: state.lifecycleState,
+        loadingModel: state.loadingModel,
+        progress: state.progress,
+        progressValue: state.progressValue,
+        requestSetup: state.requestSetup,
+    })));
+    const isAILoading = selectAIIsLoading(aiState);
     const isDayTheme = settings.theme === 'day' || settings.theme === 'dunes';
 
     const checkCache = React.useCallback(async () => {
@@ -233,7 +241,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                                      {/* ... (Model List Code) ... */}
                                     <div className="p-4 border-b border-white/10 bg-white/5 flex justify-between items-center">
                                         <h4 className="font-bold text-dune-gold text-xs tracking-widest">LOCAL CACHE STATUS</h4>
-                                        {aiState.isLoading && (
+                                        {isAILoading && (
                                             <span className="text-xs text-magma-vent animate-pulse">
                                                 {aiState.progress || 'BUSY...'}
                                             </span>
@@ -262,7 +270,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                                                         {isCached ? (
                                                             <button
                                                                 onClick={() => handleDeleteModel(tier)}
-                                                                disabled={aiState.isLoading}
+                                                                disabled={isAILoading}
                                                                 className="px-3 py-1.5 text-[10px] font-bold rounded border border-red-900/50 text-red-400 hover:bg-red-900/20 hover:border-red-500 transition-all disabled:opacity-50"
                                                             >
                                                                 EVICT
@@ -270,7 +278,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                                                         ) : (
                                                             <button
                                                                 onClick={() => handleDownloadModel(tier)}
-                                                                disabled={aiState.isLoading}
+                                                                disabled={isAILoading}
                                                                 className="px-3 py-1.5 text-[10px] font-bold rounded border border-white/20 text-gray-400 hover:border-dune-gold hover:text-dune-gold transition-all disabled:opacity-50"
                                                             >
                                                                 DOWNLOAD
@@ -281,7 +289,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                                             );
                                         })}
                                     </div>
-                                    {aiState.isLoading && (
+                                    {isAILoading && (
                                     <div className="p-4 bg-black/40 border-t border-white/10">
                                         <div className="flex justify-between text-xs text-gray-400 mb-2">
                                             <span className="font-bold text-dune-gold">
@@ -315,13 +323,13 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
 
                             <Toggle
                                 label="Adaptive AI Pacing"
-                                description={aiState.isLoading
+                                description={isAILoading
                                     ? 'Preparing the on-device model \u2014 reading remains available while this finishes.'
                                     : 'Speeds through predictable words and slows for dense or surprising passages, using a small model that runs entirely on this device.'}
                                 checked={settings.aiEnabled}
                                 onChange={(enabled) => {
                                     if (!enabled) settings.setAiEnabled(false);
-                                    else if (!aiState.isLoading) aiState.requestSetup('pacing');
+                                    else if (!isAILoading) aiState.requestSetup('pacing');
                                 }}
                             />
 
@@ -521,7 +529,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                                         settings.setSummariesEnabled(false);
                                     } else if (settings.aiEnabled) {
                                         settings.setSummariesEnabled(true);
-                                    } else if (!aiState.isLoading) {
+                                    } else if (!isAILoading) {
                                         aiState.requestSetup('summaries');
                                     }
                                 }}

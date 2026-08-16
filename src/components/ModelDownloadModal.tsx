@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Check, Download, Gauge, Lock, X } from 'lucide-react';
 import { clsx } from 'clsx';
+import { useShallow } from 'zustand/react/shallow';
 import { useSettingsStore } from '../core/store/settings';
 import { useAIStore } from '../core/store/ai';
 import {
@@ -24,7 +25,12 @@ export const AISetupWizard: React.FC = () => {
         summarizerModel,
         setSummarizerModel,
     } = useSettingsStore();
-    const { isSetupOpen, setupIntent, closeSetup, requestSetup } = useAIStore();
+    const { isSetupOpen, setupIntent, closeSetup, requestSetup } = useAIStore(useShallow((state) => ({
+        isSetupOpen: state.isSetupOpen,
+        setupIntent: state.setupIntent,
+        closeSetup: state.closeSetup,
+        requestSetup: state.requestSetup,
+    })));
     const [selectedTier, setSelectedTier] = useState<ModelTier>(summarizerModel);
     const [cachedModels, setCachedModels] = useState<Partial<Record<ModelTier, boolean>>>({});
     const [error, setError] = useState<string | null>(null);
