@@ -30,6 +30,7 @@ import { buildImageCueAssignments, findImageBreakAfterChapter, type ImageBreakCu
 import { readerPerformanceCounters } from './readerPerformance';
 import { ContextWindowProjector } from './contextWindowProjector';
 import { createReaderSessionControllerForBook } from '../../core/reader/controller';
+import { createRsvpPlaybackClock } from '../../core/reader/rsvpPlaybackClock';
 
 import { scheduler } from '../../core/ingest/scheduler';
 import { processChaptersInBackground, resumeIncompleteAnalysis } from '../../core/ingest/pipeline';
@@ -246,6 +247,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
     const nextContextProjectorRef = useRef<ContextWindowProjector | null>(null);
     const rsvpRef = useRef<HTMLDivElement>(null);
     const rsvpTouchSurfaceRef = useRef<HTMLDivElement | null>(null);
+    const [rsvpPlaybackClock] = useState(() => createRsvpPlaybackClock());
     const contextHistoryStartRef = useRef(0);
 
     if (!previousContextProjectorRef.current) {
@@ -264,8 +266,6 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
     const initialLoadAppliedForBookRef = useRef<string | null>(null);
     const waitingForReadableChapterRef = useRef(false);
     
-    const requestRef = useRef<number | undefined>(undefined);
-    const timeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
     const lastTimeRef = useRef<number | undefined>(undefined);
     const accumulatorRef = useRef<number>(0);
 
@@ -1565,11 +1565,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
             const sleepTime = chapterTransitionActiveRef.current
                 ? Math.min(50, normalSleepTime)
                 : normalSleepTime;
-            timeoutRef.current = setTimeout(() => {
-                if (isPlayingRef.current) {
-                    requestRef.current = requestAnimationFrame(loopInternal);
-                }
-            }, sleepTime);
+            rsvpPlaybackClock.schedule(loopInternal, sleepTime);
             return;
         }
 
@@ -1582,7 +1578,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
 
                 const nextDisplayWord = currentWordSegmentsRef.current[currentSegmentIndexRef.current] || activeWord;
                 renderWord(indexRef.current, activeWords, false, nextDisplayWord);
-                requestRef.current = requestAnimationFrame(loopInternal);
+                rsvpPlaybackClock.schedule(loopInternal);
                 return;
             }
 
@@ -1691,8 +1687,8 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
         }
 
         // Continue loop - use rAF for precision timing in final approach
-        requestRef.current = requestAnimationFrame(loopInternal);
-    }, [commonPhraseRankLimit, wpm, renderWord, beginChapterTransition, summaryWpm, startTransition, calculateTargetInterval, resetDisplaySegments, syncSchedulerCursor, setIsPlaying, updateProgressMilestone, imageCueAssignments]);
+        rsvpPlaybackClock.schedule(loopInternal);
+    }, [commonPhraseRankLimit, wpm, renderWord, beginChapterTransition, summaryWpm, startTransition, calculateTargetInterval, resetDisplaySegments, syncSchedulerCursor, setIsPlaying, updateProgressMilestone, imageCueAssignments, rsvpPlaybackClock]);
 
     // Sync refs
     useEffect(() => {
@@ -1782,13 +1778,12 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
         } else {
             lastTimeRef.current = undefined;
             accumulatorRef.current = 0;
-            requestRef.current = requestAnimationFrame(loop);
+            rsvpPlaybackClock.schedule(loop);
         }
         return () => {
-            if (requestRef.current) cancelAnimationFrame(requestRef.current);
-            if (timeoutRef.current) clearTimeout(timeoutRef.current);
+            rsvpPlaybackClock.cancel();
         };
-    }, [isPlaying, playbackSession, saveProgress, loop, renderWord, getDisplayWordForCurrentSegment, setIsPlaying]);
+    }, [isPlaying, playbackSession, saveProgress, loop, renderWord, getDisplayWordForCurrentSegment, setIsPlaying, rsvpPlaybackClock]);
 
     // Spacebar to toggle play/pause
     useEffect(() => {
