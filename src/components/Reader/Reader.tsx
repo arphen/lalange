@@ -815,6 +815,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                         console.error('Reader transition failed', error);
                         playbackMomentumRef.current = 1;
                         chapterTransitionActiveRef.current = false;
+                        readerSessionController.dispatch({ type: 'cancel-transition' });
                         if (closeContents) {
                             setShowChapters(false);
                             setChapterHandoffSelection(null);
@@ -879,7 +880,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                     });
             }
         }, 1000);
-    }, [animatePlaybackMomentum, setIsPlaying, setCountdown, setTransitionLabel, setShowChapters, showChapters]);
+    }, [animatePlaybackMomentum, readerSessionController, setIsPlaying, setCountdown, setTransitionLabel, setShowChapters, showChapters]);
 
     const handleSkipSummary = useCallback(() => {
         // Clear countdown if running
@@ -1092,6 +1093,12 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
         if (!targetChapter || !isReadableChapter(targetChapter)) return;
         const targetIndex = Math.max(0, Math.min(targetChapter.content.length - 1, initialIndex));
 
+        readerSessionController.dispatch({
+            type: 'begin-transition',
+            phase: isPlayingRef.current ? 'braking' : 'crossing',
+            targetChapterId: chapterId,
+        });
+
         const currentChapterId = currentChapterRef.current?.id;
         const currentPosition = chaptersRef.current.findIndex((chapter) => chapter.id === currentChapterId);
         const targetPosition = chaptersRef.current.findIndex((chapter) => chapter.id === chapterId);
@@ -1124,10 +1131,18 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                 syncSchedulerCursor(chapterId, targetIndex);
             })
             : () => activateDestination(() => loadChapter(chapterId, targetIndex, false));
+        const completeTarget = async () => {
+            await activateTarget();
+            readerSessionController.dispatch({
+                type: 'complete-transition',
+                chapterId,
+                wordIndex: targetIndex,
+            });
+        };
 
         startTransition(
             label,
-            activateTarget,
+            completeTarget,
             {
                 kind: 'chapter',
                 closeContents: true,

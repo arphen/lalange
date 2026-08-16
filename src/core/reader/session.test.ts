@@ -63,4 +63,33 @@ describe('reader session reducer', () => {
             transition: undefined,
         });
     });
+
+    it('keeps a destination seek inside the active transition until completion', () => {
+        const transitioning = reduce(
+            createReaderSessionSnapshot('book-1', 'chapter-1'),
+            { type: 'begin-transition', phase: 'crossing', targetChapterId: 'chapter-2' },
+            { type: 'seek', chapterId: 'chapter-2', wordIndex: 4 },
+        );
+
+        expect(transitioning).toMatchObject({
+            chapterId: 'chapter-2',
+            wordIndex: 4,
+            mode: 'chapter-transition',
+            playing: false,
+            transition: {
+                phase: 'crossing',
+                targetChapterId: 'chapter-2',
+            },
+        });
+
+        expect(reduce(transitioning, {
+            type: 'complete-transition',
+            chapterId: 'chapter-2',
+            wordIndex: 4,
+        })).toMatchObject({
+            mode: 'text',
+            playing: false,
+            transition: undefined,
+        });
+    });
 });

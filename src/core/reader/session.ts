@@ -73,7 +73,8 @@ export const reduceReaderSession = (
                 ...snapshot,
                 chapterId: command.chapterId,
                 wordIndex: clampWordIndex(command.wordIndex),
-                mode: 'text',
+                mode: snapshot.mode === 'chapter-transition' ? snapshot.mode : 'text',
+                transition: snapshot.mode === 'chapter-transition' ? snapshot.transition : undefined,
                 playing: false,
             };
         case 'set-mode':
