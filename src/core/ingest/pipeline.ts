@@ -6,6 +6,7 @@ import { useSettingsStore } from '../store/settings';
 import { generateUUID } from '../../utils/uuid';
 import { scheduler } from './scheduler';
 import { analyzeDensityRange, chunkText } from './analysis';
+import { createOperationHandle } from '../operations/progressReporter';
 import { decodeRawFilePayload, defaultIngestReaderRegistry, encodeRawFilePayload, readFileAsUint8Array } from './readers';
 import type { ReaderStructureMetadata } from './readers';
 
@@ -59,7 +60,7 @@ const getStructureMetadata = (chapter: ReaderStructureMetadata) => ({
     ...(chapter.originalTitles ? { originalTitles: chapter.originalTitles } : {}),
 });
 
-export const initialIngest = async (file: File, onProgress?: (msg: string) => void): Promise<InitialIngestResult> => {
+const runInitialIngest = async (file: File, onProgress?: (msg: string) => void): Promise<InitialIngestResult> => {
     console.log(`[Pipeline] Starting ingestion for file: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`);
     const reader = defaultIngestReaderRegistry.resolveForFile(file);
     if (!reader) {
@@ -132,7 +133,28 @@ export const initialIngest = async (file: File, onProgress?: (msg: string) => vo
     };
 };
 
-export const processChaptersInBackground = async (bookId: string, onProgress?: (message: string) => void) => {
+export const initialIngest = async (file: File, onProgress?: (message: string) => void): Promise<InitialIngestResult> => {
+    const operation = createOperationHandle({
+        kind: 'ingest',
+        publish: (update) => onProgress?.(update.message ?? update.phase),
+    });
+
+    try {
+        const result = await runInitialIngest(file, (message) => operation.report({
+            kind: 'ingest',
+            phase: 'extract',
+            message,
+            state: 'running',
+        }));
+        operation.complete('Book extracted');
+        return result;
+    } catch (error) {
+        operation.fail(error);
+        throw error;
+    }
+};
+
+const runProcessChaptersInBackground = async (bookId: string, onProgress?: (message: string) => void) => {
     if (activeJobs.has(bookId)) {
         console.log(`[Pipeline] Job already running for book ${bookId}`);
         return;
@@ -426,6 +448,26 @@ export const processChaptersInBackground = async (bookId: string, onProgress?: (
         activeJobs.delete(bookId);
         processingState.delete(bookId);
         console.log(`[Pipeline] Ingestion preparation complete for book: ${bookId}. Tasks have been handed off to the Scheduler.`);
+    }
+};
+
+export const processChaptersInBackground = async (bookId: string, onProgress?: (message: string) => void) => {
+    const operation = createOperationHandle({
+        kind: 'ingest',
+        publish: (update) => onProgress?.(update.message ?? update.phase),
+    });
+
+    try {
+        await runProcessChaptersInBackground(bookId, (message) => operation.report({
+            kind: 'ingest',
+            phase: 'process',
+            message,
+            state: 'running',
+        }));
+        operation.complete('Book processing complete');
+    } catch (error) {
+        operation.fail(error);
+        throw error;
     }
 };
 
