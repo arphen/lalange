@@ -1,7 +1,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo, useSyncExternalStore } from 'react';
 import { clsx } from 'clsx';
 import { ArrowLeft, BookOpenText, Focus, Gauge, Headphones, List, Moon, Play, Share2, Sun, X } from 'lucide-react';
-import { type BookDocType, type ChapterDocType, type ReadingStateDocType, type GlobalSummaryType, type ImageDocType, initDB } from '../../core/sync/db';
+import { type BookDocType, type ChapterDocType, type ReadingStateDocType, type GlobalSummaryType, type ImageDocType } from '../../core/sync/db';
 import { getDisplayPlugin, projectDisplayFrame, type DisplayPlugin } from '../../core/rsvp/display';
 import { getFrameTargetInterval, getTargetInterval, isLikelyProperNoun } from '../../core/rsvp/timing';
 import { isPauseToken, isReferenceToken, splitLongWordForRSVP } from '../../core/rsvp/tokenize';
@@ -32,6 +32,7 @@ import { ContextWindowProjector } from './contextWindowProjector';
 import { createReaderSessionControllerForBook } from '../../core/reader/controller';
 import { createRsvpPlaybackClock } from '../../core/reader/rsvpPlaybackClock';
 import type { ReaderSessionSequence } from '../../core/reader/sessionSequence';
+import { createReaderSessionDataSource } from '../../core/reader/dataSource';
 
 import { scheduler } from '../../core/ingest/scheduler';
 import { processChaptersInBackground, resumeIncompleteAnalysis } from '../../core/ingest/pipeline';
@@ -111,6 +112,10 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
         () => createReaderSessionControllerForBook(book.id, initialChapterId),
         [book.id, initialChapterId],
     );
+    const readerDataSource = useMemo(
+        () => createReaderSessionDataSource(book.id),
+        [book.id],
+    );
     const readerSessionSnapshot = useSyncExternalStore(
         readerSessionController.subscribe,
         readerSessionController.getSnapshot,
@@ -134,6 +139,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
     const [lensScale, setLensScale] = useState(LENS_SCALE_DEFAULT);
 
     useEffect(() => () => readerSessionController.dispose(), [readerSessionController]);
+    useEffect(() => () => readerDataSource.dispose(), [readerDataSource]);
 
     useEffect(() => {
         readerPerformanceCounters.record('readerCommits');
@@ -948,33 +954,13 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
         saveProgressRef.current = saveProgress;
     }, [saveProgress]);
 
-    // Ref to hold the current chapter subscription
-    const chapterSubRef = useRef<{ unsubscribe: () => void } | null>(null);
-
     const loadChapter = React.useCallback(async (chapterId: string, initialIndex: number = 0, autoPlay: boolean = false) => {
         setIsPlaying(false);
         setLoading(true);
-        // Use a local flag to track if this is the first emission (load) or subsequent (update)
-        let isFirstEmission = true;
-
-        const db = await initDB();
-
-        // Unsubscribe previous
-        if (chapterSubRef.current) {
-            chapterSubRef.current.unsubscribe();
-            chapterSubRef.current = null;
-        }
-
-        await new Promise<void>((resolve) => {
-            // Subscribe to the chapter document and keep the live subscription after the initial load.
-            chapterSubRef.current = db.chapters.findOne(chapterId).$.subscribe(async (doc) => {
-                if (!doc) return;
-                const chapterDoc = doc.toJSON() as ChapterDocType;
-
+        await readerDataSource.subscribeToChapter(chapterId, async (chapterDoc, isInitialEmission) => {
                 if (!isReadableChapter(chapterDoc)) return;
 
-                if (isFirstEmission) {
-                    isFirstEmission = false;
+                if (isInitialEmission) {
                     readerSessionController.dispatch({
                         type: 'seek',
                         chapterId,
@@ -994,7 +980,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                     initialRenderDoneRef.current = false;
 
                     if (initialIndex === 0) {
-                        const stateDoc = await db.reading_states.findOne(book.id).exec();
+                        const stateDoc = await readerDataSource.getOrCreateReadingState(book.id, chapterId);
                         if (stateDoc) {
                             await stateDoc.incrementalPatch({
                                 currentChapterId: chapterId,
@@ -1014,7 +1000,6 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                         setIsPlaying(true);
                     }
 
-                    resolve();
                     return;
                 }
 
@@ -1031,9 +1016,8 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                     const displayWord = resetDisplaySegments(wordsRef.current[indexRef.current] || '');
                     renderWord(indexRef.current, wordsRef.current, true, displayWord);
                 }
-            });
         });
-    }, [readerSessionController, renderWord, book.id, resetDisplaySegments, setIsPlaying, updateProgressMilestone]);
+    }, [readerDataSource, readerSessionController, renderWord, book.id, resetDisplaySegments, setIsPlaying, updateProgressMilestone]);
 
     const beginChapterTransition = useCallback((
         chapterId: string,
@@ -1858,50 +1842,18 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
 
     // Load initial state & Subscribe to chapters
     useEffect(() => {
-        let sub: { unsubscribe: () => void };
         const loadState = async () => {
             setLoading(true);
-            const db = await initDB();
 
-            // Subscribe to chapters
-            const chapterQuery = db.chapters.find({
-                selector: { bookId: book.id },
-                sort: [{ index: 'asc' }]
+            void readerDataSource.subscribeToChapters(book.id, setChapters);
+            void readerDataSource.subscribeToBook(book.id, (bookData) => {
+                setGlobalSummaries(bookData.globalSummaries || []);
             });
-            sub = chapterQuery.$.subscribe(docs => {
-                setChapters(docs.map(d => d.toJSON() as ChapterDocType));
-            });
-
-            // Subscribe to book document for globalSummaries updates
-            let bookSub: { unsubscribe: () => void } | null = null;
-            if (db.books) {
-                bookSub = db.books.findOne(book.id).$.subscribe(bookDoc => {
-                    if (bookDoc) {
-                        const bookData = bookDoc.toJSON() as BookDocType;
-                        setGlobalSummaries(bookData.globalSummaries || []);
-                    }
-                });
-            }
-
-            let imageSub: { unsubscribe: () => void } | null = null;
-            if (db.images) {
-                imageSub = db.images.find({ selector: { bookId: book.id } }).$.subscribe((imageDocs) => {
-                    setBookImages(imageDocs.map((doc) => doc.toJSON() as ImageDocType));
-                });
-            }
+            void readerDataSource.subscribeToImages(book.id, setBookImages);
 
             // Get reading state
-            let state = await db.reading_states.findOne(book.id).exec();
-            if (!state) {
-                // Create default state if missing
-                state = await db.reading_states.insert({
-                    bookId: book.id,
-                    currentChapterId: book.chapterIds[0],
-                    currentWordIndex: 0,
-                    lastRead: Date.now(),
-                    highlights: []
-                });
-            }
+            const state = await readerDataSource.getOrCreateReadingState(book.id, book.chapterIds[0]);
+            if (!state) return;
 
             const stateDoc = state.toJSON() as ReadingStateDocType;
             setReadingState(stateDoc);
@@ -1922,17 +1874,15 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                 initialLoadAppliedForBookRef.current = book.id;
                 const requestedChapterId = stateDoc.currentChapterId || book.chapterIds?.[0];
                 const requestedChapterDoc = requestedChapterId
-                    ? await db.chapters.findOne(requestedChapterId).exec()
+                    ? await readerDataSource.findChapter(requestedChapterId)
                     : null;
-                const requestedChapter = requestedChapterDoc?.toJSON() as ChapterDocType | undefined;
+                const requestedChapter = requestedChapterDoc || undefined;
 
                 if (requestedChapter && isReadableChapter(requestedChapter)) {
                     loadChapter(requestedChapter.id, stateDoc.currentWordIndex);
                 } else {
-                    const chapterDocs = await chapterQuery.exec();
-                    const firstReadableChapter = chapterDocs
-                        .map(doc => doc.toJSON() as ChapterDocType)
-                        .find(isReadableChapter);
+                    const chapterDocs = await readerDataSource.listChapters(book.id);
+                    const firstReadableChapter = chapterDocs.find(isReadableChapter);
 
                     if (firstReadableChapter) {
                         loadChapter(firstReadableChapter.id, 0);
@@ -1941,19 +1891,9 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                     }
                 }
             }
-            
-            // Return cleanup for book and image subscriptions
-            return () => {
-                bookSub?.unsubscribe();
-                imageSub?.unsubscribe();
-            };
         };
-        const bookSubCleanup = loadState();
-        return () => {
-            if (sub) sub.unsubscribe();
-            bookSubCleanup.then(cleanup => cleanup?.());
-        };
-    }, [book.id, book.chapterIds, loadChapter]);
+        void loadState();
+    }, [book.id, book.chapterIds, loadChapter, readerDataSource]);
 
     useEffect(() => {
         if (!waitingForReadableChapterRef.current || currentChapter) return;
