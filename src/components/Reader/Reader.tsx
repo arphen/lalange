@@ -27,6 +27,7 @@ import {
     isReadableChapter,
 } from './readerNavigation';
 import { buildImageCueAssignments, findImageBreakAfterChapter, type ImageBreakCue } from './imageCue';
+import { readerPerformanceCounters } from './readerPerformance';
 
 import { scheduler } from '../../core/ingest/scheduler';
 import { processChaptersInBackground, resumeIncompleteAnalysis } from '../../core/ingest/pipeline';
@@ -108,6 +109,10 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
         return window.matchMedia(COMPACT_LANDSCAPE_MEDIA_QUERY).matches;
     });
     const [lensScale, setLensScale] = useState(LENS_SCALE_DEFAULT);
+
+    useEffect(() => {
+        readerPerformanceCounters.record('readerCommits');
+    });
     
     // Use individual selectors for all settings to minimize re-renders
     const wpm = useSettingsStore((s) => s.wpm);
@@ -280,6 +285,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
             wordIndex,
             getGlobalWordIndexFromIndex(chapterWordIndexRef.current, chapterId, wordIndex),
         );
+        readerPerformanceCounters.record('schedulerCursorPublications');
     }, [book.id]);
 
     // Summary Mode Refs
@@ -481,6 +487,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
             const currentWord = frameTokens[0] ?? '';
             if (frameDisplayText) {
                 const referenceWord = frameTokens.length === 1 && isReferenceToken(currentWord);
+                readerPerformanceCounters.record('centerProjections');
 
                 if (referenceWord) {
                     rsvpRef.current.innerHTML = '<span class="uppercase tracking-[0.35em] text-sm md:text-base font-semibold text-gray-400">REF</span>';
@@ -521,6 +528,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
             const start = Math.max(contextHistoryStartRef.current, idx - 150);
             const end = frame.startIndex;
             const prevWords = words.slice(start, end);
+            let createdNodes = 0;
             const html = prevWords.map((w, i) => {
                 const actualIndex = start + i;
                 
@@ -539,6 +547,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                 // Add line break after punctuation to simulate structure
                 const isEnd = /[.!?]$/.test(w);
                 const breakHtml = isEnd ? '<div class="w-full h-2"></div>' : '';
+                createdNodes += 1 + w.length + (isEnd ? 1 : 0);
 
                 const density = densitiesRef.current[actualIndex] || 1.0;
                 const colorClass = getDensityColor(density);
@@ -554,6 +563,8 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                 `;
             }).join('');
             prevContainerRef.current.innerHTML = html;
+            readerPerformanceCounters.record('riverRebuilds');
+            readerPerformanceCounters.record('riverNodesCreated', createdNodes);
             // Scroll to bottom
             prevContainerRef.current.scrollTop = prevContainerRef.current.scrollHeight;
         }
@@ -564,6 +575,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
             const start = frameEnd;
             const end = Math.min(words.length, frameEnd + 150);
             const nextWords = words.slice(start, end);
+            let createdNodes = 0;
             const html = nextWords.map((w, i) => {
                 const actualIndex = start + i;
                 
@@ -581,6 +593,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                 
                 const isEnd = /[.!?]$/.test(w);
                 const breakHtml = isEnd ? '<div class="w-full h-2"></div>' : '';
+                createdNodes += 1 + w.length + (isEnd ? 1 : 0);
 
                 const density = densitiesRef.current[actualIndex] || 1.0;
                 const colorClass = getDensityColor(density);
@@ -596,6 +609,8 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                 `;
             }).join('');
             nextContainerRef.current.innerHTML = html;
+            readerPerformanceCounters.record('riverRebuilds');
+            readerPerformanceCounters.record('riverNodesCreated', createdNodes);
             nextContainerRef.current.scrollTop = 0;
         }
     }, [commonPhraseRankLimit, riverTopEnabled, riverBottomEnabled, applyLensScaleToElement]);
@@ -929,6 +944,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                     lastRead: Date.now(),
                 });
                 lastSavedPositionRef.current = position;
+                readerPerformanceCounters.record('persistenceWrites');
             } finally {
                 saveInFlightRef.current = null;
             }
