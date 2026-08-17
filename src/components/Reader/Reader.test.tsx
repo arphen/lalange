@@ -314,8 +314,53 @@ describe('Reader Component', () => {
             const sidebar = screen.getByTestId('sidebar-container');
             expect(sidebar).toHaveClass('translate-x-0');
             expect(sidebar).not.toHaveClass('translate-x-full');
-            expect(screen.getByTestId('speed-controls')).toHaveClass('md:mr-80');
+            expect(screen.getByTestId('speed-controls')).toHaveClass('reader-speed-dock--contents-open');
         });
+    });
+
+    it('keeps the Contents trigger stable and exposes a panel-owned close action', async () => {
+        render(<Reader book={mockBook} />);
+
+        await waitFor(() => {
+            const trigger = screen.getByTestId('toggle-chapters');
+            expect(trigger).toHaveAccessibleName('Contents');
+            expect(trigger).toHaveAttribute('aria-expanded', 'true');
+            expect(screen.getByRole('button', { name: 'Close contents' })).toBeInTheDocument();
+        });
+
+        fireEvent.click(screen.getByRole('button', { name: 'Close contents' }));
+
+        await waitFor(() => {
+            expect(screen.getByTestId('toggle-chapters')).toHaveAttribute('aria-expanded', 'false');
+        });
+    });
+
+    it('closes desktop Contents on Escape when the document has focus', async () => {
+        render(<Reader book={mockBook} />);
+
+        await waitFor(() => expect(screen.getByTestId('sidebar-container')).toHaveClass('translate-x-0'));
+        fireEvent.keyDown(window, { key: 'Escape' });
+
+        await waitFor(() => expect(screen.getByTestId('sidebar-container')).toHaveClass('translate-x-full'));
+    });
+
+    it('restores focus after closing the mobile Contents drawer', async () => {
+        const originalWidth = window.innerWidth;
+        Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 });
+
+        try {
+            render(<Reader book={mockBook} />);
+
+            await waitFor(() => expect(screen.getByTestId('sidebar-container')).toHaveClass('translate-x-full'));
+            fireEvent.click(screen.getByTestId('toggle-chapters'));
+            await waitFor(() => expect(screen.getByRole('button', { name: 'Close contents' })).toHaveFocus());
+
+            fireEvent.click(screen.getByRole('button', { name: 'Close contents' }));
+
+            await waitFor(() => expect(screen.getByTestId('toggle-chapters')).toHaveFocus());
+        } finally {
+            Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth });
+        }
     });
 
     it('harmonizes listen panel placement with the chapter drawer', async () => {
@@ -328,13 +373,13 @@ describe('Reader Component', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Listen' }));
 
         const panel = screen.getByTestId('tts-player-panel');
-        expect(panel).toHaveClass('md:right-[21rem]');
+        expect(panel).toHaveClass('reader-audio-dock--contents-open');
         expect(panel).toHaveClass('opacity-0');
 
         fireEvent.click(screen.getByTestId('toggle-chapters'));
 
         await waitFor(() => {
-            expect(panel).not.toHaveClass('md:right-[21rem]');
+            expect(panel).not.toHaveClass('reader-audio-dock--contents-open');
             expect(panel).not.toHaveClass('opacity-0');
         });
     });
@@ -566,7 +611,7 @@ describe('Reader Component', () => {
             expect(rsvpContainer).toHaveTextContent('Second');
             expect(rsvpContainer).toHaveAttribute('aria-pressed', 'false');
             expect(screen.getByTestId('reader-context-top')).toBeEmptyDOMElement();
-            expect(screen.getByTestId('sidebar-container')).toHaveClass('translate-x-full');
+            expect(screen.getByTestId('sidebar-container')).toHaveClass('translate-x-0');
 
             await act(async () => {
                 await vi.advanceTimersByTimeAsync(1200);
@@ -605,7 +650,7 @@ describe('Reader Component', () => {
                 await vi.advanceTimersByTimeAsync(400);
             });
 
-            expect(screen.getByTestId('sidebar-container')).toHaveClass('translate-x-full');
+            expect(screen.getByTestId('sidebar-container')).toHaveClass('translate-x-0');
 
             const focusLane = rsvpContainer.querySelector('.reader-focus-lane');
             expect(focusLane).toBeInTheDocument();
@@ -665,7 +710,7 @@ describe('Reader Component', () => {
 
         await waitFor(() => {
             expect(sidebar).toHaveClass('translate-x-full');
-            expect(screen.getByTestId('speed-controls')).toHaveClass('md:mr-0');
+            expect(screen.getByTestId('speed-controls')).not.toHaveClass('reader-speed-dock--contents-open');
         });
     });
 

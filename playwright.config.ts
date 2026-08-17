@@ -1,5 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
 
+const playwrightPort = process.env.PLAYWRIGHT_PORT ?? '5176';
+
 export default defineConfig({
   testDir: './e2e',
   fullyParallel: true,
@@ -8,7 +10,7 @@ export default defineConfig({
   workers: 1,
   reporter: 'list',
   use: {
-    baseURL: process.env.PLAYWRIGHT_BASE_URL ?? 'http://localhost:5173',
+    baseURL: process.env.PLAYWRIGHT_BASE_URL ?? `http://localhost:${playwrightPort}`,
     trace: 'on-first-retry',
     viewport: { width: 1280, height: 720 },
   },
@@ -23,9 +25,9 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: 'VITE_HTTPS=0 npm run dev',
-    url: 'http://localhost:5173',
-    reuseExistingServer: !process.env.CI,
+    command: `VITE_HTTPS=0 npm run dev -- --port ${playwrightPort}`,
+    url: `http://localhost:${playwrightPort}`,
+    reuseExistingServer: process.env.PLAYWRIGHT_REUSE_SERVER === '1',
     stdout: 'ignore',
     stderr: 'pipe',
   },

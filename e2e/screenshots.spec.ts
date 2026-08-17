@@ -244,10 +244,16 @@ test('01 Reader Journey Key Flows', async ({ page, isMobile }) => {
   expect(toolbarBox).not.toBeNull();
   const contentsHeaderBox = await page.getByRole('heading', { name: 'Contents' }).boundingBox();
   expect(contentsHeaderBox).not.toBeNull();
-  expect(contentsHeaderBox!.y).toBeGreaterThanOrEqual(toolbarBox!.y + toolbarBox!.height);
+  expect(contentsHeaderBox!.x).toBeGreaterThanOrEqual(drawerBox!.x);
+  expect(contentsHeaderBox!.y).toBeGreaterThanOrEqual(drawerBox!.y);
   expect(Math.abs(toolbarBox!.x - closedToolbarBox!.x)).toBeLessThanOrEqual(1);
   expect(Math.abs(toolbarBox!.y - closedToolbarBox!.y)).toBeLessThanOrEqual(1);
   expect(toolbarBox!.y).toBeLessThanOrEqual(20);
+  if (isMobile) {
+    expect(drawerBox!.y).toBeGreaterThanOrEqual(toolbarBox!.y + toolbarBox!.height - 1);
+  } else {
+    expect(toolbarBox!.x + toolbarBox!.width).toBeLessThanOrEqual(drawerBox!.x + 1);
+  }
   await expect(page.getByRole('button', { name: /fullscreen/i })).toHaveCount(0);
   await expect(page.getByRole('button', { name: /focus mode|exit focus mode/i })).toBeVisible();
   const pacingControl = page.getByRole('button', { name: /adaptive pacing/i }).first();

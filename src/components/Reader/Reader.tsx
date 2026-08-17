@@ -63,6 +63,7 @@ const getDensityColor = (score: number) => {
 };
 
 const COMPACT_LANDSCAPE_MEDIA_QUERY = '(orientation: landscape) and (max-height: 640px)';
+const DESKTOP_READER_MEDIA_QUERY = '(min-width: 768px)';
 const LONG_WORD_SPLIT_MIN_LENGTH = 12;
 const LONG_WORD_SPLIT_SEGMENT_LENGTH = 8;
 const TOUCH_TAP_MAX_MOVEMENT_PX = 10;
@@ -241,9 +242,15 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
     const [chapters, setChapters] = useState<ChapterDocType[]>([]);
     const [bookImages, setBookImages] = useState<ImageDocType[]>([]);
     const [globalSummaries, setGlobalSummaries] = useState<GlobalSummaryType[]>([]);
+    const [isDesktopLayout, setIsDesktopLayout] = useState(() => (
+        typeof window === 'undefined' || window.innerWidth >= 768
+    ));
     const [showChapters, setShowChapters] = useState(() => (
         typeof window === 'undefined' || window.innerWidth >= 768
     ));
+    const contentsTriggerRef = useRef<HTMLButtonElement>(null);
+    const contentsPanelRef = useRef<HTMLDivElement>(null);
+    const previousContentsOpenRef = useRef(false);
     const [chapterHandoffSelection, setChapterHandoffSelection] = useState<ChapterHandoffSelection | null>(null);
     const [inspectingChapterId, setInspectingChapterId] = useState<string | null>(null);
     const inspectingChapter = chapters.find(c => c.id === inspectingChapterId);
@@ -675,6 +682,55 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
     }, [focusModeEnabled]);
 
     useEffect(() => {
+        if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
+
+        const mediaQuery = window.matchMedia(DESKTOP_READER_MEDIA_QUERY);
+        const onChange = (event: MediaQueryListEvent) => setIsDesktopLayout(event.matches);
+
+        if (typeof mediaQuery.addEventListener === 'function') {
+            mediaQuery.addEventListener('change', onChange);
+            return () => mediaQuery.removeEventListener('change', onChange);
+        }
+
+        mediaQuery.addListener(onChange);
+        return () => mediaQuery.removeListener(onChange);
+    }, []);
+
+    useEffect(() => {
+        if (isDesktopLayout) return;
+        setShowChapters(false);
+        setChapterHandoffSelection(null);
+    }, [isDesktopLayout]);
+
+    useEffect(() => {
+        const wasOpen = previousContentsOpenRef.current;
+        previousContentsOpenRef.current = showChapters;
+
+        if (wasOpen && !showChapters && !isDesktopLayout) {
+            queueMicrotask(() => contentsTriggerRef.current?.focus());
+        }
+    }, [isDesktopLayout, showChapters]);
+
+    useEffect(() => {
+        if (!showChapters) return;
+
+        const onKeyDown = (event: KeyboardEvent) => {
+            if (event.key !== 'Escape') return;
+
+            const focusIsInPanel = contentsPanelRef.current?.contains(document.activeElement) ?? false;
+            const focusIsInDocumentBody = document.activeElement === document.body;
+            if (!isDesktopLayout || focusIsInPanel || focusIsInDocumentBody) {
+                event.preventDefault();
+                setShowChapters(false);
+                setChapterHandoffSelection(null);
+            }
+        };
+
+        window.addEventListener('keydown', onKeyDown);
+        return () => window.removeEventListener('keydown', onKeyDown);
+    }, [isDesktopLayout, showChapters]);
+
+    useEffect(() => {
         if (!showChapters && chapterHandoffSelection) {
             setChapterHandoffSelection(null);
         }
@@ -733,7 +789,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
             chapterTransitionActiveRef.current = true;
             pauseAfterChapterTransitionRef.current = false;
             const wasPlaying = isPlayingRef.current;
-            const shouldLingerContents = closeContents && showChapters;
+            const shouldLingerContents = closeContents && showChapters && isDesktopLayout;
 
             if (closeContents && !shouldLingerContents) {
                 setShowChapters(false);
@@ -874,7 +930,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                 completeSummaryTransition();
             }
         });
-    }, [animatePlaybackMomentum, readerSessionController, setIsPlaying, setCountdown, setTransitionLabel, setShowChapters, showChapters]);
+    }, [animatePlaybackMomentum, isDesktopLayout, readerSessionController, setIsPlaying, setCountdown, setTransitionLabel, setShowChapters, showChapters]);
 
     const handleSkipSummary = useCallback(() => {
         transitionSequenceRef.current?.cancel();
@@ -1127,7 +1183,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
             completeTarget,
             {
                 kind: 'chapter',
-                closeContents: true,
+                closeContents: !isDesktopLayout,
             },
         );
     }, [
@@ -1140,6 +1196,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
         transitionKind,
         updateProgressMilestone,
         wpm,
+        isDesktopLayout,
     ]);
 
     const handleTTSChapterEnd = useCallback(() => {
@@ -1436,6 +1493,30 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
         }
     };
 
+    const closeContents = useCallback(() => {
+        setShowChapters(false);
+        setChapterHandoffSelection(null);
+    }, []);
+
+    const handleContentsKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
+        if (isDesktopLayout || event.key !== 'Tab' || !contentsPanelRef.current) return;
+
+        const focusableElements = Array.from(contentsPanelRef.current.querySelectorAll<HTMLElement>(
+            'button:not([disabled]), input:not([disabled]), [tabindex="0"]',
+        ));
+        if (focusableElements.length === 0) return;
+
+        const firstElement = focusableElements[0];
+        const lastElement = focusableElements[focusableElements.length - 1];
+        if (event.shiftKey && document.activeElement === firstElement) {
+            event.preventDefault();
+            lastElement.focus();
+        } else if (!event.shiftKey && document.activeElement === lastElement) {
+            event.preventDefault();
+            firstElement.focus();
+        }
+    }, [isDesktopLayout]);
+
     const resetChapterDrawerSwipe = useCallback(() => {
         chapterDrawerTouchStartRef.current = null;
         chapterDrawerSwipeDeltaRef.current = 0;
@@ -1481,11 +1562,11 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
             chapterDrawerSwipeDeltaRef.current >= CHAPTER_DRAWER_SWIPE_CLOSE_DISTANCE_PX;
 
         if (shouldClose) {
-            setShowChapters(false);
+            closeContents();
         }
 
         resetChapterDrawerSwipe();
-    }, [resetChapterDrawerSwipe]);
+    }, [closeContents, resetChapterDrawerSwipe]);
 
     // === BATTERY-OPTIMIZED PLAYBACK LOOP ===
     // Instead of polling at 60fps with rAF, we use setTimeout to sleep until
@@ -2229,7 +2310,10 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                 </div>
             )}
             {/* Floating Header / Controls */}
-            <div className="reader-toolbar absolute top-0 left-0 right-0 z-[90] p-2 md:p-4 flex justify-between items-start pointer-events-none">
+            <div className={clsx(
+                'reader-toolbar absolute top-0 left-0 right-0 z-[90] p-2 md:p-4 flex justify-between items-start pointer-events-none',
+                isDesktopLayout && showChapters && 'reader-toolbar--contents-open',
+            )}>
                 {onBack ? (
                     <button
                         onClick={onBack}
@@ -2373,23 +2457,20 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                     
                     {/* Chapters Button */}
                     <button
+                        ref={contentsTriggerRef}
                         type="button"
                         onClick={() => setShowChapters(!showChapters)}
                         data-testid="toggle-chapters"
                         className={clsx('reader-toolbar-button reader-focus-fade', showChapters && 'reader-toolbar-button--active')}
-                        title={showChapters ? 'Close contents' : 'Open contents'}
-                        aria-label={showChapters ? 'Close contents' : 'Open contents'}
+                        title="Contents"
+                        aria-label="Contents"
                         aria-expanded={showChapters}
                         aria-controls="reader-contents"
                         aria-hidden={focusModeEnabled}
                         tabIndex={focusModeEnabled ? -1 : undefined}
                     >
-                        {showChapters ? (
-                            <X className="reader-toolbar-icon" />
-                        ) : (
-                            <List className="reader-toolbar-icon" />
-                        )}
-                        <span className="reader-toolbar-label">{showChapters ? 'Close' : 'Contents'}</span>
+                        <List className="reader-toolbar-icon" />
+                        <span className="reader-toolbar-label">Contents</span>
                     </button>
 
                 </div>
@@ -2398,26 +2479,31 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
             {/* Backdrop click-shield for sidebar on mobile/small-screens */}
             <div
                 className={clsx(
-                    'fixed inset-0 bg-black/60 backdrop-blur-xs z-[75] md:hidden transition-opacity duration-500',
+                    'reader-contents-backdrop fixed left-0 right-0 bottom-0 bg-black/60 backdrop-blur-xs z-[75] md:hidden transition-opacity',
                     showChapters
                         ? (transitionKind === 'chapter' ? 'opacity-100 pointer-events-none' : 'opacity-100')
                         : 'opacity-0 pointer-events-none',
                 )}
-                onClick={() => setShowChapters(false)}
+                onClick={closeContents}
                 aria-hidden="true"
             />
 
-            {/* Chapters Drawer (Right) - responsive width so it doesn't crowd small mobile viewports */}
+            {/* Contents rail/drawer */}
             <div
                 id="reader-contents"
                 data-testid="sidebar-container"
+                ref={contentsPanelRef}
                 className={clsx(
-                    'reader-contents-panel fixed inset-y-0 right-0 z-[80] w-[min(84vw,20rem)] transform',
+                    'reader-contents-panel fixed right-0 z-[80] transform',
                     showChapters ? 'translate-x-0' : 'translate-x-full pointer-events-none',
                     transitionKind === 'chapter' && chapterTransitionPhase !== null && 'pointer-events-none',
                 )}
+                role={isDesktopLayout ? 'navigation' : 'dialog'}
+                aria-modal={isDesktopLayout ? undefined : true}
+                aria-labelledby="reader-contents-title"
                 aria-hidden={!showChapters}
                 inert={!showChapters}
+                onKeyDown={handleContentsKeyDown}
                 onTouchStart={handleChapterDrawerTouchStart}
                 onTouchMove={handleChapterDrawerTouchMove}
                 onTouchEnd={handleChapterDrawerTouchEnd}
@@ -2437,6 +2523,9 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                     globalSummaries={globalSummaries}
                     structureMode={book.structureMode}
                     onPlayGlobalSummary={handlePlayGlobalSummary}
+                    onClose={closeContents}
+                    isOpen={showChapters}
+                    isModal={!isDesktopLayout}
                     chapterHandoffSelection={chapterHandoffSelection}
                     chapterHandoffActive={transitionKind === 'chapter' && chapterTransitionPhase !== null}
                 />
@@ -2523,7 +2612,10 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
 
             {/* Main Reader Area (Full Screen) - uses responsive margins to prevent shifting/squishing text on mobile */}
             <div
-                className={`reader-main-stage flex-1 h-full relative flex flex-col min-w-0 pb-20 md:pb-0 transition-all duration-500 ${showChapters ? 'md:mr-80 mr-0' : 'mr-0'}`}
+                className={clsx(
+                    'reader-main-stage flex-1 h-full relative flex flex-col min-w-0 pb-20 md:pb-0 transition-all duration-300',
+                    isDesktopLayout && showChapters && 'reader-main-stage--contents-open',
+                )}
             >
                 <div className={clsx(
                     'reader-reading-plane w-full h-full flex flex-col relative group mx-auto',
@@ -2735,7 +2827,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                 data-testid="speed-controls"
                 className={clsx(
                     'reader-speed-dock reader-focus-fade absolute inset-x-0 bottom-0 z-[70] h-20 px-4 flex items-center justify-center gap-2 md:inset-x-auto md:bottom-8 md:right-8 md:h-auto md:px-2 md:py-2 md:opacity-70 md:hover:opacity-100',
-                    showChapters ? 'md:mr-80' : 'md:mr-0',
+                    isDesktopLayout && showChapters && 'reader-speed-dock--contents-open',
                 )}
                 aria-hidden={focusModeEnabled}
                 inert={focusModeEnabled}
@@ -2878,7 +2970,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                         onChapterEnd={handleTTSChapterEnd}
                         compact={false}
                         dockClassName={clsx(
-                            showChapters && 'md:right-[21rem]',
+                            isDesktopLayout && showChapters && 'reader-audio-dock--contents-open',
                             showChapters && 'opacity-0 pointer-events-none md:opacity-100 md:pointer-events-auto',
                         )}
                     />

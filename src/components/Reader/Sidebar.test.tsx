@@ -112,6 +112,15 @@ describe('Sidebar Component', () => {
     });
 
     describe('Navigation', () => {
+        it('provides a panel-owned close action', () => {
+            const onClose = vi.fn();
+            render(<Sidebar {...defaultProps} onClose={onClose} />);
+
+            fireEvent.click(screen.getByRole('button', { name: 'Close contents' }));
+
+            expect(onClose).toHaveBeenCalledOnce();
+        });
+
         it('loads a chapter when its row is clicked', () => {
             const chapter = createMockChapter();
             const onLoadChapter = vi.fn();
@@ -120,6 +129,36 @@ describe('Sidebar Component', () => {
             fireEvent.click(screen.getByTestId('sidebar-chapter-button'));
 
             expect(onLoadChapter).toHaveBeenCalledWith('chapter-1');
+        });
+
+        it('keeps chapter navigation separate from section disclosure', () => {
+            const chapter = createMockChapter();
+            const onLoadChapter = vi.fn();
+            render(<Sidebar {...defaultProps} chapters={[chapter]} onLoadChapter={onLoadChapter} />);
+
+            fireEvent.click(screen.getByRole('button', { name: 'Collapse sections for Chapter 1' }));
+
+            expect(onLoadChapter).not.toHaveBeenCalled();
+            expect(screen.queryByTestId('subchapter-btn-0')).not.toBeInTheDocument();
+            expect(screen.getByRole('button', { name: 'Expand sections for Chapter 1' })).toBeInTheDocument();
+        });
+
+        it('makes the current chapter action explicit instead of a no-op', () => {
+            const chapter = createMockChapter();
+            const onLoadChapter = vi.fn();
+            render(
+                <Sidebar
+                    {...defaultProps}
+                    chapters={[chapter]}
+                    currentChapter={chapter}
+                    currentWordIndex={4}
+                    onLoadChapter={onLoadChapter}
+                />,
+            );
+
+            fireEvent.click(screen.getByTestId('sidebar-chapter-button'));
+
+            expect(onLoadChapter).toHaveBeenCalledWith('chapter-1', 4);
         });
 
         it('loads a section start regardless of viewport size', () => {
@@ -156,8 +195,41 @@ describe('Sidebar Component', () => {
                 />,
             );
 
-            expect(screen.getByTestId('chapter-progress-chapter-1')).toHaveAttribute('aria-valuenow', '0');
+            expect(screen.queryByTestId('chapter-progress-chapter-1')).not.toBeInTheDocument();
             expect(screen.getByTestId('chapter-progress-chapter-2')).toHaveAttribute('aria-valuenow', '60');
+        });
+
+        it('keeps inactive chapter sections collapsed', () => {
+            const firstChapter = createMockChapter();
+            const secondChapter = createMockChapter({ id: 'chapter-2', index: 1, title: 'Chapter 2' });
+            render(
+                <Sidebar
+                    {...defaultProps}
+                    chapters={[firstChapter, secondChapter]}
+                    currentChapter={firstChapter}
+                />,
+            );
+
+            expect(screen.getByRole('button', { name: 'Collapse sections for Chapter 1' })).toBeInTheDocument();
+            expect(screen.getByRole('button', { name: 'Expand sections for Chapter 2' })).toBeInTheDocument();
+            expect(screen.getAllByTestId('subchapter-btn-0')).toHaveLength(1);
+        });
+
+        it('searches chapter titles once the contents list is large enough', () => {
+            const chapters = Array.from({ length: 12 }, (_, index) => createMockChapter({
+                id: `chapter-${index + 1}`,
+                index,
+                title: index === 8 ? 'A Distant Shore' : `Chapter ${index + 1}`,
+                subchapters: [],
+            }));
+            render(<Sidebar {...defaultProps} chapters={chapters} />);
+
+            fireEvent.change(screen.getByRole('searchbox', { name: 'Search chapters and sections' }), {
+                target: { value: 'distant' },
+            });
+
+            expect(screen.getByText('A Distant Shore')).toBeInTheDocument();
+            expect(screen.queryByText('Chapter 1')).not.toBeInTheDocument();
         });
 
         it('does not expose analysis status in the navigation drawer', () => {
@@ -281,8 +353,8 @@ describe('Sidebar Component', () => {
 
             render(<Sidebar {...defaultProps} globalSummaries={globalSummaries} />);
 
-            expect(screen.getByRole('button', { name: /Recaps/i })).toBeInTheDocument();
-            fireEvent.click(screen.getByRole('button', { name: /Recaps/i }));
+            expect(screen.getByRole('tab', { name: /Recaps/i })).toBeInTheDocument();
+            fireEvent.click(screen.getByRole('tab', { name: /Recaps/i }));
             expect(screen.getByText('Summary 1')).toBeInTheDocument();
             expect(screen.getByText('Summary 2')).toBeInTheDocument();
         });
@@ -320,7 +392,7 @@ describe('Sidebar Component', () => {
 
             render(<Sidebar {...defaultProps} globalSummaries={globalSummaries} />);
 
-            fireEvent.click(screen.getByRole('button', { name: /Recaps/i }));
+            fireEvent.click(screen.getByRole('tab', { name: /Recaps/i }));
             expect(screen.getByText('Words 0-2,500')).toBeInTheDocument();
         });
 
@@ -346,11 +418,67 @@ describe('Sidebar Component', () => {
                 />
             );
 
-            fireEvent.click(screen.getByRole('button', { name: /Recaps/i }));
+            fireEvent.click(screen.getByRole('tab', { name: /Recaps/i }));
             const summaryButton = screen.getByText('Summary 1').closest('button');
             fireEvent.click(summaryButton!);
 
             expect(onPlayGlobalSummary).toHaveBeenCalledWith(globalSummaries[0]);
+        });
+
+        it('provides a clear return to Contents while a recap is active', () => {
+            const chapter = createMockChapter();
+            const globalSummaries = [
+                {
+                    id: 'global-1',
+                    startWordIndex: 0,
+                    endWordIndex: 2500,
+                    startChapterId: 'ch1',
+                    endChapterId: 'ch1',
+                    summary: 'Summary text',
+                    generatedAt: Date.now(),
+                },
+            ];
+
+            render(
+                <Sidebar
+                    {...defaultProps}
+                    chapters={[chapter]}
+                    currentChapter={chapter}
+                    globalSummaries={globalSummaries}
+                    activeSummaryId="global-1"
+                />,
+            );
+
+            expect(screen.getByText('Summary 1')).toBeInTheDocument();
+            fireEvent.click(screen.getByRole('tab', { name: 'Contents' }));
+
+            expect(screen.getByTestId('sidebar-chapter-button')).toBeInTheDocument();
+            expect(screen.queryByText('Summary 1')).not.toBeInTheDocument();
+        });
+
+        it('moves between tabs with standard arrow keys', () => {
+            const globalSummaries = [
+                {
+                    id: 'global-1',
+                    startWordIndex: 0,
+                    endWordIndex: 2500,
+                    startChapterId: 'ch1',
+                    endChapterId: 'ch1',
+                    summary: 'Summary text',
+                    generatedAt: Date.now(),
+                },
+            ];
+
+            render(<Sidebar {...defaultProps} globalSummaries={globalSummaries} />);
+            const contentsTab = screen.getByRole('tab', { name: 'Contents' });
+            const recapsTab = screen.getByRole('tab', { name: /Recaps/i });
+
+            contentsTab.focus();
+            fireEvent.keyDown(contentsTab, { key: 'ArrowRight' });
+
+            expect(recapsTab).toHaveFocus();
+            expect(recapsTab).toHaveAttribute('aria-selected', 'true');
+            expect(contentsTab).toHaveAttribute('tabindex', '-1');
         });
 
         it('should highlight active global summary', async () => {
@@ -386,11 +514,9 @@ describe('Sidebar Component', () => {
             const activeButton = (await screen.findByText('Summary 1')).closest('button');
             const inactiveButton = screen.getByText('Summary 2').closest('button');
 
-            expect(activeButton).toHaveClass('bg-cyan-950/40');
-            expect(activeButton).toHaveClass('border-cyan-400/40');
+            expect(activeButton).toHaveClass('reader-recap-row--active');
             
-            // Inactive summary should not have purple highlight
-            expect(inactiveButton).not.toHaveClass('bg-purple-900/40');
+            expect(inactiveButton).not.toHaveClass('reader-recap-row--active');
         });
     });
 });

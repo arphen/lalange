@@ -3,7 +3,7 @@ import { type ChapterDocType, type GlobalSummaryType } from '../../core/sync/db'
 import { formatReadingTime } from '../../hooks/useReadingTimeEstimate';
 import type { StructureMode } from '../../core/ingest/structure';
 import { clsx } from 'clsx';
-import { BookOpen, ChevronRight, ListTree, MapPin, X } from 'lucide-react';
+import { BookOpen, ChevronDown, ChevronRight, ListTree, MapPin, Search, X } from 'lucide-react';
 import { getSubchapterDisplayName } from './Sidebar.utils';
 import { isReadingChapter } from './readerNavigation';
 
@@ -20,6 +20,8 @@ interface SidebarProps {
     structureMode?: StructureMode;
     onPlayGlobalSummary?: (summary: GlobalSummaryType) => void;
     onClose?: () => void;
+    isOpen?: boolean;
+    isModal?: boolean;
     chapterHandoffSelection?: {
         chapterId: string;
         startWordIndex: number | null;
@@ -40,19 +42,33 @@ export const Sidebar: React.FC<SidebarProps> = ({
     structureMode,
     onPlayGlobalSummary,
     onClose,
+    isOpen = false,
+    isModal = false,
     chapterHandoffSelection = null,
     chapterHandoffActive = false,
 }) => {
-    const [showRecaps, setShowRecaps] = React.useState(false);
+    const [showRecaps, setShowRecaps] = React.useState<boolean | null>(() => (
+        activeSummaryId ? true : null
+    ));
+    const [searchQuery, setSearchQuery] = React.useState('');
+    const [expandedChapterIds, setExpandedChapterIds] = React.useState<Set<string>>(new Set());
+    const [collapsedChapterIds, setCollapsedChapterIds] = React.useState<Set<string>>(new Set());
+    const tabsRef = React.useRef<HTMLDivElement>(null);
+    const closeButtonRef = React.useRef<HTMLButtonElement>(null);
+    const activeDestinationRef = React.useRef<HTMLButtonElement>(null);
     const latestWordIndexRef = React.useRef(currentWordIndex ?? 0);
     const [sampledProgress, setSampledProgress] = React.useState({
         chapterId: currentChapter?.id,
         wordIndex: currentWordIndex ?? 0,
     });
-    const recapsExpanded = Boolean(activeSummaryId) || showRecaps;
+    const recapsExpanded = showRecaps ?? Boolean(activeSummaryId);
     const sectionInfoLabel = 'Analysis ranges are generated inside each reading section for density work and recaps.';
     const isReformattedStructure = structureMode === 'generated' || structureMode === 'hybrid';
     const structureCountLabel = isReformattedStructure ? 'section' : 'chapter';
+
+    React.useEffect(() => {
+        if (isOpen && isModal) closeButtonRef.current?.focus();
+    }, [isOpen, isModal]);
 
     React.useEffect(() => {
         latestWordIndexRef.current = currentWordIndex ?? 0;
@@ -110,6 +126,92 @@ export const Sidebar: React.FC<SidebarProps> = ({
         : 0;
     const bookProgressPercent = Math.round(bookProgress * 100);
 
+    const destinationCount = displayChapters.reduce(
+        (count, chapter) => count + 1 + (chapter.subchapters?.length || 0),
+        0,
+    );
+    const showSearch = destinationCount >= 12;
+    const normalizedSearchQuery = searchQuery
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLocaleLowerCase()
+        .trim();
+    const visibleChapters = displayChapters
+        .map((chapter) => {
+            if (!normalizedSearchQuery) return { chapter, subchapters: chapter.subchapters || [] };
+
+            const matchesChapter = chapter.title
+                .normalize('NFD')
+                .replace(/[\u0300-\u036f]/g, '')
+                .toLocaleLowerCase()
+                .includes(normalizedSearchQuery);
+            const subchapters = (chapter.subchapters || []).filter((sub) => getSubchapterDisplayName(sub, chapter.content)
+                .normalize('NFD')
+                .replace(/[\u0300-\u036f]/g, '')
+                .toLocaleLowerCase()
+                .includes(normalizedSearchQuery));
+
+            return matchesChapter || subchapters.length > 0
+                ? { chapter, subchapters: matchesChapter ? chapter.subchapters || [] : subchapters }
+                : null;
+        })
+        .filter((entry): entry is { chapter: ChapterDocType; subchapters: NonNullable<ChapterDocType['subchapters']> } => entry !== null);
+
+    const activeSubchapterStart = currentChapter?.subchapters?.find((sub, index, subchapters) => (
+        currentWordIndex !== undefined
+        && currentWordIndex >= sub.startWordIndex
+        && (currentWordIndex < sub.endWordIndex || (index === subchapters.length - 1 && currentWordIndex >= sub.startWordIndex))
+    ))?.startWordIndex;
+
+    React.useEffect(() => {
+        if (!isOpen || showRecaps || !activeDestinationRef.current) return;
+        activeDestinationRef.current.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
+    }, [activeSubchapterStart, currentChapter?.id, isOpen, showRecaps]);
+
+    const toggleChapterExpansion = (chapterId: string, isExpanded: boolean) => {
+        if (isExpanded) {
+            setExpandedChapterIds((current) => {
+                const next = new Set(current);
+                next.delete(chapterId);
+                return next;
+            });
+            setCollapsedChapterIds((current) => new Set(current).add(chapterId));
+            return;
+        }
+
+        setCollapsedChapterIds((current) => {
+            const next = new Set(current);
+            next.delete(chapterId);
+            return next;
+        });
+        setExpandedChapterIds((current) => new Set(current).add(chapterId));
+    };
+
+    const handleTabKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
+        if (!tabsRef.current) return;
+
+        const tabs = Array.from(tabsRef.current.querySelectorAll<HTMLButtonElement>('[role="tab"]'));
+        const currentIndex = tabs.indexOf(event.currentTarget);
+        if (currentIndex < 0) return;
+
+        let nextIndex: number | null = null;
+        if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+            nextIndex = (currentIndex + 1) % tabs.length;
+        } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+            nextIndex = (currentIndex - 1 + tabs.length) % tabs.length;
+        } else if (event.key === 'Home') {
+            nextIndex = 0;
+        } else if (event.key === 'End') {
+            nextIndex = tabs.length - 1;
+        }
+
+        if (nextIndex === null) return;
+
+        event.preventDefault();
+        setShowRecaps(nextIndex === 1);
+        tabs[nextIndex].focus();
+    };
+
     const getChapterReadingTime = (chapter: ChapterDocType) => {
         const reportedWords = chapter.content?.length || 0;
 
@@ -139,16 +241,32 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
     return (
         <div className={clsx("reader-contents flex flex-col h-full font-mono text-xs", className)}>
-            {/* Header */}
-            <div className="reader-contents-header p-4 flex items-start justify-between gap-3">
+            <div className="reader-contents-header">
                 <div className="min-w-0 flex-1">
-                    <h3 className="text-white font-bold tracking-wide mb-1">Contents</h3>
-                    <div className="flex justify-between text-gray-500">
-                        <span>{displayChapters.length} {displayChapters.length === 1 ? structureCountLabel : `${structureCountLabel}s`}</span>
-                        <span>{timeBank} total</span>
+                    <div className="flex items-start justify-between gap-4">
+                        <div className="min-w-0">
+                            <p className="reader-contents-kicker">Reading index</p>
+                            <h2 id="reader-contents-title" className="reader-contents-title">Contents</h2>
+                            <div className="reader-contents-meta">
+                                <span>{displayChapters.length} {displayChapters.length === 1 ? structureCountLabel : `${structureCountLabel}s`}</span>
+                                <span>{timeBank} total</span>
+                            </div>
+                        </div>
+                        {onClose && (
+                            <button
+                                ref={closeButtonRef}
+                                type="button"
+                                onClick={onClose}
+                                className="reader-contents-close"
+                                title="Close contents"
+                                aria-label="Close contents"
+                            >
+                                <X className="h-5 w-5" />
+                            </button>
+                        )}
                     </div>
                     {structureNotice && (
-                        <p className="mt-2 text-[10px] leading-relaxed text-cyan-200/65" data-testid="structure-notice">
+                        <p className="reader-contents-notice" data-testid="structure-notice">
                             {structureNotice}
                         </p>
                     )}
@@ -169,21 +287,68 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         </div>
                     </div>
                 </div>
-                {onClose && (
-                    <button
-                        type="button"
-                        onClick={onClose}
-                        className="p-2 -mt-1 -mr-1 text-white/60 hover:text-white transition-colors"
-                        title="Close contents"
-                        aria-label="Close contents"
-                    >
-                        <X className="w-5 h-5" />
-                    </button>
-                )}
             </div>
 
-            <div className="reader-scroll-surface flex-1 overflow-y-auto p-3 space-y-2">
-                {displayChapters.map(chapter => {
+            {showSearch && (
+                <label className="reader-contents-search">
+                    <Search className="h-4 w-4 shrink-0" aria-hidden="true" />
+                    <span className="sr-only">Search contents</span>
+                    <input
+                        type="search"
+                        value={searchQuery}
+                        onChange={(event) => setSearchQuery(event.target.value)}
+                        placeholder="Search chapters and sections"
+                        aria-label="Search chapters and sections"
+                    />
+                    {searchQuery && (
+                        <button
+                            type="button"
+                            className="reader-contents-search-clear"
+                            onClick={() => setSearchQuery('')}
+                            aria-label="Clear contents search"
+                        >
+                            <X className="h-3.5 w-3.5" />
+                        </button>
+                    )}
+                </label>
+            )}
+
+            {globalSummaries.length > 0 && (
+                <div ref={tabsRef} className="reader-contents-tabs" role="tablist" aria-label="Reader views">
+                    <button
+                        type="button"
+                        role="tab"
+                        aria-selected={!recapsExpanded}
+                        aria-controls="reader-contents-list"
+                        tabIndex={recapsExpanded ? -1 : 0}
+                        className={clsx('reader-contents-tab', !recapsExpanded && 'reader-contents-tab--active')}
+                        onClick={() => setShowRecaps(false)}
+                        onKeyDown={handleTabKeyDown}
+                    >
+                        Contents
+                    </button>
+                    <button
+                        type="button"
+                        role="tab"
+                        aria-selected={recapsExpanded}
+                        aria-controls="reader-recaps-list"
+                        tabIndex={recapsExpanded ? 0 : -1}
+                        className={clsx('reader-contents-tab', recapsExpanded && 'reader-contents-tab--active')}
+                        onClick={() => setShowRecaps(true)}
+                        onKeyDown={handleTabKeyDown}
+                    >
+                        Recaps <span className="reader-contents-tab-count">{globalSummaries.length}</span>
+                    </button>
+                </div>
+            )}
+
+            <div
+                id={recapsExpanded ? 'reader-recaps-list' : 'reader-contents-list'}
+                role="tabpanel"
+                aria-label={recapsExpanded ? 'Recaps' : 'Contents'}
+                className="reader-scroll-surface flex-1 overflow-y-auto p-3 space-y-2"
+            >
+                {!recapsExpanded && visibleChapters.map(({ chapter, subchapters }, chapterIndex) => {
                     const readingTime = getChapterReadingTime(chapter);
                     const isCurrent = currentChapter?.id === chapter.id;
                     const isProcessing = chapter.status === 'processing';
@@ -194,13 +359,22 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         : 0;
                     const chapterProgressPercent = Math.round(chapterProgress * 100);
                     const chapterIsHandoffTarget = chapterHandoffActive && chapterHandoffSelection?.chapterId === chapter.id;
+                    const hasSections = subchapters.length > 0;
+                    const isExpanded = hasSections
+                        && !collapsedChapterIds.has(chapter.id)
+                        && (expandedChapterIds.has(chapter.id) || isCurrent || !currentChapter && chapterIndex === 0 || Boolean(normalizedSearchQuery));
                     return (
                         <div key={chapter.id} className="relative group flex flex-col">
                             <div className="relative flex items-stretch">
                                 <button
+                                    ref={isCurrent && (!hasSections || activeSubchapterStart === undefined) ? activeDestinationRef : undefined}
                                     type="button"
                                     onClick={() => {
-                                        if (!isCurrent) onLoadChapter(chapter.id);
+                                        if (isCurrent) {
+                                            onLoadChapter(chapter.id, currentWordIndex);
+                                        } else {
+                                            onLoadChapter(chapter.id);
+                                        }
                                     }}
                                     disabled={!isReady && (!chapter.content || chapter.content.length === 0)}
                                     data-testid="sidebar-chapter-button"
@@ -214,9 +388,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                     )}
                                 >
                                     <div className="relative z-10">
-                                        <div className="flex justify-between items-center gap-2 w-full mb-1">
+                                        <div className="flex justify-between items-start gap-2 w-full mb-1">
                                             <span className="min-w-0 flex-1">
-                                                <span className="block truncate font-bold text-sm">{chapter.title}</span>
+                                                <span className="reader-chapter-ordinal">{String(chapter.index + 1).padStart(2, '0')}</span>
+                                                <span className="reader-chapter-title">{chapter.title}</span>
                                             </span>
                                             {isProcessing && (
                                                 <span className="w-1.5 h-1.5 bg-cyan-400 rounded-full animate-pulse" />
@@ -230,8 +405,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                             )}
                                         </div>
 
-                                        <div className="flex justify-between items-center text-[10px] tracking-wide">
-                                            <span className={isReady ? "text-white/50" : "text-dune-shadow"}>
+                                        <div className="flex justify-between items-center text-[11px] tracking-wide">
+                                            <span className={isReady ? "text-white/55" : "text-dune-shadow"}>
                                                 {readingTime || "Preparing text"}
                                             </span>
                                             {isProcessing && (
@@ -241,26 +416,39 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                                 <span className="reader-progress-value">{chapterProgressPercent}%</span>
                                             )}
                                         </div>
-                                        <div
-                                            className={clsx("reader-progress-track mt-2", !isCurrent && "reader-progress-track--idle")}
-                                            role="progressbar"
-                                            aria-label={`${chapter.title} reading progress`}
-                                            aria-valuemin={0}
-                                            aria-valuemax={100}
-                                            aria-valuenow={chapterProgressPercent}
-                                            data-testid={`chapter-progress-${chapter.id}`}
-                                        >
-                                            <span style={{ width: `${chapterProgressPercent}%` }} />
-                                        </div>
+                                        {isCurrent && (
+                                            <div
+                                                className="reader-progress-track mt-2"
+                                                role="progressbar"
+                                                aria-label={`${chapter.title} reading progress`}
+                                                aria-valuemin={0}
+                                                aria-valuemax={100}
+                                                aria-valuenow={chapterProgressPercent}
+                                                data-testid={`chapter-progress-${chapter.id}`}
+                                            >
+                                                <span style={{ width: `${chapterProgressPercent}%` }} />
+                                            </div>
+                                        )}
                                     </div>
                                 </button>
+                                {hasSections && (
+                                    <button
+                                        type="button"
+                                        className="reader-chapter-disclosure"
+                                        aria-label={`${isExpanded ? 'Collapse' : 'Expand'} sections for ${chapter.title}`}
+                                        aria-expanded={isExpanded}
+                                        onClick={() => toggleChapterExpansion(chapter.id, isExpanded)}
+                                    >
+                                        <ChevronDown className={clsx('h-4 w-4 transition-transform', !isExpanded && '-rotate-90')} />
+                                    </button>
+                                )}
                             </div>
 
-                            {/* Subchapters */}
-                            {chapter.subchapters && chapter.subchapters.length > 0 && (
+                            {isExpanded && hasSections && (
                                 <div className="reader-section-list pl-3 ml-2 mb-2 space-y-1">
-                                    <div className="flex items-center gap-1.5 px-3 pt-2 pb-1 text-[9px] uppercase text-white/35">
+                                    <div className="reader-section-heading">
                                         <ListTree className="w-3 h-3" aria-hidden="true" />
+                                        <span>Reading sections</span>
                                         <span className="group/section-info relative inline-flex">
                                             <button
                                                 type="button"
@@ -279,14 +467,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                             </span>
                                         </span>
                                     </div>
-                                    {chapter.subchapters.map((sub, idx) => {
+                                    <p className="reader-section-help">Jump within this chapter by its opening words.</p>
+                                    {subchapters.map((sub, idx) => {
                                         // Check if we have ANY content for this subchapter (start index exists in content array)
                                         const currentContentLength = chapter.content?.length || 0;
                                         const hasStarted = currentContentLength > sub.startWordIndex;
                                         // Check if this is the currently active subchapter being read
                                         const isActive = isCurrent && currentWordIndex !== undefined &&
                                             currentWordIndex >= sub.startWordIndex &&
-                                            (currentWordIndex < sub.endWordIndex || (idx === chapter.subchapters!.length - 1 && currentWordIndex >= sub.startWordIndex));
+                                            (currentWordIndex < sub.endWordIndex || (idx === subchapters.length - 1 && currentWordIndex >= sub.startWordIndex));
                                         const sectionLength = Math.max(1, sub.endWordIndex - sub.startWordIndex);
                                         const sectionProgress = isCurrent && displayWordIndex !== undefined
                                             ? Math.min(1, Math.max(0, (displayWordIndex - sub.startWordIndex) / sectionLength))
@@ -296,8 +485,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                             && chapterHandoffSelection.startWordIndex === sub.startWordIndex;
 
                                         return (
-                                            <div key={idx} className="relative">
+                                                <div key={`${chapter.id}-${sub.startWordIndex}`} className="relative">
                                                 <button
+                                                    ref={isActive ? activeDestinationRef : undefined}
                                                     type="button"
                                                     className={clsx(
                                                         "reader-section-row w-full min-h-11 relative overflow-hidden flex items-center gap-2 px-3 py-2 text-left transition-colors",
@@ -315,7 +505,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                                 >
                                                     <span className="relative z-10 contents">
                                                         {isActive ? <MapPin className="w-3.5 h-3.5 text-emerald-300 shrink-0" /> : <ChevronRight className="w-3.5 h-3.5 text-white/30 shrink-0" />}
-                                                        <span className="truncate text-xs">{getSubchapterDisplayName(sub, chapter.content)}</span>
+                                                        <span className="reader-section-title">{getSubchapterDisplayName(sub, chapter.content)}</span>
                                                         {isActive && (
                                                             <span className="ml-auto text-[9px] uppercase tracking-wide text-emerald-300">
                                                                 {Math.round(sectionProgress * 100)}%
@@ -332,45 +522,43 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     );
                 })}
 
-                {globalSummaries.length > 0 && (
-                    <section className="mt-4 pt-3 border-t border-cyan-400/15">
-                        <button
-                            type="button"
-                            className="w-full text-left px-1 py-1.5 text-[10px] text-cyan-300/70 uppercase tracking-widest hover:text-cyan-200 transition-colors"
-                            onClick={() => {
-                                if (!activeSummaryId) setShowRecaps((value) => !value);
-                            }}
-                            aria-expanded={recapsExpanded}
-                        >
-                            Recaps {recapsExpanded ? '[-]' : `[${globalSummaries.length}]`}
-                        </button>
-                        {recapsExpanded && globalSummaries.map((summary, idx) => {
+                {!recapsExpanded && visibleChapters.length === 0 && (
+                    <div className="reader-contents-empty">
+                        <p>{normalizedSearchQuery ? 'No chapters or sections match this search.' : 'No readable chapters are available yet.'}</p>
+                        {normalizedSearchQuery && (
+                            <button type="button" onClick={() => setSearchQuery('')}>
+                                Clear search
+                            </button>
+                        )}
+                    </div>
+                )}
+
+                {recapsExpanded && globalSummaries.map((summary, idx) => {
                             const isActive = activeSummaryId === summary.id;
                             const wordRange = `${summary.startWordIndex.toLocaleString()}-${summary.endWordIndex.toLocaleString()}`;
                             return (
-                                <div key={summary.id} className="mb-1">
+                                <div key={summary.id} className="reader-recap-entry">
                                     <button
+                                        type="button"
                                         onClick={() => onPlayGlobalSummary?.(summary)}
                                         className={clsx(
-                                            "w-full text-left p-2 rounded border transition-all",
+                                            "reader-recap-row w-full text-left",
                                             isActive
-                                                ? "bg-cyan-950/40 border-cyan-400/40 text-cyan-100"
-                                                : "bg-black/20 border-white/5 text-gray-400 hover:border-cyan-400/25 hover:text-cyan-200"
+                                                ? "reader-recap-row--active"
+                                                : "text-gray-400 hover:text-cyan-200"
                                         )}
                                     >
                                         <div className="flex items-center gap-2">
                                             <span className="text-cyan-400">▶</span>
                                             <span className="font-bold">Summary {idx + 1}</span>
                                         </div>
-                                        <div className="text-[9px] text-gray-500 mt-1 truncate">
+                                        <div className="reader-recap-meta">
                                             Words {wordRange}
                                         </div>
                                     </button>
                                 </div>
                             );
                         })}
-                    </section>
-                )}
             </div>
 
         </div>
