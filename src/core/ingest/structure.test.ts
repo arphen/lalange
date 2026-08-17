@@ -194,6 +194,113 @@ describe('buildEpubStructurePlan', () => {
         expect(plan.chapters[1].slices).toHaveLength(1);
     });
 
+    it('does not treat generated toc-like filename suffixes as navigation documents', async () => {
+        const zip = new JSZip();
+        zip.file('META-INF/container.xml', containerXml('OEBPS/content.opf'));
+        zip.file('OEBPS/content.opf', `
+            <package xmlns:dc="http://purl.org/dc/elements/1.1/">
+                <metadata><dc:title>Generated Filename Navigation</dc:title></metadata>
+                <manifest>
+                    <item id="nav" href="NavJohnBrown.xhtml" media-type="application/xhtml+xml" properties="nav" />
+                    <item id="preface" href="05_PrefaceJohnBrownvlthmfuwrmefxonbsyetochqcom.xhtml" media-type="application/xhtml+xml" />
+                    <item id="one" href="08_ChapterOne.xhtml" media-type="application/xhtml+xml" />
+                    <item id="two" href="09_ChapterTwo.xhtml" media-type="application/xhtml+xml" />
+                    <item id="disclaimer" href="disclaimerJohnBrown.xhtml" media-type="application/xhtml+xml" />
+                </manifest>
+                <spine>
+                    <itemref idref="preface" />
+                    <itemref idref="one" />
+                    <itemref idref="two" />
+                    <itemref idref="disclaimer" />
+                </spine>
+            </package>
+        `);
+        zip.file('OEBPS/NavJohnBrown.xhtml', xhtml(`
+            <nav epub:type="toc"><ol>
+                <li><a href="05_PrefaceJohnBrownvlthmfuwrmefxonbsyetochqcom.xhtml">Preface</a></li>
+                <li><a href="08_ChapterOne.xhtml">Chapter One</a></li>
+                <li><a href="09_ChapterTwo.xhtml">Chapter Two</a></li>
+                <li><a href="disclaimerJohnBrown.xhtml">Disclaimer</a></li>
+            </ol></nav>
+        `));
+        zip.file('OEBPS/05_PrefaceJohnBrownvlthmfuwrmefxonbsyetochqcom.xhtml', xhtml(`
+            <h1>Preface</h1>
+            <p><a href="#page-1">1</a> ${repeatedWords('preface', 120)}</p>
+            <p><a href="#page-2">2</a> ${repeatedWords('preface-end', 120)}</p>
+        `));
+        zip.file('OEBPS/08_ChapterOne.xhtml', xhtml(`<h1>Chapter One</h1><p>${repeatedWords('one', 180)}</p>`));
+        zip.file('OEBPS/09_ChapterTwo.xhtml', xhtml(`<h1>Chapter Two</h1><p>${repeatedWords('two', 180)}</p>`));
+        zip.file('OEBPS/disclaimerJohnBrown.xhtml', xhtml('<h1>Disclaimer</h1><p>This eBook is licensed to a reader.</p>'));
+
+        const plan = await buildEpubStructurePlan(zip);
+
+        expect(plan.structureDiagnostics.declaredToc.nav).toMatchObject({
+            state: 'present-valid',
+            paths: ['OEBPS/NavJohnBrown.xhtml'],
+            entryCount: 4,
+        });
+        expect(plan.chapters.map((chapter) => chapter.title)).toEqual([
+            'Preface',
+            'Chapter One',
+            'Chapter Two',
+        ]);
+    });
+
+    it('selects numbered chapter children under authored part entries', async () => {
+        const zip = new JSZip();
+        zip.file('META-INF/container.xml', containerXml('OEBPS/content.opf'));
+        zip.file('OEBPS/content.opf', `
+            <package xmlns:dc="http://purl.org/dc/elements/1.1/">
+                <metadata><dc:title>Part Hierarchy</dc:title></metadata>
+                <manifest>
+                    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav" />
+                    <item id="part1" href="part1.xhtml" media-type="application/xhtml+xml" />
+                    <item id="one" href="one.xhtml" media-type="application/xhtml+xml" />
+                    <item id="two" href="two.xhtml" media-type="application/xhtml+xml" />
+                    <item id="part2" href="part2.xhtml" media-type="application/xhtml+xml" />
+                    <item id="three" href="three.xhtml" media-type="application/xhtml+xml" />
+                    <item id="four" href="four.xhtml" media-type="application/xhtml+xml" />
+                </manifest>
+                <spine>
+                    <itemref idref="part1" />
+                    <itemref idref="one" />
+                    <itemref idref="two" />
+                    <itemref idref="part2" />
+                    <itemref idref="three" />
+                    <itemref idref="four" />
+                </spine>
+            </package>
+        `);
+        zip.file('OEBPS/nav.xhtml', xhtml(`
+            <nav epub:type="toc"><ol>
+                <li><a href="part1.xhtml">I. The Symptom</a><ol>
+                    <li><a href="one.xhtml">1. How Did Marx Invent the Symptom?</a></li>
+                    <li><a href="two.xhtml">2. From Symptom to Sinthome</a></li>
+                </ol></li>
+                <li><a href="part2.xhtml">II. Lack in the Other</a><ol>
+                    <li><a href="three.xhtml">3. Che Vuoi?</a></li>
+                    <li><a href="four.xhtml">4. You Only Die Twice</a></li>
+                </ol></li>
+            </ol></nav>
+        `));
+        zip.file('OEBPS/part1.xhtml', xhtml('<h1>I. The Symptom</h1>'));
+        zip.file('OEBPS/part2.xhtml', xhtml('<h1>II. Lack in the Other</h1>'));
+        zip.file('OEBPS/one.xhtml', xhtml(`<h1>1. How Did Marx Invent the Symptom?</h1><p>${repeatedWords('one', 180)}</p>`));
+        zip.file('OEBPS/two.xhtml', xhtml(`<h1>2. From Symptom to Sinthome</h1><p>${repeatedWords('two', 180)}</p>`));
+        zip.file('OEBPS/three.xhtml', xhtml(`<h1>3. Che Vuoi?</h1><p>${repeatedWords('three', 180)}</p>`));
+        zip.file('OEBPS/four.xhtml', xhtml(`<h1>4. You Only Die Twice</h1><p>${repeatedWords('four', 180)}</p>`));
+
+        const plan = await buildEpubStructurePlan(zip);
+
+        expect(plan.chapters.map((chapter) => chapter.title)).toEqual([
+            '1. How Did Marx Invent the Symptom?',
+            '2. From Symptom to Sinthome',
+            '3. Che Vuoi?',
+            '4. You Only Die Twice',
+        ]);
+        expect(plan.chapters.every((chapter) => chapter.source === 'toc')).toBe(true);
+    });
+
     it('splits single-spine books by TOC fragments and keeps slice text isolated', async () => {
         const zip = new JSZip();
         zip.file('META-INF/container.xml', containerXml('OPS/content.opf'));

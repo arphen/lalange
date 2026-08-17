@@ -282,6 +282,11 @@ const getBaseName = (value: string): string => {
     return normalized.slice(idx + 1);
 };
 
+const isLikelyNavigationPath = (value: string): boolean => {
+    const baseName = getBaseName(value).replace(/\.[^.]+$/, '');
+    return /(?:^|[-_.\s])(?:nav|navigation|toc|contents?|table[-_.\s]+of[-_.\s]+contents?)(?:[-_.\s]|$)/i.test(baseName);
+};
+
 const resolveArchivePath = (baseDir: string, href: string): string => {
     const decodedHref = decodeUriSafely(href).replace(/\\/g, '/');
     const cleanedHref = decodedHref.split('?')[0] || '';
@@ -1167,6 +1172,17 @@ interface TocSourceResult {
     state: 'present-empty' | 'present-invalid' | 'present-valid';
 }
 
+const isStructuralTocTitle = (title: string): boolean => {
+    const normalized = normalizeWhitespace(title);
+    return /^(?:part|book|volume)\b/i.test(normalized)
+        || /^[ivxlcdm]{1,8}[.) :-]\s*\S/i.test(normalized);
+};
+
+const isChapterLikeTocTitle = (title: string): boolean => {
+    const normalized = normalizeWhitespace(title);
+    return /^(?:chapter\s+(?:[ivxlcdm]{1,8}|\d{1,3}|one|two|three|four|five|six|seven|eight|nine|ten)\b|\d{1,3}[.) :-]\s*\S)/i.test(normalized);
+};
+
 const selectTocDepth = (candidates: TocDepthCandidate[]): TocEntry[] => {
     if (candidates.length === 0) return [];
 
@@ -1178,6 +1194,25 @@ const selectTocDepth = (candidates: TocDepthCandidate[]): TocEntry[] => {
     }
 
     const groups = [...byDepth.entries()].sort(([left], [right]) => left - right);
+
+    let partChapterDepth: number | undefined;
+    for (const [depth, group] of groups.slice(1)) {
+        const hasStructuralParent = candidates.some((candidate) => (
+            candidate.depth < depth && isStructuralTocTitle(candidate.title)
+        ));
+        if (group.length >= 2 && hasStructuralParent && group.every((candidate) => isChapterLikeTocTitle(candidate.title))) {
+            partChapterDepth = depth;
+        }
+    }
+
+    if (partChapterDepth !== undefined) {
+        return candidates
+            .filter((candidate) => candidate.depth === partChapterDepth || (
+                candidate.depth < partChapterDepth && !isStructuralTocTitle(candidate.title)
+            ))
+            .map(({ title, resolvedPath, fragment }) => ({ title, resolvedPath, fragment }));
+    }
+
     let selected = groups[0][1];
 
     for (let index = 1; index < groups.length && selected.length <= 2; index++) {
@@ -1303,6 +1338,7 @@ const buildHeadingChapters = async (
 const extractNavEntries = async (
     zip: JSZip,
     navPath: string,
+    allowBodyFallback = false,
 ): Promise<TocSourceResult> => {
     const entry = findZipEntry(zip, navPath);
     if (!entry) return { entries: [], state: 'present-invalid' };
@@ -1311,6 +1347,9 @@ const extractNavEntries = async (
     const $ = cheerio.load(html);
 
     const navRoot = $('nav[epub\\:type="toc"], nav[role="doc-toc"]').first();
+    if (navRoot.length === 0 && !allowBodyFallback) {
+        return { entries: [], state: 'present-invalid' };
+    }
     const sourceRoot = navRoot.length > 0 ? navRoot : $('body');
     const links = sourceRoot.find('a[href]');
 
@@ -1418,15 +1457,18 @@ const collectTocEntries = async (
         .filter((item) => {
             const properties = (item.properties || '').toLowerCase();
             const mediaType = (item.mediaType || '').toLowerCase();
-            const href = item.href.toLowerCase();
             return properties.includes('nav')
                 || (mediaType.includes('xhtml') || mediaType.includes('html'))
-                && (href.includes('toc') || href.includes('nav'));
+                && isLikelyNavigationPath(item.resolvedPath);
         });
 
     const navSources: TocSourceResult[] = [];
     for (const item of navCandidates) {
-        navSources.push(await extractNavEntries(zip, item.resolvedPath));
+        navSources.push(await extractNavEntries(
+            zip,
+            item.resolvedPath,
+            !(item.properties || '').toLowerCase().includes('nav'),
+        ));
     }
 
     const ncxCandidates: ManifestItem[] = [];
@@ -1606,7 +1648,7 @@ const classifyArtifactLabel = (
         return { type: 'toc', reason: 'Publication navigation or table of contents', shouldIncludeInReading: false };
     }
 
-    if (candidates.some((candidate) => /^(?:copyright|copyright page|legal notice|license|licence|project gutenberg license|imprint|colophon|about this (?:ebook|edition))$/.test(candidate))) {
+    if (candidates.some((candidate) => /^(?:copyright|copyright page|legal notice|license|licence|disclaimer|project gutenberg license|imprint|colophon|about this (?:ebook|edition))$/.test(candidate))) {
         return { type: 'license', reason: 'Publication legal or production boilerplate', shouldIncludeInReading: false };
     }
 
@@ -1679,7 +1721,10 @@ const classifyTitleMatter = (
         return { type: 'cover', reason: 'Low-content edition or publication page', shouldIncludeInReading: false };
     }
 
-    if (/^(?:part|book|volume)\s+(?:\d+|[ivxlcdm]+|one|two|three|four|five|six|seven|eight|nine|ten)\b/i.test(title)) {
+    if (
+        /^(?:part|book|volume)\s+(?:\d+|[ivxlcdm]+|one|two|three|four|five|six|seven|eight|nine|ten)\b/i.test(title)
+        || /^[ivxlcdm]{1,8}[.) :-]\s*\S/i.test(title)
+    ) {
         const $ = cheerio.load(`<body>${html}</body>`);
         const proseWords = countWords($('p, li, blockquote').text());
         if (proseWords < 20) {
