@@ -1,6 +1,6 @@
 import React, { useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo, useSyncExternalStore } from 'react';
 import { clsx } from 'clsx';
-import { ArrowLeft, BookOpenText, Focus, Gauge, Headphones, List, Moon, Play, Share2, Sun, X } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, BookOpenText, Focus, Gauge, Headphones, List, Moon, Play, Share2, Sun, X } from 'lucide-react';
 import { type BookDocType, type ChapterDocType, type ReadingStateDocType, type GlobalSummaryType, type ImageDocType } from '../../core/sync/db';
 import { getDisplayPlugin, projectDisplayFrame, type DisplayPlugin } from '../../core/rsvp/display';
 import { getFrameTargetInterval, getTargetInterval, isLikelyProperNoun } from '../../core/rsvp/timing';
@@ -237,6 +237,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
     const [currentWordIndex, setCurrentWordIndex] = useState(0);
     const [readingState, setReadingState] = useState<ReadingStateDocType | null>(null);
     const [loading, setLoading] = useState(true);
+    const [contentUnavailable, setContentUnavailable] = useState(false);
 
     // Sidebar & Chapters
     const [chapters, setChapters] = useState<ChapterDocType[]>([]);
@@ -1949,6 +1950,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
     useEffect(() => {
         const loadState = async () => {
             setLoading(true);
+            setContentUnavailable(false);
 
             void readerDataSource.subscribeToChapters(book.id, setChapters);
             void readerDataSource.subscribeToBook(book.id, (bookData) => {
@@ -2013,10 +2015,20 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
         if (!waitingForReadableChapterRef.current || currentChapter) return;
 
         const firstReadableChapter = chapters.find(isReadableChapter);
-        if (!firstReadableChapter) return;
+        if (firstReadableChapter) {
+            waitingForReadableChapterRef.current = false;
+            setContentUnavailable(false);
+            loadChapter(firstReadableChapter.id, 0);
+            return;
+        }
 
-        waitingForReadableChapterRef.current = false;
-        loadChapter(firstReadableChapter.id, 0);
+        // Once every chapter has settled (nothing left pending/processing) and still
+        // none are readable, background processing isn't going to produce content —
+        // stop spinning forever and tell the reader instead of hanging silently.
+        const stillProcessing = chapters.some(c => c.status === 'pending' || c.status === 'processing');
+        if (chapters.length > 0 && !stillProcessing) {
+            setContentUnavailable(true);
+        }
     }, [chapters, currentChapter, loadChapter]);
 
     // Speed control handlers with momentum (must be before any conditional returns)
@@ -2147,10 +2159,23 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                         <span>Library</span>
                     </button>
                 )}
-                <div className="text-center" role="status" aria-live="polite">
-                    <div className="mx-auto mb-4 h-6 w-6 animate-spin rounded-full border-2 border-white/15 border-t-cyan-300" />
-                    <p className="font-mono text-sm text-white/80">Loading book...</p>
-                    <p className="mt-1 text-xs text-white/40">Preparing the text</p>
+                <div className="max-w-sm px-6 text-center" role="status" aria-live="polite">
+                    {contentUnavailable ? (
+                        <>
+                            <AlertTriangle className="mx-auto mb-4 h-6 w-6 text-amber-300" />
+                            <p className="font-mono text-sm text-white/80">Couldn't extract readable text</p>
+                            <p className="mt-1 text-xs text-white/40">
+                                This file has no usable text after processing — it may be a scanned or
+                                image-only document. Try a different file, or a version with a text layer.
+                            </p>
+                        </>
+                    ) : (
+                        <>
+                            <div className="mx-auto mb-4 h-6 w-6 animate-spin rounded-full border-2 border-white/15 border-t-cyan-300" />
+                            <p className="font-mono text-sm text-white/80">Loading book...</p>
+                            <p className="mt-1 text-xs text-white/40">Preparing the text</p>
+                        </>
+                    )}
                 </div>
             </div>
         );

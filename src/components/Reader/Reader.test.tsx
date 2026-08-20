@@ -1176,4 +1176,45 @@ describe('Reader Component', () => {
         expect(useSettingsStore.getState().riverTopEnabled).toBe(true);
         expect(useSettingsStore.getState().riverBottomEnabled).toBe(true);
     });
+
+    // Placed last: overrides mockDb.chapters with an all-empty chapter set, which
+    // would otherwise leak into later tests since these mocks aren't reset per test.
+    it('should show an error instead of spinning forever when no chapter has extractable content', async () => {
+        const emptyChapter = {
+            id: 'chapter-1',
+            bookId: 'book-1',
+            index: 0,
+            title: 'Document',
+            status: 'ready',
+            content: [] as string[],
+            toJSON: function () { return this; }
+        };
+        const chapters = [emptyChapter];
+
+        mockDb.chapters.findOne.mockImplementation((id) => ({
+            exec: vi.fn().mockResolvedValue(chapters.find(chapter => chapter.id === id)),
+            $: {
+                subscribe: vi.fn().mockImplementation((callback) => {
+                    callback(chapters.find(chapter => chapter.id === id));
+                    return { unsubscribe: vi.fn() };
+                })
+            }
+        }));
+        mockDb.chapters.find.mockReturnValue({
+            $: {
+                subscribe: vi.fn().mockImplementation((callback) => {
+                    callback(chapters);
+                    return { unsubscribe: vi.fn() };
+                })
+            },
+            exec: vi.fn().mockResolvedValue(chapters)
+        });
+
+        render(<Reader book={{ ...mockBook, chapterIds: ['chapter-1'] }} />);
+
+        await waitFor(() => {
+            expect(screen.getByText(/couldn't extract readable text/i)).toBeInTheDocument();
+        });
+        expect(screen.queryByText('Loading book...')).not.toBeInTheDocument();
+    });
 });
