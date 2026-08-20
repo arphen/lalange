@@ -293,8 +293,13 @@ export function classifyChapter(
         };
     }
 
-    // Check for Table of Contents
-    const tocResult = detectTableOfContents(content, htmlContent);
+    // Check for Table of Contents. Only exclude the *whole* chapter when it's actually
+    // TOC-sized: a reader that hands us a much larger unit (e.g. an entire PDF ingested
+    // as one "chapter") can have a genuine TOC in its opening pages, but that shouldn't
+    // cause hundreds of pages of real content behind it to be discarded too.
+    const tocResult = content.length <= TOC_SCAN_WINDOW
+        ? detectTableOfContents(content, htmlContent)
+        : { isToc: false, confidence: 0, reason: '' };
     if (tocResult.isToc) {
         return {
             type: 'toc',
@@ -409,18 +414,27 @@ function extractLicenseText(content: string): string {
 /**
  * Detects if content is a Table of Contents
  */
+// TOC heuristics below assume `content` is roughly chapter-sized. Some readers (e.g. PDF,
+// which currently ingests a whole document as one "chapter") can hand this function an
+// entire book. A real table of contents always sits near the start, so bound the scan to
+// a generous prefix — this keeps a genuine front-matter TOC detectable while stopping
+// unrelated numbered lists/ellipses deep in the body from accumulating false matches that
+// would otherwise flag the whole book as a TOC.
+const TOC_SCAN_WINDOW = 20_000;
+
 function detectTableOfContents(
     content: string,
     htmlContent?: string
 ): { isToc: boolean; confidence: number; reason: string; entries?: { title: string; href?: string }[] } {
+    const scanText = content.slice(0, TOC_SCAN_WINDOW);
 
     // Check title patterns
-    const hasTocTitle = TOC_PATTERNS.titlePatterns.some(p => p.test(content));
-    
+    const hasTocTitle = TOC_PATTERNS.titlePatterns.some(p => p.test(scanText));
+
     // Check for high link density in HTML
     if (htmlContent) {
         const linkMatches = htmlContent.match(/<a[^>]*href/gi);
-        const textLength = content.replace(/\s/g, '').length;
+        const textLength = scanText.replace(/\s/g, '').length;
         if (linkMatches && textLength > 0) {
             const linkDensity = linkMatches.length / (textLength / 50); // Rough estimate
             if (linkDensity > TOC_PATTERNS.linkDensityThreshold) {
@@ -438,14 +452,14 @@ function detectTableOfContents(
     for (const pattern of TOC_PATTERNS.entryPatterns) {
         // Reset lastIndex for global patterns
         pattern.lastIndex = 0;
-        const matches = content.match(pattern);
+        const matches = scanText.match(pattern);
         if (matches) {
             entryMatches += matches.length;
         }
     }
 
     // Check for dotted lines (common TOC pattern)
-    const dottedLineMatches = content.match(/\.{3,}/g);
+    const dottedLineMatches = scanText.match(/\.{3,}/g);
     const hasManyDottedLines = dottedLineMatches && dottedLineMatches.length > 3;
 
     if (hasTocTitle && (entryMatches > 3 || hasManyDottedLines)) {
