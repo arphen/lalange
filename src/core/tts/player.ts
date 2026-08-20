@@ -115,12 +115,12 @@ interface ScheduledAudio {
 // media session bridge (macOS Now Playing, hardware media keys, Bluetooth controls),
 // the same way a live WebRTC call is deliberately kept out of it. A genuinely
 // file-backed (blob URL) <audio> element sidesteps that. It's played in parallel with
-// the real TTS output, at a low enough volume to stay inaudible under it, purely to
-// register the tab as playing real media.
+// the real TTS output purely to register the tab as playing real media — its content
+// is true digital silence (all-zero samples), not just quiet noise: low-amplitude
+// noise was audible as static/hum on some devices (notably iOS Safari), and a random
+// noise loop has no zero-crossing at the seam, causing an audible click every loop.
 const DECOY_AUDIO_DURATION_SECONDS = 2;
 const DECOY_AUDIO_SAMPLE_RATE = 8000;
-const DECOY_AUDIO_AMPLITUDE = 0.01;
-const DECOY_AUDIO_VOLUME = 0.01;
 
 let decoyAudioBlobUrl: string | null = null;
 
@@ -128,9 +128,6 @@ const getDecoyAudioBlobUrl = (): string => {
     if (!decoyAudioBlobUrl) {
         const sampleCount = DECOY_AUDIO_DURATION_SECONDS * DECOY_AUDIO_SAMPLE_RATE;
         const samples = new Float32Array(sampleCount);
-        for (let i = 0; i < sampleCount; i++) {
-            samples[i] = (Math.random() * 2 - 1) * DECOY_AUDIO_AMPLITUDE;
-        }
         decoyAudioBlobUrl = URL.createObjectURL(audioToWavBlob(samples, DECOY_AUDIO_SAMPLE_RATE));
     }
     return decoyAudioBlobUrl;
@@ -143,7 +140,6 @@ const createDecoyAudioElement = (): HTMLAudioElement | null => {
         const audioEl = document.createElement('audio');
         audioEl.src = getDecoyAudioBlobUrl();
         audioEl.loop = true;
-        audioEl.volume = DECOY_AUDIO_VOLUME;
         audioEl.style.display = 'none';
         document.body.appendChild(audioEl);
         return audioEl;
