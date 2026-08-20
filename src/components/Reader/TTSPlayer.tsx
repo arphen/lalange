@@ -24,7 +24,6 @@ import { persistListeningHandoff } from '../../core/exchange/handoff';
 
 // Configuration
 const DEFAULT_BUFFER_AHEAD = 5;
-const SPEED_OPTIONS = [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
 const EMPTY_PARAGRAPH_BREAKS: number[] = [];
 
 const findNearestSentenceIndex = (
@@ -50,11 +49,6 @@ const findNearestSentenceIndex = (
     }
 
     return nearestIndex;
-};
-
-const formatSpeedLabel = (value: number): string => {
-    const fixed = value.toFixed(2).replace(/\.00$/, '').replace(/0$/, '');
-    return `${fixed}x`;
 };
 
 const PlayIcon: React.FC = () => (
@@ -146,7 +140,6 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
         bufferAhead,
         currentTime,
         setVolume,
-        setSpeed,
         setVoice,
         duration,
     } = useTTSStore(useShallow((state) => ({
@@ -163,7 +156,6 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
         currentTime: state.currentTime,
         duration: state.duration,
         setVolume: state.setVolume,
-        setSpeed: state.setSpeed,
         setVoice: state.setVoice,
     })));
 
@@ -176,9 +168,11 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
     );
     const [showVoiceMenu, setShowVoiceMenu] = useState(false);
     const [isExpanded, setIsExpanded] = useState(false);
+    const [bufferedSentenceCount, setBufferedSentenceCount] = useState(0);
     const effectiveVoice = resolveVoiceId(voice);
     const selectedDevice = backendPreference === 'auto' ? undefined : backendPreference;
     const safeBufferAhead = Math.max(3, Math.min(12, bufferAhead || DEFAULT_BUFFER_AHEAD));
+    const bufferSlotCount = Math.min(6, safeBufferAhead + 1);
     
     const generatorRef = useRef<AsyncGenerator<{ sentence: SentenceBoundary; audio: TTSAudioResult }> | null>(null);
     const isGeneratingRef = useRef(false);
@@ -195,6 +189,17 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
     const autoPlayRequestHandledRef = useRef<string | null>(null);
     const wordsChapterIdRef = useRef(chapterId);
     const onPositionCommitRef = useRef(onPositionCommit);
+
+    const refreshBufferedSentenceCount = useCallback((sentenceIndex?: number) => {
+        const currentSentenceIndex = sentenceIndex ?? useTTSStore.getState().currentSentence ?? 0;
+        const hasCurrentSentence = ttsPlayer.hasAudioForSentence(currentSentenceIndex);
+        const nextCount = hasCurrentSentence
+            ? 1 + ttsPlayer.getBufferedAheadCount(currentSentenceIndex)
+            : 0;
+        setBufferedSentenceCount((previousCount) => (
+            previousCount === nextCount ? previousCount : nextCount
+        ));
+    }, []);
 
     useEffect(() => {
         onPositionCommitRef.current = onPositionCommit;
@@ -281,6 +286,7 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
             // Full player reset - stop, clear queue, reset state
             ttsPlayer.stop();
             ttsPlayer.clearQueue();
+            setBufferedSentenceCount(0);
         }
         
         bookIdRef.current = bookId;
@@ -316,6 +322,7 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
             // Clear player
             ttsPlayer.clearQueue();
             ttsPlayer.stop();
+            setBufferedSentenceCount(0);
         }
         
         wordsRef.current = words;
@@ -378,6 +385,7 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
             for await (const { sentence, audio } of generator) {
                 if (signal.aborted) break;
                 await ttsPlayer.queueAudio(audio, sentence);
+                refreshBufferedSentenceCount(sentence.index);
             }
         } catch (err) {
             if (!signal.aborted) {
@@ -398,7 +406,7 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
                 ttsPlayer.checkBuffer();
             }
         }
-    }, [effectiveVoice, sentences, speed]);
+    }, [effectiveVoice, refreshBufferedSentenceCount, sentences, speed]);
 
     const startFromSentence = useCallback(async (requestedSentenceIndex: number) => {
         if (sentences.length === 0) return;
@@ -427,7 +435,10 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
             onWordChange: (wordIndex) => {
                 if (onPositionChange && hasStartedPlaybackRef.current) onPositionChange(wordIndex);
             },
+            onSentenceChange: refreshBufferedSentenceCount,
+            onAudioQueued: (sentenceIndex) => refreshBufferedSentenceCount(sentenceIndex),
             onBufferLow: (currentSentenceIndex) => {
+                refreshBufferedSentenceCount(currentSentenceIndex);
                 if (currentSentenceIndex >= sentences.length) {
                     if (!isGeneratingRef.current && !chapterEndHandledRef.current) {
                         chapterEndHandledRef.current = true;
@@ -456,7 +467,7 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
                 }
             },
         });
-    }, [safeBufferAhead, sentences, onPositionChange, onChapterEnd, generateFrom, playbackState]);
+    }, [safeBufferAhead, sentences, onPositionChange, onChapterEnd, generateFrom, playbackState, refreshBufferedSentenceCount]);
     
     // Handle stop - full reset of all TTS resources
     const handleStop = useCallback(() => {
@@ -479,6 +490,7 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
         // Full player reset
         ttsPlayer.stop();
         ttsPlayer.clearQueue();
+        setBufferedSentenceCount(0);
     }, []);
 
     useEffect(() => {
@@ -591,7 +603,7 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
     const isButtonActive = playbackState === 'playing' || playbackState === 'generating';
     
     // Compact player (minimized)
-    const dockClasses = `fixed bottom-20 right-4 z-50 ${dockClassName}`;
+    const dockClasses = `fixed bottom-28 right-4 z-[90] ${dockClassName}`;
 
     if (compact && !isExpanded) {
         return (
@@ -612,10 +624,10 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
     return (
         <div
             data-testid="tts-player-panel"
-            className={`${dockClasses} ${compact ? 'w-80' : 'w-96 max-w-[calc(100vw-2rem)]'} bg-[#080d14]/95 backdrop-blur-xl rounded-2xl border border-cyan-300/20 shadow-[0_28px_70px_-35px_rgba(14,165,233,0.75)] overflow-visible transition-all duration-300`}
+            className={`${dockClasses} ${compact ? 'w-72' : 'w-72 max-w-[calc(100vw-2rem)]'} overflow-visible border border-cyan-300/20 bg-[#080d14]/95 shadow-[0_24px_60px_-32px_rgba(14,165,233,0.75)] backdrop-blur-xl transition-all duration-300`}
         >
             {/* Header */}
-            <div className="flex items-center justify-between px-4 py-3 border-b border-cyan-200/10 bg-gradient-to-r from-cyan-300/10 via-teal-300/5 to-transparent">
+            <div className="flex items-center justify-between border-b border-cyan-200/10 px-3 py-2">
                 <div className="flex items-center gap-2">
                     <HeadphonesIcon />
                     <span className="font-mono text-xs text-cyan-100 uppercase tracking-[0.18em]">Listen Mode</span>
@@ -633,13 +645,13 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
             </div>
             
             {/* Main Controls */}
-            <div className="p-4 space-y-4">
+            <div className="space-y-3 p-3">
                 {/* Play/Pause + Status */}
-                <div className="flex items-center gap-4">
+                <div className="flex items-center gap-3">
                     <button
                         onClick={handleToggle}
                         disabled={isLoading}
-                        className={`flex items-center justify-center w-14 h-14 rounded-2xl transition-all duration-200 ${
+                        className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition-all duration-200 ${
                             isButtonActive
                                 ? 'bg-cyan-400 text-black shadow-[0_10px_28px_-16px_rgba(34,211,238,0.9)] hover:bg-cyan-300'
                                 : 'bg-white/8 text-cyan-50 hover:bg-white/16'
@@ -649,10 +661,10 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
                     </button>
                     
                     <div className="flex-1 min-w-0">
-                        <p className="text-sm text-white font-semibold truncate tracking-wide">
+                        <p className="truncate text-sm font-semibold tracking-wide text-white">
                             {currentVoice?.name ?? 'Select Voice'}
                         </p>
-                        <p className="text-xs text-cyan-100/65 truncate">
+                        <p className="truncate text-xs text-cyan-100/65">
                             {getStatusText()}
                         </p>
                     </div>
@@ -668,7 +680,20 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
                     )}
                 </div>
                 
-                {/* Voice & Speed */}
+                <div className="flex items-center gap-1" role="status" aria-live="polite" aria-label={`${Math.min(bufferedSentenceCount, bufferSlotCount)} of ${bufferSlotCount} upcoming sentences buffered`}>
+                    {Array.from({ length: bufferSlotCount }, (_, index) => (
+                        <span
+                            key={index}
+                            className={`h-1.5 flex-1 transition-colors duration-300 ${
+                                index < bufferedSentenceCount
+                                    ? 'bg-emerald-300 shadow-[0_0_8px_rgba(110,231,183,0.65)]'
+                                    : 'bg-cyan-100/12'
+                            }`}
+                        />
+                    ))}
+                </div>
+
+                {/* Voice and volume */}
                 <div className="space-y-3">
                     {/* Voice Selector */}
                     <div className="relative">
@@ -676,7 +701,7 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
                             onClick={() => {
                                 setShowVoiceMenu(!showVoiceMenu);
                             }}
-                            className="w-full px-3 py-2.5 bg-white/5 hover:bg-white/10 rounded-lg border border-white/10 text-left transition-colors"
+                            className="w-full border border-white/10 bg-white/5 px-2.5 py-2 text-left transition-colors hover:bg-white/10"
                         >
                             <span className="text-[10px] text-cyan-200/50 uppercase tracking-[0.16em] block">Voice</span>
                             <span className="text-sm text-white">
@@ -714,31 +739,8 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
                         )}
                     </div>
 
-                    {/* Speed Selector */}
-                    <div className="rounded-lg border border-white/10 bg-white/5 p-2.5 space-y-2">
-                        <div className="flex items-center justify-between px-1">
-                            <span className="text-[10px] text-cyan-200/50 uppercase tracking-[0.16em]">Speed</span>
-                            <span className="text-xs text-cyan-100 font-semibold">{formatSpeedLabel(speed)}</span>
-                        </div>
-                        <div className="grid grid-cols-4 gap-1.5">
-                            {SPEED_OPTIONS.map((option) => (
-                                <button
-                                    key={option}
-                                    onClick={() => setSpeed(option)}
-                                    className={`px-2 py-1.5 rounded-md text-xs font-semibold transition-colors border ${
-                                        Math.abs(option - speed) < 0.001
-                                            ? 'bg-cyan-300/25 border-cyan-200/50 text-cyan-100'
-                                            : 'bg-black/20 border-white/10 text-white/70 hover:bg-cyan-200/10 hover:text-white'
-                                    }`}
-                                >
-                                    {formatSpeedLabel(option)}
-                                </button>
-                            ))}
-                        </div>
-                    </div>
-
                     {/* Volume */}
-                    <div className="rounded-lg border border-white/10 bg-white/5 p-2.5 space-y-2">
+                    <div className="space-y-1.5 border-t border-white/10 pt-2">
                         <div className="flex items-center justify-between px-1">
                             <span className="text-[10px] text-cyan-200/50 uppercase tracking-[0.16em]">Volume</span>
                             <span className="text-xs text-cyan-100 font-semibold">{Math.round(volume * 100)}%</span>

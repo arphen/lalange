@@ -1916,7 +1916,7 @@ body.theme-ash {
   }
 
   .reader-audio-dock--contents-open {
-    right: calc(var(--reader-contents-width) + 1rem);
+    right: calc(var(--reader-contents-width) + 1rem) !important;
   }
 
   button:focus-visible,

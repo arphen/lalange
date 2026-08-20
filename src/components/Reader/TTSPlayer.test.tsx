@@ -419,12 +419,21 @@ describe('TTSPlayer voice changes', () => {
         expect(onPositionCommit).toHaveBeenCalledWith(1);
     });
 
-    it('exposes and applies the full speed range including 0.5x', () => {
-        const { getByText } = render(<TTSPlayer words={['Hello', 'world.']} currentWordIndex={0} />);
+    it('shows empty slots for sentences waiting to be buffered', () => {
+        const { getByRole } = render(<TTSPlayer words={['Hello', 'world.']} currentWordIndex={0} />);
 
-        fireEvent.click(getByText('0.5x'));
+        expect(getByRole('status')).toHaveAccessibleName('0 of 6 upcoming sentences buffered');
+    });
 
-        expect(mocks.setSpeed).toHaveBeenCalledWith(0.5);
+    it('updates the visible buffer status as sentence audio is queued', () => {
+        vi.mocked(ttsPlayer.hasAudioForSentence).mockReturnValue(true);
+        vi.mocked(ttsPlayer.getBufferedAheadCount).mockReturnValue(2);
+        const { getByRole } = render(<TTSPlayer words={['Hello', 'world.']} currentWordIndex={0} />);
+
+        const options = vi.mocked(ttsPlayer.setOptions).mock.calls.at(-1)?.[0];
+        act(() => options?.onAudioQueued?.(0, 3));
+
+        expect(getByRole('status')).toHaveAccessibleName('3 of 6 upcoming sentences buffered');
     });
 
     it('repairs a legacy foreign voice and clears its queued audio', async () => {
