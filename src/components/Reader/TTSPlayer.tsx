@@ -460,9 +460,12 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
         if (wasActive) ttsPlayer.pause();
 
         onPositionCommit?.(targetIndex);
-        useTTSStore.getState().setCurrentWordIndex(targetIndex);
 
         if (wasActive) {
+            // startFromSentence() below sets ttsStore.currentWordIndex itself. Leaving it
+            // untouched while paused keeps it pointing at the old position, so the next
+            // resume (handleToggle) notices the reader has moved and reseeks instead of
+            // continuing from ttsPlayer's stale internal position.
             const sentenceIndex = findNearestSentenceIndex(sentences, targetIndex);
             if (sentenceIndex >= 0) {
                 ttsPlayer.clearQueue();
