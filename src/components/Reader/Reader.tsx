@@ -19,6 +19,7 @@ import {
 import { useSettingsStore } from '../../core/store/settings';
 import { useAIStore } from '../../core/store/ai';
 import { useTTSStore } from '../../core/store/tts';
+import { ttsPlayer } from '../../core/tts/player';
 import {
     buildChapterWordIndex,
     findNextReadableChapter,
@@ -1123,6 +1124,11 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
 
         if (chapterTransitionActiveRef.current) return;
 
+        // A chapter jump (TOC, notes, chapter-boundary scroll) invalidates whatever
+        // TTS was reading; pausing lets the existing paused->playing resync in
+        // TTSPlayer pick up the new position instead of narrating stale text.
+        ttsPlayer.pause();
+
         setChapterHandoffSelection(selectionStartWordIndex === undefined
             ? null
             : { chapterId, startWordIndex: selectionStartWordIndex });
@@ -1249,6 +1255,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
         const nextIndex = Math.max(0, Math.min(wordsRef.current.length - 1, wordIndex));
         if (nextIndex === indexRef.current) return;
 
+        ttsPlayer.pause();
         indexRef.current = nextIndex;
         readerSessionController.dispatch({
             type: 'seek',
@@ -1474,6 +1481,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                     } else {
                         // Jump to new word while preserving current playback state.
                         const wasPlaying = isPlayingRef.current;
+                        ttsPlayer.pause();
                         indexRef.current = newIndex;
                         readerSessionController.dispatch({
                             type: 'seek',
