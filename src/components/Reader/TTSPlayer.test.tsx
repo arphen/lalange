@@ -86,6 +86,7 @@ vi.mock('../../core/tts/player', () => ({
         pause: vi.fn(),
         play: vi.fn(),
         hasAudioForSentence: vi.fn(() => false),
+        armMediaSession: vi.fn(() => Promise.resolve()),
     },
 }));
 
