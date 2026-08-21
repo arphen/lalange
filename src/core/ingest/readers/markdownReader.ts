@@ -1,5 +1,6 @@
 import { decodeUtf8, escapeHtml, getFileExtension, markdownToPlainText, normalizeMime, readFileAsUint8Array, stripFileExtension } from './utils';
 import type { IngestReaderPlugin, ReaderPreparedBook, ReaderResolvedChapter } from './types';
+import { buildLineWrapProfile, repairLineWraps } from '../lineWrap';
 
 const MARKDOWN_EXTENSIONS = ['md', 'markdown'];
 const MARKDOWN_MIME_TYPES = ['text/markdown', 'text/x-markdown', 'application/markdown'];
@@ -69,11 +70,12 @@ export class MarkdownIngestReader implements IngestReaderPlugin {
         }
 
         const headingTitle = this.extractHeadingTitle(markdown);
+        const repairedText = repairLineWraps(plainText, buildLineWrapProfile([plainText])).value;
         return [{
             title: headingTitle || 'Chapter 1',
             source: 'merged',
             slices: [{
-                text: plainText,
+                text: repairedText,
                 html: `<pre>${escapeHtml(markdown)}</pre>`,
             }],
         }];

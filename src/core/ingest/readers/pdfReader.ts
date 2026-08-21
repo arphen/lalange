@@ -4,6 +4,7 @@ import type { PdfLayoutWord } from './pdfLayout';
 import { extractPdfNotes, linkPdfNoteAnchors, type PdfNoteAnchor, type PdfNoteEntry } from './pdfNotes';
 import { resolvePdfLayout, type PdfLayoutPage } from './pdfLayout';
 import type { IngestReaderPlugin, ReaderPreparedBook, ReaderResolvedChapter } from './types';
+import { buildLineWrapProfile, repairLineWrapsAcrossSegments } from '../lineWrap';
 
 const PDF_EXTENSIONS = ['pdf'];
 const PDF_MIME_TYPES = ['application/pdf'];
@@ -124,6 +125,17 @@ const applyPdfLayout = (document: ParsedPdfDocument): ParsedPdfDocument => {
     return { ...document, pages };
 };
 
+const applyPdfLineWraps = (document: ParsedPdfDocument): ParsedPdfDocument => {
+    const texts = document.pages.map((page) => page.text);
+    const profile = buildLineWrapProfile(texts);
+    const { segments } = repairLineWrapsAcrossSegments(texts, profile);
+
+    return {
+        ...document,
+        pages: document.pages.map((page, index) => ({ ...page, text: segments[index] })),
+    };
+};
+
 export class PdfIngestReader implements IngestReaderPlugin {
     public readonly id = 'pdf';
 
@@ -168,10 +180,10 @@ export class PdfIngestReader implements IngestReaderPlugin {
 
     public async loadChapters(rawData: Uint8Array, onProgress?: (message: string) => void): Promise<ReaderResolvedChapter[]> {
         validatePdfSize(rawData.byteLength);
-        const document = applyPdfLayout(normalizeParsedDocument(
+        const document = applyPdfLineWraps(applyPdfLayout(normalizeParsedDocument(
             await this.dependencies.parsePdf(rawData, onProgress, { useOcr: true }),
             true,
-        ));
+        )));
         const notes = document.pages.flatMap((page) => page.notes || []);
         const noteAnchors = document.pages.flatMap((page) => page.noteAnchors || []);
 

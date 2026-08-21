@@ -1,5 +1,6 @@
 import type { ReferenceHandlingMode } from './cleaning';
 import type { MarkupRecoveryResult } from './markupRecovery';
+import { buildLineWrapProfile, repairLineWraps } from './lineWrap';
 
 export type ContentQualityDecision = 'accept' | 'accept-degraded' | 'reject';
 
@@ -46,6 +47,7 @@ export interface ContentQualityResult {
 export interface ContentQualityProfile {
     repeatedEdgeSignatures: ReadonlySet<string>;
     intactTokens: ReadonlySet<string>;
+    hyphenatedTokens: ReadonlySet<string>;
     referenceMarkerCount: number;
 }
 
@@ -139,42 +141,6 @@ const detectContentZone = (text: string): ContentZone => {
     return firstLines.some((line) => NOTE_HEADING_PATTERN.test(line.replace(/^page\s+\d{1,5}\s*/i, '')))
         ? 'notes'
         : 'body';
-};
-
-const repairHardWraps = (
-    text: string,
-    profile: ContentQualityProfile,
-): { value: string; samples: string[] } => {
-    const lines = text.split('\n');
-    const joins: string[] = [];
-
-    for (let index = 0; index < lines.length - 1; index += 1) {
-        const leftMatch = lines[index].match(/([\p{L}]+)([-]*)\s*$/u);
-        const rightMatch = lines[index + 1].match(/^\s*([\p{L}]+)/u);
-        if (!leftMatch || !rightMatch) continue;
-
-        const left = leftMatch[1];
-        const right = rightMatch[1];
-        const joined = `${left}${right}`.toLocaleLowerCase();
-        const leftToken = left.toLocaleLowerCase();
-        const rightToken = right.toLocaleLowerCase();
-        const knownJoinedToken = profile.intactTokens.has(joined);
-        const isFragment = !profile.intactTokens.has(leftToken) || !profile.intactTokens.has(rightToken);
-        const oneCharacterShard = left.length === 1 || right.length === 1;
-        if (!knownJoinedToken || (!isFragment && !oneCharacterShard)) continue;
-
-        const replacement = `${left}${right}`;
-        const leftPrefix = lines[index].slice(0, leftMatch.index);
-        const rightSuffix = lines[index + 1].slice((rightMatch.index || 0) + rightMatch[0].length);
-        lines[index] = `${leftPrefix}${replacement}${rightSuffix}`;
-        lines[index + 1] = '';
-        joins.push(`${left}${leftMatch[2]} + ${right} -> ${replacement}`);
-    }
-
-    return {
-        value: lines.join('\n'),
-        samples: joins,
-    };
 };
 
 const normalizeOcrReferences = (
@@ -382,16 +348,12 @@ const getQualityScore = (issues: ContentQualityIssue[], wordCount: number): numb
 
 export const analyzeContentUnits = (units: RawContentUnit[]): ContentQualityProfile => {
     const edgeOccurrences = new Map<string, number>();
-    const intactTokens = new Set<string>();
+    const { intactTokens, hyphenatedTokens } = buildLineWrapProfile(units.map((unit) => unit.text));
     let referenceMarkerCount = 0;
 
     for (const unit of units) {
         const words = unit.text.split(/\s+/).filter(Boolean);
         referenceMarkerCount += getOcrReferenceCandidates(unit.text).length;
-        for (const word of words) {
-            const normalized = word.toLocaleLowerCase().replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '');
-            if (normalized) intactTokens.add(normalized);
-        }
 
         const unitEdgeSignatures = new Set<string>();
         for (const line of getEdgeLines(unit)) {
@@ -424,13 +386,19 @@ export const analyzeContentUnits = (units: RawContentUnit[]): ContentQualityProf
                 .map(([signature]) => signature),
         ),
         intactTokens,
+        hyphenatedTokens,
         referenceMarkerCount,
     };
 };
 
 export const cleanContentUnit = (
     unit: RawContentUnit,
-    _profile: ContentQualityProfile = { repeatedEdgeSignatures: new Set(), intactTokens: new Set(), referenceMarkerCount: 0 },
+    _profile: ContentQualityProfile = {
+        repeatedEdgeSignatures: new Set(),
+        intactTokens: new Set(),
+        hyphenatedTokens: new Set(),
+        referenceMarkerCount: 0,
+    },
     options: ContentQualityOptions = {},
 ): ContentQualityResult => {
     const lowConfidenceThreshold = options.lowConfidenceOcrThreshold ?? CONTENT_QUALITY_THRESHOLDS.lowConfidenceOcr;
@@ -513,7 +481,7 @@ export const cleanContentUnit = (
     if (furniture.samples.length > 0) {
         issues.push(createIssue('page-furniture', 0.9, furniture.samples, furniture.samples.length));
     }
-    const hardWraps = repairHardWraps(furniture.value, _profile);
+    const hardWraps = repairLineWraps(furniture.value, _profile);
     if (hardWraps.samples.length > 0) {
         issues.push(createIssue('hard-wrap', 0.85, hardWraps.samples, hardWraps.samples.length));
     }

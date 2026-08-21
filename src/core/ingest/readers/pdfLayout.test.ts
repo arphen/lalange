@@ -45,6 +45,16 @@ describe('pdfLayout', () => {
         expect(lines.map((line) => line.text)).toEqual(['Left', 'Right', 'column', 'column']);
     });
 
+    it('does not insert a space after a soft or Unicode hyphen within a line', () => {
+        const lines = clusterPdfLines([
+            word('a1', 'evo­', 0.1, 0.1, 0.15, 0.12),
+            word('a2', 'lution', 0.151, 0.1, 0.22, 0.12),
+        ]);
+
+        expect(lines).toHaveLength(1);
+        expect(lines[0].text).toBe('evo­lution');
+    });
+
     it('reads a two-column page one column at a time', () => {
         const result = resolvePdfLayout([
             word('l1', 'Left one', 0.1, 0.1, 0.35, 0.12),

@@ -73,6 +73,19 @@ const findInferredHeadingBreaks = (words: string[]): Set<number> => {
 const closeStructuralUtterance = (text: string): string =>
     TRAILING_PUNCTUATION_PATTERN.test(text) ? text : `${text}.`;
 
+// Mirrors joinLineText's trailing-character rule (pdfLayout.ts) and isContinuation
+// (generate_common_ngrams.mjs): a token ending in '-' or '/' is a wrap continuation,
+// not a separate word, so no space belongs between it and the next token.
+const isContinuationToken = (token: string): boolean =>
+    token.length > 1 && (token.endsWith('-') || token.endsWith('/'));
+
+const joinUtteranceTokens = (tokens: string[]): string => tokens.reduce(
+    (text, token, index) => (index === 0 || isContinuationToken(tokens[index - 1])
+        ? `${text}${token}`
+        : `${text} ${token}`),
+    '',
+);
+
 interface WordRange {
     startWordIndex: number;
     endWordIndex: number;
@@ -83,7 +96,7 @@ const splitOverlongUtterance = (
     startWordIndex: number,
     endWordIndex: number,
 ): WordRange[] => {
-    const text = words.slice(startWordIndex, endWordIndex + 1).join(' ');
+    const text = joinUtteranceTokens(words.slice(startWordIndex, endWordIndex + 1));
     if (text.length <= MAX_UTTERANCE_CHARACTER_COUNT || startWordIndex === endWordIndex) {
         return [{ startWordIndex, endWordIndex }];
     }
@@ -151,7 +164,7 @@ export function splitIntoSentences(
         if (isEnd || isStructuralBreak || i === words.length - 1) {
             const utteranceRanges = splitOverlongUtterance(words, sentenceStartIndex, i);
             utteranceRanges.forEach((range, rangeIndex) => {
-                const text = words.slice(range.startWordIndex, range.endWordIndex + 1).join(' ');
+                const text = joinUtteranceTokens(words.slice(range.startWordIndex, range.endWordIndex + 1));
                 const isLastRange = rangeIndex === utteranceRanges.length - 1;
                 sentences.push({
                     index: sentences.length,

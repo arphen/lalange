@@ -138,7 +138,7 @@ const joinLineText = (words: PdfLayoutWord[]): string => {
         const needsSpace = text.length > 0
             && !/\s$/.test(text)
             && !/^[,.;:!?%)\]}]/.test(value)
-            && !/[([{\-/]$/.test(text);
+            && !/[([{\-‐‑­/]$/.test(text);
         text += `${needsSpace ? ' ' : ''}${value}`;
     }
     return text;
