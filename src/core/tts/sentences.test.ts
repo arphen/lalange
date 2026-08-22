@@ -96,13 +96,13 @@ describe('splitIntoSentences', () => {
         expect(sentences).toHaveLength(2);
         expect(sentences[0]).toEqual({
             index: 0,
-            text: 'From the highly select bank, with its Louis XVI- style safes reserved for 800 choice clients (Americans who must keep at least 25,000 dollars in their current accounts) to the managing director’s desk which is antique or Premier Empire (for senior managers, opulent functional suffices),',
+            text: 'From the highly select bank, with its Louis XVI-style safes reserved for 800 choice clients (Americans who must keep at least 25,000 dollars in their current accounts) to the managing director’s desk which is antique or Premier Empire (for senior managers, opulent functional suffices),',
             startWordIndex: 0,
             endWordIndex: 44,
         });
         expect(sentences[1]).toEqual({
             index: 1,
-            text: 'from the arrogant prestige of nouveau riche villas to the nonchalance of high- class clothing, all these marginal differences mark out the most rigorous social discrimination, in accordance with a general law of the distribution of distinctive matter (and against that law – even more than against the criminal law – ignorance is no defence).',
+            text: 'from the arrogant prestige of nouveau riche villas to the nonchalance of high-class clothing, all these marginal differences mark out the most rigorous social discrimination, in accordance with a general law of the distribution of distinctive matter (and against that law – even more than against the criminal law – ignorance is no defence).',
             startWordIndex: 45,
             endWordIndex: 99,
         });
@@ -151,6 +151,35 @@ describe('splitIntoSentences', () => {
         const sentences = splitIntoSentences(words);
 
         expect(sentences.map((sentence) => sentence.text)).toEqual(words);
+    });
+
+    it('joins hyphen-continuation tokens without a space', () => {
+        const words = ['She', 'was', 'self-', 'aware', 'about', 'it.'];
+        const sentences = splitIntoSentences(words);
+
+        expect(sentences[0].text).toBe('She was self-aware about it.');
+    });
+
+    it('joins slash-continuation tokens without a space', () => {
+        const words = ['Pick', 'and/', 'or', 'both.'];
+        const sentences = splitIntoSentences(words);
+
+        expect(sentences[0].text).toBe('Pick and/or both.');
+    });
+
+    it('keeps spaces around a standalone em dash', () => {
+        const words = ['She', 'paused', '—', 'then', 'left.'];
+        const sentences = splitIntoSentences(words);
+
+        expect(sentences[0].text).toBe('She paused — then left.');
+    });
+
+    it('preserves word-index ranges when joining continuation tokens', () => {
+        const words = ['self-', 'aware', 'now.'];
+        const sentences = splitIntoSentences(words);
+
+        expect(sentences[0].startWordIndex).toBe(0);
+        expect(sentences[0].endWordIndex).toBe(2);
     });
 });
 

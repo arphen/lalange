@@ -126,6 +126,48 @@ describe('content quality gate', () => {
         expect(ambiguous.cleanedText).toContain('or\ninfluential');
     });
 
+    it('joins a line-end hyphenated word without book attestation', () => {
+        const source = unit('The evo-\nlution of species is discussed here.');
+        const profile = analyzeContentUnits([source]);
+        const result = cleanContentUnit(source, profile);
+
+        expect(result.cleanedText).toContain('evolution of');
+        expect(result.issues.map((issue) => issue.type)).toContain('hard-wrap');
+    });
+
+    it('preserves a compound the book attests as hyphenated', () => {
+        const units = [
+            unit('The mind can be self-aware in rare moments.', 'page_1.html'),
+            unit('A self-\naware mind notices itself.', 'page_2.html'),
+        ];
+        const profile = analyzeContentUnits(units);
+        const result = cleanContentUnit(units[1], profile);
+
+        expect(result.cleanedText).toContain('self-aware mind');
+    });
+
+    it('drops soft hyphens end to end', () => {
+        const withinLine = unit('An evo­lution of species.');
+        const acrossLines = unit('An evo­\nlution of species.');
+        const profile = analyzeContentUnits([withinLine, acrossLines]);
+
+        const withinResult = cleanContentUnit(withinLine, profile);
+        const acrossResult = cleanContentUnit(acrossLines, profile);
+
+        expect(withinResult.cleanedText).toContain('evolution');
+        expect(withinResult.cleanedText).not.toContain('­');
+        expect(acrossResult.cleanedText).toContain('evolution');
+        expect(acrossResult.cleanedText).not.toContain('­');
+    });
+
+    it('does not introduce a paragraph break when repairing a wrap', () => {
+        const source = unit('a b evo-\nlution c\nd e');
+        const profile = analyzeContentUnits([source]);
+        const result = cleanContentUnit(source, profile);
+
+        expect(result.cleanedText).not.toContain('\n\n');
+    });
+
     it('keeps notes in keep mode and omits the notes zone otherwise', () => {
         const source = unit('NOTES 83 A bibliographical note with a citation.', 'page_105.html');
         const bibliography = unit('Page 104 BIBLIOGRAPHICAL ABBREVIATIONS USED IN THE NOTES 5th Report.', 'page_104.html');

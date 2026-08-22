@@ -1,5 +1,6 @@
 import { decodeUtf8, escapeHtml, getFileExtension, isLikelyUtf8Text, normalizeMime, readFileAsUint8Array, stripFileExtension } from './utils';
 import type { IngestReaderPlugin, ReaderPreparedBook, ReaderResolvedChapter } from './types';
+import { buildLineWrapProfile, repairLineWraps } from '../lineWrap';
 
 const TEXT_EXTENSIONS = ['txt', 'text'];
 const TEXT_MIME_TYPES = ['text/plain'];
@@ -58,12 +59,14 @@ export class PlainTextIngestReader implements IngestReaderPlugin {
             return [];
         }
 
+        const repairedText = repairLineWraps(normalizedText, buildLineWrapProfile([normalizedText])).value;
+
         return [{
             title: 'Chapter 1',
             source: 'merged',
             slices: [{
-                text: normalizedText,
-                html: `<pre>${escapeHtml(normalizedText)}</pre>`,
+                text: repairedText,
+                html: `<pre>${escapeHtml(repairedText)}</pre>`,
             }],
         }];
     }

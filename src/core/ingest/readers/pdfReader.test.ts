@@ -98,6 +98,51 @@ describe('PdfIngestReader', () => {
         }]);
     });
 
+    it('joins a line-end hyphenated word within a page', async () => {
+        const reader = new PdfIngestReader({
+            parsePdf: vi.fn().mockResolvedValue({
+                pages: [{ pageNumber: 1, text: 'A theory of evo-\nlution took hold.' }],
+            }),
+        });
+
+        const chapters = await reader.loadChapters(new TextEncoder().encode('%PDF-1.7'));
+
+        expect(chapters[0].slices[0].text).toBe('A theory of evolution took hold.');
+        expect(chapters[0].slices[0].html).toContain('evolution');
+    });
+
+    it('joins a hyphenated wrap split across a page boundary', async () => {
+        const reader = new PdfIngestReader({
+            parsePdf: vi.fn().mockResolvedValue({
+                pages: [
+                    { pageNumber: 1, text: 'A theory of evo-' },
+                    { pageNumber: 2, text: 'lution took hold.' },
+                ],
+            }),
+        });
+
+        const chapters = await reader.loadChapters(new TextEncoder().encode('%PDF-1.7'));
+
+        expect(chapters[0].slices[0].text).toBe('A theory of evolution');
+        expect(chapters[0].slices[1].text).toBe(' took hold.');
+    });
+
+    it('does not join an unhyphenated pair across a page boundary', async () => {
+        const reader = new PdfIngestReader({
+            parsePdf: vi.fn().mockResolvedValue({
+                pages: [
+                    { pageNumber: 1, text: 'Stray word the' },
+                    { pageNumber: 2, text: 'cat sat down.' },
+                ],
+            }),
+        });
+
+        const chapters = await reader.loadChapters(new TextEncoder().encode('%PDF-1.7'));
+
+        expect(chapters[0].slices[0].text).toBe('Stray word the');
+        expect(chapters[0].slices[1].text).toBe('cat sat down.');
+    });
+
     it('fails chapter loading when local OCR recovers no readable page', async () => {
         const reader = new PdfIngestReader({
             parsePdf: vi.fn().mockResolvedValue({
