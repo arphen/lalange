@@ -21,6 +21,7 @@ import {
 } from '../../core/tts';
 import { ttsPlayer } from '../../core/tts/player';
 import { persistListeningHandoff } from '../../core/exchange/handoff';
+import { useTTSMediaSession } from '../../core/tts/useMediaSession';
 
 // Configuration
 const DEFAULT_BUFFER_AHEAD = 5;
@@ -103,6 +104,11 @@ interface TTSPlayerProps {
     /** Book and chapter IDs for position tracking */
     bookId?: string;
     chapterId?: string;
+    /** Displayed in the OS media session (lock screen, notification, headset) */
+    bookTitle?: string;
+    bookAuthor?: string;
+    chapterTitle?: string;
+    coverImage?: string;
     /** Chapter ID requested by the reader for automatic continuation */
     autoPlayChapterId?: string | null;
     /** Called when the final sentence in this chapter has finished */
@@ -122,6 +128,10 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
     onPositionCommit,
     bookId,
     chapterId,
+    bookTitle,
+    bookAuthor,
+    chapterTitle,
+    coverImage,
     autoPlayChapterId = null,
     onChapterEnd,
     compact = false,
@@ -356,7 +366,15 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
             ttsPlayer.dispose();
         };
     }, [commitCurrentPosition]);
-    
+
+    // Register with the OS media session as soon as the panel opens, so the system
+    // Play button is already there and ready before the user taps play in-app.
+    useEffect(() => {
+        void ttsPlayer.armMediaSession().catch(() => {
+            // Non-fatal: the in-app play button still starts playback normally.
+        });
+    }, []);
+
     // Generate audio starting from a sentence index
     const generateFrom = useCallback(async (fromSentenceIndex: number, sentenceCount: number) => {
         if (isGeneratingRef.current || sentences.length === 0) return;
@@ -428,7 +446,39 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
         await ttsPlayer.play(sentenceIndex, 1);
         void generateFrom(sentenceIndex, startupBufferSize);
     }, [generateFrom, handleInit, safeBufferAhead, sentences]);
-    
+
+    // Move the reading position forward/backward by a number of words, e.g. from
+    // OS media session seek buttons. Restarts audio from the new sentence if playing.
+    const skipWords = useCallback((deltaWords: number) => {
+        if (words.length === 0 || sentences.length === 0) return;
+
+        const readerWordIndex = getCurrentWordIndex?.() ?? currentWordIndex;
+        const targetIndex = Math.max(0, Math.min(words.length - 1, readerWordIndex + deltaWords));
+        if (targetIndex === readerWordIndex) return;
+
+        const wasActive = playbackState === 'playing' || playbackState === 'generating' || playbackState === 'preparing';
+        if (wasActive) ttsPlayer.pause();
+
+        onPositionCommit?.(targetIndex);
+
+        if (wasActive) {
+            // startFromSentence() below sets ttsStore.currentWordIndex itself. Leaving it
+            // untouched while paused keeps it pointing at the old position, so the next
+            // resume (handleToggle) notices the reader has moved and reseeks instead of
+            // continuing from ttsPlayer's stale internal position.
+            const sentenceIndex = findNearestSentenceIndex(sentences, targetIndex);
+            if (sentenceIndex >= 0) {
+                ttsPlayer.clearQueue();
+                void startFromSentence(sentenceIndex).catch((err) => {
+                    console.error('[TTS UI] Skip failed:', err);
+                    const message = err instanceof Error ? err.message : 'Audio playback failed.';
+                    useTTSStore.getState().setError(message);
+                    ttsPlayer.stop();
+                });
+            }
+        }
+    }, [words.length, sentences, getCurrentWordIndex, currentWordIndex, playbackState, onPositionCommit, startFromSentence]);
+
     // Set up player callbacks
     useEffect(() => {
         ttsPlayer.setOptions({
@@ -578,6 +628,27 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
         return Array.from(groups, ([label, groupVoices]) => ({ label, voices: groupVoices }));
     }, []);
     const currentVoice = getVoice(effectiveVoice);
+
+    const handlePlayAction = useCallback(() => {
+        if (playbackState === 'playing') return;
+        void handleToggle();
+    }, [playbackState, handleToggle]);
+
+    const handlePauseAction = useCallback(() => {
+        ttsPlayer.pause();
+    }, []);
+
+    useTTSMediaSession({
+        playbackState,
+        title: bookTitle || chapterTitle || currentVoice?.name || 'Listening',
+        artist: bookAuthor || currentVoice?.name,
+        album: chapterTitle && chapterTitle !== bookTitle ? chapterTitle : undefined,
+        artwork: coverImage,
+        onPlay: handlePlayAction,
+        onPause: handlePauseAction,
+        onStop: handleStop,
+        onSkip: skipWords,
+    });
 
     // Button content
     const getButtonContent = () => {

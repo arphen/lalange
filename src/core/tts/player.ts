@@ -110,9 +110,49 @@ interface ScheduledAudio {
     ended: boolean;
 }
 
+// Chromium and Firefox both appear to exclude a raw AudioContext graph — even piped
+// through an <audio> element via a live MediaStreamDestination — from the OS-level
+// media session bridge (macOS Now Playing, hardware media keys, Bluetooth controls),
+// the same way a live WebRTC call is deliberately kept out of it. A genuinely
+// file-backed (blob URL) <audio> element sidesteps that. It's played in parallel with
+// the real TTS output purely to register the tab as playing real media — its content
+// is true digital silence (all-zero samples), not just quiet noise: low-amplitude
+// noise was audible as static/hum on some devices (notably iOS Safari), and a random
+// noise loop has no zero-crossing at the seam, causing an audible click every loop.
+const DECOY_AUDIO_DURATION_SECONDS = 2;
+const DECOY_AUDIO_SAMPLE_RATE = 8000;
+
+let decoyAudioBlobUrl: string | null = null;
+
+const getDecoyAudioBlobUrl = (): string => {
+    if (!decoyAudioBlobUrl) {
+        const sampleCount = DECOY_AUDIO_DURATION_SECONDS * DECOY_AUDIO_SAMPLE_RATE;
+        const samples = new Float32Array(sampleCount);
+        decoyAudioBlobUrl = URL.createObjectURL(audioToWavBlob(samples, DECOY_AUDIO_SAMPLE_RATE));
+    }
+    return decoyAudioBlobUrl;
+};
+
+const createDecoyAudioElement = (): HTMLAudioElement | null => {
+    if (typeof document === 'undefined') return null;
+
+    try {
+        const audioEl = document.createElement('audio');
+        audioEl.src = getDecoyAudioBlobUrl();
+        audioEl.loop = true;
+        audioEl.style.display = 'none';
+        document.body.appendChild(audioEl);
+        return audioEl;
+    } catch (error) {
+        console.error('[TTS Player] Failed to create decoy audio element:', error);
+        return null;
+    }
+};
+
 class TTSAudioPlayer {
     private audioContext: AudioContext | null = null;
     private gainNode: GainNode | null = null;
+    private decoyAudioElement: HTMLAudioElement | null = null;
     private currentSource: AudioBufferSourceNode | null = null;
     private scheduledSources: Map<number, ScheduledAudio> = new Map();
     
@@ -147,15 +187,16 @@ class TTSAudioPlayer {
             this.audioContext = new AudioContextConstructor();
             this.gainNode = this.audioContext.createGain();
             this.gainNode.connect(this.audioContext.destination);
+            this.decoyAudioElement = createDecoyAudioElement();
         }
-        
+
         if (this.audioContext.state === 'suspended' && typeof this.audioContext.resume === 'function') {
             await this.audioContext.resume();
         }
-        
+
         return this.audioContext;
     }
-    
+
     setOptions(options: AudioPlayerOptions): void {
         this.options = options;
     }
@@ -250,6 +291,38 @@ class TTSAudioPlayer {
     checkBuffer(): void {
         this.options.onBufferLow?.(this.currentSentenceIndex);
     }
+
+    // jsdom (used in tests) doesn't implement HTMLMediaElement.play(), returning
+    // undefined instead of a Promise — real browsers always return one.
+    private playDecoyQuietly(): void {
+        const result = this.decoyAudioElement?.play();
+        result?.catch?.(() => {
+            // OS media-key routing won't register without this, but TTS keeps playing regardless.
+        });
+    }
+
+    /**
+     * Registers the tab with the OS media session before the user presses play, so the
+     * OS-level Play button is already there and ready to kick off real playback via the
+     * MediaSession 'play' action handler. Chromium appears to derive its own play/pause
+     * indicator from whether the decoy element is actually playing, not just from the
+     * mediaSession.playbackState property — so it's played just long enough to register,
+     * then immediately paused again, ending in a state that honestly reflects that
+     * nothing is playing yet.
+     */
+    async armMediaSession(): Promise<void> {
+        await this.ensureContext();
+        const decoy = this.decoyAudioElement;
+        if (!decoy) return;
+
+        try {
+            await decoy.play();
+        } catch {
+            // Will be retried once play() below runs from an actual user-gesture-driven click.
+        }
+        decoy.pause();
+        decoy.currentTime = 0;
+    }
     
     hasAudioForSentence(sentenceIndex: number): boolean {
         return this.audioQueue.has(sentenceIndex);
@@ -279,7 +352,9 @@ class TTSAudioPlayer {
         this.isPlaying = true;
         const hasAudio = this.audioQueue.has(this.currentSentenceIndex);
         logTTSPlayerDebug(`[TTS Player] Starting playback from sentence ${this.currentSentenceIndex} (hasAudio: ${hasAudio}, queueSize: ${this.audioQueue.size})`);
-        
+
+        this.playDecoyQuietly();
+
         this.playCurrentSentence();
     }
     
@@ -598,7 +673,8 @@ class TTSAudioPlayer {
         }
         this.isPlaying = false;
         this.stopWordTracking();
-        
+        this.decoyAudioElement?.pause();
+
         if (this.currentSource) {
             try {
                 this.currentSource.stop();
@@ -663,6 +739,12 @@ class TTSAudioPlayer {
         this.stop();
         this.clearQueue();
         
+        if (this.decoyAudioElement) {
+            this.decoyAudioElement.pause();
+            this.decoyAudioElement.remove();
+            this.decoyAudioElement = null;
+        }
+
         if (this.audioContext) {
             this.audioContext.close().catch(console.error);
             this.audioContext = null;

@@ -2999,6 +2999,10 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                         }}
                         bookId={book.id}
                         chapterId={currentChapter.id}
+                        bookTitle={book.title}
+                        bookAuthor={book.author}
+                        chapterTitle={currentChapter.title}
+                        coverImage={book.cover}
                         autoPlayChapterId={ttsAutoPlayChapterId}
                         onChapterEnd={handleTTSChapterEnd}
                         compact={false}
