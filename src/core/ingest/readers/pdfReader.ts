@@ -23,10 +23,22 @@ export interface ParsedPdfPage {
     noteAnchors?: PdfNoteAnchor[];
 }
 
+export interface PdfOutlineEntry {
+    title: string;
+    pageNumber: number;
+}
+
 export interface ParsedPdfDocument {
     title?: string;
     author?: string;
     pages: ParsedPdfPage[];
+    outline?: PdfOutlineEntry[];
+}
+
+export interface PdfPlannedChapter {
+    title: string;
+    startPage: number;
+    endPage: number;
 }
 
 export interface PdfParseOptions {
@@ -58,6 +70,8 @@ const normalizePdfText = (value: string): string => value
     .replace(/[\t ]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
+
+const normalizeWhitespace = (value: string): string => value.replaceAll('\0', '').replace(/\s+/g, ' ').trim();
 
 const validatePdfSize = (size: number): void => {
     if (size > MAX_PDF_BYTES) {
@@ -136,6 +150,66 @@ const applyPdfLineWraps = (document: ParsedPdfDocument): ParsedPdfDocument => {
     };
 };
 
+const toChapterSlice = (page: ParsedPdfPage) => ({
+    text: page.text,
+    html: `<div data-pdf-page="${page.pageNumber}">${escapeHtml(page.text)}</div>`,
+});
+
+const MIN_OUTLINE_CHAPTERS = 2;
+
+const sanitizeOutline = (
+    outline: PdfOutlineEntry[] | undefined,
+    pageCount: number,
+): PdfOutlineEntry[] => {
+    if (!outline || outline.length === 0) return [];
+
+    const entries: PdfOutlineEntry[] = [];
+    let lastPage = 0;
+
+    for (const entry of outline) {
+        const title = normalizeWhitespace(entry.title);
+        if (!title) continue;
+        if (!Number.isInteger(entry.pageNumber) || entry.pageNumber < 1 || entry.pageNumber > pageCount) continue;
+        // A destination that jumps backwards means the outline is not in reading order; it cannot
+        // describe contiguous page ranges, so drop the stray entry rather than the whole outline.
+        if (entry.pageNumber < lastPage) continue;
+        // Entries sharing a start page (a part and its first chapter) would leave an empty range.
+        if (entries.length > 0 && entry.pageNumber === lastPage) continue;
+
+        lastPage = entry.pageNumber;
+        entries.push({ title, pageNumber: entry.pageNumber });
+    }
+
+    return entries;
+};
+
+/**
+ * Turns a PDF's outline into contiguous chapters, one per entry at any nesting depth. Returns null
+ * when the outline is missing or too thin to describe the document, leaving the single-chapter
+ * fallback in place.
+ */
+export const planPdfChapters = (
+    outline: PdfOutlineEntry[] | undefined,
+    pageCount: number,
+): PdfPlannedChapter[] | null => {
+    if (pageCount < 1) return null;
+
+    const entries = sanitizeOutline(outline, pageCount);
+    if (entries.length < MIN_OUTLINE_CHAPTERS) return null;
+
+    return entries.map((entry, index) => {
+        const next = entries[index + 1];
+        // The first chapter absorbs any pages the outline leaves in front of it.
+        const startPage = index === 0 ? 1 : entry.pageNumber;
+
+        return {
+            title: entry.title,
+            startPage,
+            endPage: next ? Math.max(startPage, next.pageNumber - 1) : pageCount,
+        };
+    });
+};
+
 export class PdfIngestReader implements IngestReaderPlugin {
     public readonly id = 'pdf';
 
@@ -167,14 +241,25 @@ export class PdfIngestReader implements IngestReaderPlugin {
         const document = normalizeParsedDocument(await this.dependencies.parsePdf(rawData, onProgress), false);
         const fallbackTitle = stripFileExtension(file.name).trim() || file.name;
 
+        const plan = planPdfChapters(document.outline, document.pages.length);
+
         return {
             title: document.title?.trim() || fallbackTitle,
             author: document.author?.trim() || 'Unknown',
             images: [],
-            chapters: [{
-                title: 'Document',
-                source: 'spine',
-            }],
+            chapters: plan
+                ? plan.map((chapter) => ({
+                    title: chapter.title,
+                    source: 'toc' as const,
+                    structureOwnership: 'authored' as const,
+                    reformationReason: 'authored-boundary' as const,
+                    boundaryEvidence: ['publisher-toc' as const],
+                }))
+                : [{
+                    title: 'Document',
+                    source: 'spine',
+                }],
+            ...(plan ? { structureVersion: 1 as const, structureMode: 'authored' as const } : {}),
         };
     }
 
@@ -186,17 +271,36 @@ export class PdfIngestReader implements IngestReaderPlugin {
         )));
         const notes = document.pages.flatMap((page) => page.notes || []);
         const noteAnchors = document.pages.flatMap((page) => page.noteAnchors || []);
+        const plan = planPdfChapters(document.outline, document.pages.length);
 
-        return [{
-            title: 'Document',
-            source: 'spine',
-            slices: document.pages.map((page) => ({
-                text: page.text,
-                html: `<div data-pdf-page="${page.pageNumber}">${escapeHtml(page.text)}</div>`,
-            })),
-            ...(notes.length > 0 ? { notes } : {}),
-            ...(noteAnchors.length > 0 ? { noteAnchors } : {}),
-        }];
+        if (!plan) {
+            return [{
+                title: 'Document',
+                source: 'spine',
+                slices: document.pages.map(toChapterSlice),
+                ...(notes.length > 0 ? { notes } : {}),
+                ...(noteAnchors.length > 0 ? { noteAnchors } : {}),
+            }];
+        }
+
+        return plan.map((chapter) => {
+            const pages = document.pages.filter((page) => (
+                page.pageNumber >= chapter.startPage && page.pageNumber <= chapter.endPage
+            ));
+            const chapterNotes = pages.flatMap((page) => page.notes || []);
+            const chapterNoteAnchors = pages.flatMap((page) => page.noteAnchors || []);
+
+            return {
+                title: chapter.title,
+                source: 'toc' as const,
+                structureOwnership: 'authored' as const,
+                reformationReason: 'authored-boundary' as const,
+                boundaryEvidence: ['publisher-toc' as const],
+                slices: pages.map(toChapterSlice),
+                ...(chapterNotes.length > 0 ? { notes: chapterNotes } : {}),
+                ...(chapterNoteAnchors.length > 0 ? { noteAnchors: chapterNoteAnchors } : {}),
+            };
+        });
     }
 }
 

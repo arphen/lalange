@@ -1,4 +1,4 @@
-import { MAX_PDF_PAGES, type ParsedPdfDocument, type PdfParseOptions } from './pdfReader';
+import { MAX_PDF_PAGES, type ParsedPdfDocument, type PdfOutlineEntry, type PdfParseOptions } from './pdfReader';
 import { TesseractPdfOcrEngine, type PdfOcrEngine, type PdfOcrWord } from './pdfOcrAdapter';
 import { normalizePdfBox, type PdfLayoutWord, type PdfTextDirection } from './pdfLayout';
 import { createOperationHandle } from '../../operations/progressReporter';
@@ -40,13 +40,77 @@ interface PdfLoadingTask {
     destroy: () => Promise<void>;
 }
 
+interface PdfOutlineNode {
+    title?: unknown;
+    dest?: unknown;
+    items?: unknown;
+}
+
 interface PdfDocument {
     numPages: number;
     getMetadata: () => Promise<unknown>;
     getPageLabels: () => Promise<string[] | null>;
+    getOutline: () => Promise<unknown>;
+    getDestination: (id: string) => Promise<unknown>;
+    getPageIndex: (ref: unknown) => Promise<number>;
     getPage: (pageNumber: number) => Promise<PdfPage>;
     destroy: () => Promise<void>;
 }
+
+const isOutlineNode = (value: unknown): value is PdfOutlineNode => (
+    !!value && typeof value === 'object'
+);
+
+const resolveOutlinePage = async (
+    document: PdfDocument,
+    dest: unknown,
+): Promise<number | undefined> => {
+    try {
+        const resolved = typeof dest === 'string' ? await document.getDestination(dest) : dest;
+        if (!Array.isArray(resolved) || resolved.length === 0) return undefined;
+        const pageIndex = await document.getPageIndex(resolved[0]);
+        if (!Number.isInteger(pageIndex) || pageIndex < 0) return undefined;
+        return pageIndex + 1;
+    } catch {
+        return undefined;
+    }
+};
+
+const collectOutlineEntries = async (
+    document: PdfDocument,
+    nodes: unknown,
+    depth: number,
+    entries: PdfOutlineEntry[],
+): Promise<void> => {
+    if (!Array.isArray(nodes) || depth > MAX_OUTLINE_DEPTH) return;
+
+    for (const node of nodes) {
+        if (!isOutlineNode(node)) continue;
+        if (entries.length >= MAX_OUTLINE_ENTRIES) return;
+
+        const title = typeof node.title === 'string' ? node.title.replaceAll('\0', '').trim() : '';
+        const pageNumber = await resolveOutlinePage(document, node.dest);
+        if (title && pageNumber !== undefined) {
+            entries.push({ title, pageNumber });
+        }
+
+        await collectOutlineEntries(document, node.items, depth + 1, entries);
+    }
+};
+
+const extractOutline = async (document: PdfDocument): Promise<PdfOutlineEntry[]> => {
+    try {
+        const nodes = await document.getOutline();
+        const entries: PdfOutlineEntry[] = [];
+        await collectOutlineEntries(document, nodes, 0, entries);
+        return entries;
+    } catch {
+        return [];
+    }
+};
+
+const MAX_OUTLINE_DEPTH = 6;
+const MAX_OUTLINE_ENTRIES = 5_000;
 
 export const MAX_OCR_LONG_EDGE = 3_500;
 export const MAX_OCR_PIXELS = 16_000_000;
@@ -286,6 +350,7 @@ export const parsePdfWithPdfJs = async (
 
         const metadata = await loadedDocument.getMetadata() as PdfMetadata;
         const pageLabels = await loadedDocument.getPageLabels();
+        const outline = await extractOutline(loadedDocument);
         if (options.useOcr) {
             ocrEngine = options.ocrEngine || new TesseractPdfOcrEngine();
             ownsOcrEngine = !options.ocrEngine;
@@ -337,6 +402,7 @@ export const parsePdfWithPdfJs = async (
             title: readMetadataValue(metadata, 'Title', 'dc:title'),
             author: readMetadataValue(metadata, 'Author', 'dc:creator'),
             pages,
+            ...(outline.length > 0 ? { outline } : {}),
         };
         operation.complete('PDF parsed');
         return result;

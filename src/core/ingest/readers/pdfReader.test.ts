@@ -44,6 +44,93 @@ describe('PdfIngestReader', () => {
         expect(chapters[0].slices[2].html).toContain('data-pdf-page="3"');
     });
 
+    it('builds a chapter per PDF outline entry at any nesting depth', async () => {
+        const pages = Array.from({ length: 8 }, (_, index) => ({
+            pageNumber: index + 1,
+            text: `Page ${index + 1} text.`,
+        }));
+        const parsePdf = vi.fn().mockResolvedValue({
+            pages,
+            outline: [
+                { title: 'Cover', pageNumber: 1 },
+                { title: 'A. Consciousness', pageNumber: 3 },
+                { title: 'I. Sensuous-Certainty', pageNumber: 4 },
+                { title: 'II. Perceiving', pageNumber: 6 },
+                { title: 'B. Self-Consciousness', pageNumber: 7 },
+            ],
+        });
+        const reader = new PdfIngestReader({ parsePdf });
+
+        const prepared = await reader.prepareInitial(new File(['%PDF-1.7'], 'outlined.pdf'));
+        const chapters = await reader.loadChapters(new TextEncoder().encode('%PDF-1.7'));
+
+        const titles = [
+            'Cover',
+            'A. Consciousness',
+            'I. Sensuous-Certainty',
+            'II. Perceiving',
+            'B. Self-Consciousness',
+        ];
+        expect(prepared.chapters.map((chapter) => chapter.title)).toEqual(titles);
+        expect(prepared.structureMode).toBe('authored');
+        expect(prepared.chapters[1].boundaryEvidence).toEqual(['publisher-toc']);
+        expect(chapters.map((chapter) => chapter.title)).toEqual(titles);
+
+        // The first chapter absorbs the pages ahead of it; each later chapter runs to the next entry.
+        expect(chapters.map((chapter) => chapter.slices.map((slice) => slice.text))).toEqual([
+            ['Page 1 text.', 'Page 2 text.'],
+            ['Page 3 text.'],
+            ['Page 4 text.', 'Page 5 text.'],
+            ['Page 6 text.'],
+            ['Page 7 text.', 'Page 8 text.'],
+        ]);
+    });
+
+    it('drops outline entries that cannot describe a page range', async () => {
+        const reader = new PdfIngestReader({
+            parsePdf: vi.fn().mockResolvedValue({
+                pages: [
+                    { pageNumber: 1, text: 'One.' },
+                    { pageNumber: 2, text: 'Two.' },
+                    { pageNumber: 3, text: 'Three.' },
+                ],
+                outline: [
+                    { title: 'Part One', pageNumber: 1 },
+                    { title: 'Chapter I', pageNumber: 1 },
+                    { title: 'Backwards', pageNumber: 1 },
+                    { title: 'Off The End', pageNumber: 99 },
+                    { title: '   ', pageNumber: 2 },
+                    { title: 'Chapter II', pageNumber: 3 },
+                ],
+            }),
+        });
+
+        const chapters = await reader.loadChapters(new TextEncoder().encode('%PDF-1.7'));
+
+        expect(chapters.map((chapter) => chapter.title)).toEqual(['Part One', 'Chapter II']);
+        expect(chapters[0].slices).toHaveLength(2);
+    });
+
+    it('falls back to a single document chapter when the outline is too thin', async () => {
+        const reader = new PdfIngestReader({
+            parsePdf: vi.fn().mockResolvedValue({
+                pages: [
+                    { pageNumber: 1, text: 'One.' },
+                    { pageNumber: 2, text: 'Two.' },
+                ],
+                outline: [{ title: 'Only Entry', pageNumber: 2 }],
+            }),
+        });
+
+        const prepared = await reader.prepareInitial(new File(['%PDF-1.7'], 'thin.pdf'));
+        const chapters = await reader.loadChapters(new TextEncoder().encode('%PDF-1.7'));
+
+        expect(prepared.chapters.map((chapter) => chapter.title)).toEqual(['Document']);
+        expect(prepared.structureMode).toBeUndefined();
+        expect(chapters.map((chapter) => chapter.title)).toEqual(['Document']);
+        expect(chapters[0].slices).toHaveLength(2);
+    });
+
     it('recognizes PDF MIME, extension, and raw signatures', () => {
         const reader = new PdfIngestReader({ parsePdf: vi.fn() });
 
