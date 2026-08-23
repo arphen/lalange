@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { AlertTriangle, Check, Sparkles, X } from 'lucide-react';
 import { initDB, type ChapterDocType, type TextIssueDocType } from '../../core/sync/db';
 import { MODEL_INFO } from '../../core/ai/modelManifest';
@@ -21,10 +22,10 @@ const REPAIR_PIPELINE_FINGERPRINT = 'bounded-repair-v1';
 const REPAIR_VALIDATOR_FINGERPRINT = 'deterministic-repair-validator-v1';
 
 export const RepairReviewPanel: React.FC<RepairReviewPanelProps> = ({ bookId, bookTitle, onClose }) => {
-    const repairSettings = useSettingsStore((state) => ({
+    const repairSettings = useSettingsStore(useShallow((state) => ({
         repairModelId: state.repairModelId,
         repairEnabled: state.textRepairMode !== 'off',
-    }));
+    })));
     const [issues, setIssues] = useState<TextIssueDocType[]>([]);
     const [chapters, setChapters] = useState<ChapterDocType[]>([]);
     const [selectedIssueId, setSelectedIssueId] = useState<string | null>(null);
