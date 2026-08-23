@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import JSZip from 'jszip';
 import { buildEpubStructurePlan, loadPlannedChapterSources, normalizeReadingSections, type PlannedChapter } from './structure';
+import { StructureDiscoveryRegistry } from './structureStrategies';
 
 const containerXml = (opfPath: string) => `<?xml version="1.0" encoding="UTF-8"?>
 <container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
@@ -21,6 +22,50 @@ const xhtml = (body: string): string => `<?xml version="1.0" encoding="utf-8"?>
 </html>`;
 
 describe('buildEpubStructurePlan', () => {
+    it('applies an explicitly requested source-anchored structure strategy', async () => {
+        const zip = new JSZip();
+        zip.file('META-INF/container.xml', containerXml('OPS/content.opf'));
+        zip.file('OPS/content.opf', `
+            <package xmlns:dc="http://purl.org/dc/elements/1.1/">
+                <metadata><dc:title>Strategy Test</dc:title><dc:creator>Tester</dc:creator></metadata>
+                <manifest>
+                    <item id="one" href="one.xhtml" media-type="application/xhtml+xml" />
+                    <item id="two" href="two.xhtml" media-type="application/xhtml+xml" />
+                </manifest>
+                <spine><itemref idref="one" /><itemref idref="two" /></spine>
+            </package>
+        `);
+        zip.file('OPS/one.xhtml', xhtml('<h1>First</h1><p>First chapter prose.</p>'));
+        zip.file('OPS/two.xhtml', xhtml('<h1>Second</h1><p>Second chapter prose.</p>'));
+
+        const registry = new StructureDiscoveryRegistry([{
+            id: 'second-source-unit',
+            displayName: 'Second source unit',
+            version: '1',
+            kind: 'deterministic',
+            supports: (input) => input.units.length === 2,
+            discover: async (input) => ({
+                pluginId: 'second-source-unit',
+                pluginVersion: '1',
+                boundaries: [{
+                    sourceAnchorId: input.units[1].id,
+                    evidence: ['test-source-anchor'],
+                    confidence: 1,
+                }],
+                issues: [],
+            }),
+        }]);
+
+        const plan = await buildEpubStructurePlan(zip, {
+            structureStrategyId: 'second-source-unit',
+            structureDiscoveryRegistry: registry,
+        });
+
+        expect(plan.chapters).toHaveLength(1);
+        expect(plan.chapters[0].title).toBe('Second');
+        expect(plan.chapters[0].slices[0].path).toBe('OPS/two.xhtml');
+    });
+
     it('uses container.xml rootfile instead of arbitrary OPF fallback', async () => {
         const zip = new JSZip();
         zip.file('META-INF/container.xml', containerXml('OEBPS/content.opf'));

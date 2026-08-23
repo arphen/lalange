@@ -1,6 +1,10 @@
-import type { AppConfig, InitProgressCallback, MLCEngine } from "@mlc-ai/web-llm";
+import type { AppConfig, InitProgressCallback, MLCEngineInterface } from "@mlc-ai/web-llm";
 import { useAIStore } from "../store/ai";
 import { createOperationHandle } from "../operations/progressReporter";
+import { MODEL_INFO, MODEL_MAPPING, type ModelTier, type LogprobItem, type PromptLogprobsResult } from './modelManifest';
+
+export { MODEL_INFO, MODEL_MAPPING } from './modelManifest';
+export type { LogprobItem, ModelTier, PromptLogprobsResult } from './modelManifest';
 
 type WebLLMModule = typeof import("@mlc-ai/web-llm");
 
@@ -176,32 +180,8 @@ const APP_CONFIG: AppConfig = {
     useIndexedDBCache: true,
 };
 
-// Model definitions
-export const MODEL_INFO = {
-    tiny: {
-        id: "TinyLlama-1.1B-logprobs",
-        name: "TinyLlama (Logprobs)",
-        size: "700 MB",
-        description: "Standard 1.1B model."
-    },
-    qwen: {
-        id: "Qwen2.5-1.5B-logprobs",
-        name: "Qwen 2.5 1.5B (Logprobs)",
-        size: "980 MB",
-        description: "Higher quality 1.5B model."
-    }
-} as const;
-
-export const MODEL_MAPPING = {
-    tiny: MODEL_INFO.tiny.id,
-    qwen: MODEL_INFO.qwen.id,
-} as const;
-
-export type ModelTier = keyof typeof MODEL_MAPPING;
-
-export const PACING_MODEL_TIER: ModelTier = 'tiny';
-
-let engineInstance: MLCEngine | null = null;
+let engineInstance: MLCEngineInterface | null = null;
+let workerInstance: Worker | null = null;
 let currentLoadedModel: string | null = null;
 
 /**
@@ -212,7 +192,7 @@ export const downloadModelToCache = async (
     tier: ModelTier,
     onProgress?: (progress: number, text: string) => void
 ): Promise<void> => {
-    const { CreateMLCEngine, hasModelInCache } = await loadWebLLM();
+    const { CreateWebWorkerMLCEngine, hasModelInCache } = await loadWebLLM();
     const modelId = MODEL_MAPPING[tier];
     console.log(`[WebLLM] Downloading model to cache: ${tier} (${modelId})`);
     const { setProgress, setLoading, setError } = useAIStore.getState();
@@ -282,15 +262,18 @@ export const downloadModelToCache = async (
     };
 
     try {
-        // Create a temporary engine just to download, then immediately unload
-        const tempEngine = await CreateMLCEngine(modelId, {
-            initProgressCallback: progressCallback,
-            appConfig: APP_CONFIG,
-        });
-        
-        // Immediately unload to free GPU memory
-        await tempEngine.unload();
-        console.log(`[WebLLM] Model ${tier} downloaded and unloaded from memory.`);
+        // Create a temporary worker-backed engine just to download, then unload it.
+        const tempWorker = new Worker(new URL('./localModel.worker.ts', import.meta.url), { type: 'module' });
+        try {
+            const tempEngine = await CreateWebWorkerMLCEngine(tempWorker, modelId, {
+                initProgressCallback: progressCallback,
+                appConfig: APP_CONFIG,
+            });
+            await tempEngine.unload();
+            console.log(`[WebLLM] Model ${tier} downloaded and unloaded from memory.`);
+        } finally {
+            tempWorker.terminate();
+        }
         operation.complete('Model downloaded and cached');
     } catch (error) {
         operation.fail(error);
@@ -302,8 +285,8 @@ export const downloadModelToCache = async (
 
 export const getEngine = async (
     tier: ModelTier
-): Promise<MLCEngine> => {
-    const { CreateMLCEngine, hasModelInCache } = await loadWebLLM();
+): Promise<MLCEngineInterface> => {
+    const { CreateWebWorkerMLCEngine, hasModelInCache } = await loadWebLLM();
     if (!MODEL_MAPPING[tier]) {
         throw new Error(`Invalid model tier: ${tier}`);
     }
@@ -394,9 +377,13 @@ export const getEngine = async (
             await engineInstance.unload();
             engineInstance = null;
         }
+        workerInstance?.terminate();
+        workerInstance = null;
 
-        console.log(`[WebLLM] Creating MLCEngine instance for: ${modelId}`);
-        engineInstance = await CreateMLCEngine(modelId, { 
+        console.log(`[WebLLM] Creating worker-backed MLCEngine instance for: ${modelId}`);
+        const nextWorker = new Worker(new URL('./localModel.worker.ts', import.meta.url), { type: 'module' });
+        workerInstance = nextWorker;
+        engineInstance = await CreateWebWorkerMLCEngine(nextWorker, modelId, {
             initProgressCallback: onProgress,
             appConfig: APP_CONFIG,
         });
@@ -411,6 +398,10 @@ export const getEngine = async (
     } catch (error) {
         console.error("Failed to load WebLLM engine:", error);
         const { userMessage, propagatedError } = normalizeWebLLMError(error);
+        workerInstance?.terminate();
+        workerInstance = null;
+        engineInstance = null;
+        currentLoadedModel = null;
         operation.fail(propagatedError);
         setError(userMessage);
         throw propagatedError;
@@ -423,6 +414,8 @@ export const reloadModel = async (tier: ModelTier) => {
     if (engineInstance) {
         await engineInstance.unload();
     }
+    workerInstance?.terminate();
+    workerInstance = null;
     engineInstance = null;
     currentLoadedModel = null;
     await getEngine(tier);
@@ -434,6 +427,8 @@ export const unloadCurrentModel = async () => {
         engineInstance = null;
         currentLoadedModel = null;
     }
+    workerInstance?.terminate();
+    workerInstance = null;
 };
 
 export const generateWebLLMCompletion = async (
@@ -469,14 +464,6 @@ export const generateWebLLMCompletion = async (
     };
 };
 
-export interface LogprobItem {
-    token: string;
-    logprob: number;
-    bytes?: number[] | null;
-    top_logprobs?: LogprobItem[];
-    content?: string;
-}
-
 /**
  * Extended response type for our custom WebLLM fork with input logprobs
  */
@@ -497,12 +484,13 @@ interface ChatCompletionWithInputLogprobs {
  */
 export const getPromptLogprobs = async (
     text: string,
-    tier: ModelTier
-): Promise<LogprobItem[]> => {
+    tier: ModelTier,
+    engineOverride?: MLCEngineInterface,
+): Promise<PromptLogprobsResult> => {
     // Determine which engine to use
     // If 'tier' maps to a specific model ID, getEngine will load it.
     // NOTE: This causes a reload if the engine is different.
-    const engine = await getEngine(tier);
+    const engine = engineOverride ?? await getEngine(tier);
     
     const info = MODEL_INFO[tier];
     console.log(`[WebLLM] Getting input logprobs using ${info.name}...`);
@@ -519,12 +507,11 @@ export const getPromptLogprobs = async (
     if (!tokens || !logprobs || tokens.length === 0) {
         console.warn('[WebLLM] No input_logprobs returned. Is the custom WASM loaded?');
         console.warn('[WebLLM] Response keys:', Object.keys(response));
-        // Fallback to heuristic-based approach
-        const words = text.split(/\s+/);
-        return words.map((word) => ({
-            token: word,
-            logprob: -1.0 - (word.length * 0.1) - (Math.random() * 0.5),
-        }));
+        return {
+            status: 'unavailable',
+            items: [],
+            reason: 'empty-response',
+        };
     }
     
     console.log(`[WebLLM] Got ${tokens.length} input tokens with logprobs`);
@@ -546,7 +533,10 @@ export const getPromptLogprobs = async (
     const samples = result.slice(0, 10);
     console.log(`[WebLLM] First 10 tokens: ${samples.map(s => `"${s.token}"=${s.logprob.toFixed(2)}`).join(', ')}`);
 
-    return result;
+    return {
+        status: 'available',
+        items: result,
+    };
 };
 
 export const isModelCached = async (tier: ModelTier): Promise<boolean> => {

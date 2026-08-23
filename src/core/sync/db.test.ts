@@ -89,6 +89,10 @@ describe('Database Initialization', () => {
             expect(db.reading_states).toBeDefined();
             expect(db.images).toBeDefined();
             expect(db.raw_files).toBeDefined();
+            expect(db.text_issues).toBeDefined();
+            expect(db.content_revisions).toBeDefined();
+            expect(db.repair_annotations).toBeDefined();
+            expect(db.processing_jobs).toBeDefined();
         });
 
         it('should return the same database instance on multiple calls (singleton pattern)', async () => {
@@ -107,6 +111,10 @@ describe('Database Initialization', () => {
             expect(db.reading_states).toBeDefined();
             expect(db.images).toBeDefined();
             expect(db.raw_files).toBeDefined();
+            expect(db.text_issues).toBeDefined();
+            expect(db.content_revisions).toBeDefined();
+            expect(db.repair_annotations).toBeDefined();
+            expect(db.processing_jobs).toBeDefined();
         });
 
         it('should allow inserting a book document', async () => {
@@ -207,6 +215,30 @@ describe('Database Initialization', () => {
             
             // Clean up
             await insertedDoc.remove();
+        });
+
+        it('should persist a source-anchored text issue', async () => {
+            const db = await initDB();
+            const issue = await db.text_issues.insert({
+                id: `test-issue-${Date.now()}`,
+                bookId: 'test-book-1',
+                sourceUnitId: 'test-chapter-1',
+                revisionHash: 'revision-hash',
+                startOffset: 4,
+                endOffset: 7,
+                originalHash: 'original-hash',
+                detectorIds: ['numeric-alphanumeric-intrusion'],
+                evidence: { value: 'th3' },
+                severity: 'medium',
+                ambiguity: 'high',
+                state: 'open',
+                createdAt: Date.now(),
+                updatedAt: Date.now(),
+            });
+
+            expect(issue.sourceUnitId).toBe('test-chapter-1');
+            expect(issue.startOffset).toBe(4);
+            await issue.remove();
         });
     });
 

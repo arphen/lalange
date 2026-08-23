@@ -4,7 +4,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { useSettingsStore, type NotePresentationMode, type PromptFragment } from '../../core/store/settings';
 import { selectAIIsLoading, useAIStore } from '../../core/store/ai';
 import { useTTSStore, type TTSBackendPreference } from '../../core/store/tts';
-import { getEngine, MODEL_INFO, PACING_MODEL_TIER, type ModelTier, isModelCached, deleteModel } from '../../core/ai/webllm';
+import { MODEL_INFO, PACING_MODEL_TIER, type ModelTier } from '../../core/ai/modelManifest';
 import { getAvailableStrategies, type DurationStrategyId } from '../../core/rsvp/duration';
 import { getAllDisplayPlugins, type DisplayPluginId } from '../../core/rsvp/display';
 import { COMMON_NGRAM_RANK_LIMIT } from '../../core/rsvp/phrases/commonEnglishNgrams';
@@ -12,12 +12,15 @@ import { VOICES, initTTS, clearTTSCache, isTTSModelCached, isTTSReady, getVoice,
 import { clsx } from 'clsx';
 import { BrandName } from '../BrandName';
 import { SeoHead } from '../SeoHead';
+import { isAdaptivePacingEnabled } from '../../core/ai/policy';
+import { localAIBroker } from '../../core/ai/broker';
+import { defaultStructureDiscoveryRegistry } from '../../core/ingest/structureStrategies';
 
 interface SettingsPanelProps {
     onClose: () => void;
 }
 
-type SettingsTab = 'librarian' | 'pacing' | 'summarizer' | 'tts';
+type SettingsTab = 'librarian' | 'pacing' | 'repair' | 'summarizer' | 'tts';
 
 interface CommonPhraseGroupingControlProps {
     value: number;
@@ -55,7 +58,7 @@ export const CommonPhraseGroupingControl: React.FC<CommonPhraseGroupingControlPr
 export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
     const { tab } = useParams<{ tab: string }>();
     const activeTabRaw = (tab as SettingsTab) || 'pacing';
-    const isValidTab = ['librarian', 'pacing', 'summarizer', 'tts'].includes(activeTabRaw);
+    const isValidTab = ['librarian', 'pacing', 'repair', 'summarizer', 'tts'].includes(activeTabRaw);
     const activeTab = isValidTab ? activeTabRaw : 'pacing';
 
     const [cachedModels, setCachedModels] = useState<Record<string, boolean>>({});
@@ -73,7 +76,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
     const checkCache = React.useCallback(async () => {
         const status: Record<string, boolean> = {};
         for (const tier of Object.keys(MODEL_INFO) as ModelTier[]) {
-            status[tier] = await isModelCached(tier);
+            status[tier] = await localAIBroker.isCached(tier);
         }
         setCachedModels(status);
     }, []);
@@ -90,7 +93,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
 
     const handleDownloadModel = async (tier: ModelTier) => {
         try {
-            await getEngine(tier);
+            await localAIBroker.prepareModel(tier);
             await checkCache();
         } catch (e) {
             console.error(e);
@@ -100,7 +103,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
     const handleDeleteModel = async (tier: ModelTier) => {
         if (!confirm(`Are you sure you want to delete the ${tier} model from cache?`)) return;
         try {
-            await deleteModel(tier);
+            await localAIBroker.deleteCached(tier);
             await checkCache();
         } catch (e) {
             console.error(e);
@@ -189,6 +192,25 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                                         checked={settings.structuralScrubber}
                                         onChange={settings.setStructuralScrubber}
                                     />
+                                </div>
+                                <div className="rounded-lg border border-white/10 bg-black/20 p-5 space-y-3">
+                                    <div>
+                                        <label htmlFor="structure-strategy" className="block text-xs text-dune-gold mb-2 uppercase tracking-widest font-bold">Structure strategy</label>
+                                        <p className="text-xs text-gray-500">Format readers extract source content; this strategy chooses evidenced reading boundaries.</p>
+                                    </div>
+                                    <select
+                                        id="structure-strategy"
+                                        aria-label="Structure strategy"
+                                        value={settings.structureStrategyId}
+                                        onChange={(event) => settings.setStructureStrategyId(event.target.value)}
+                                        className="w-full rounded border border-white/15 bg-black/30 px-3 py-2 text-xs text-white"
+                                    >
+                                        <option value="auto-deterministic">Automatic deterministic</option>
+                                        {defaultStructureDiscoveryRegistry.getAll().map((strategy) => (
+                                            <option key={strategy.id} value={strategy.id}>{strategy.displayName}</option>
+                                        ))}
+                                    </select>
+                                    <p className="text-[10px] text-gray-500">AI-assisted structure is opt-in and only selects candidates already anchored by the source.</p>
                                 </div>
                                 <div>
                                     <label className="block text-xs text-dune-gold mb-2 uppercase tracking-widest font-bold">Manual Overrides</label>
@@ -326,7 +348,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                                 description={isAILoading
                                     ? 'Preparing the on-device model \u2014 reading remains available while this finishes.'
                                     : 'Speeds through predictable words and slows for dense or surprising passages, using a small model that runs entirely on this device.'}
-                                checked={settings.aiEnabled}
+                                checked={isAdaptivePacingEnabled(settings)}
                                 onChange={(enabled) => {
                                     if (!enabled) settings.setAiEnabled(false);
                                     else if (!isAILoading) aiState.requestSetup('pacing');
@@ -517,6 +539,87 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                         </div>
                     )}
 
+                    {/* Selective text repair */}
+                    {activeTab === 'repair' && (
+                        <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-300">
+                            <div>
+                                <h3 className="text-2xl font-bold text-white mb-2">Text Repair</h3>
+                                <p className="text-gray-500 text-sm">Review bounded repairs for extraction and OCR anomalies while preserving the original text.</p>
+                            </div>
+
+                            <div className="rounded-lg border border-magma-vent/40 bg-magma-vent/10 p-6 space-y-3">
+                                <div className="flex items-center justify-between gap-4">
+                                    <h4 className="text-sm font-bold uppercase tracking-widest text-magma-vent">Off by default</h4>
+                                    <span className="text-xs text-gray-400">{MODEL_INFO[settings.repairModelId].size}</span>
+                                </div>
+                                <p className="text-sm leading-relaxed text-gray-300">
+                                    Local AI text repair downloads an on-device model, increases battery and processing use, and may temporarily compete with pacing or text to speech. Only flagged passages are sent to the model, and the original text stays available for reversal.
+                                </p>
+                            </div>
+
+                            <Toggle
+                                label="Local AI text repair"
+                                description="Find suspicious fragments deterministically, then propose bounded repairs for your review."
+                                checked={settings.textRepairMode !== 'off'}
+                                onChange={(enabled) => {
+                                    if (!enabled) {
+                                        settings.setTextRepairMode('off');
+                                        return;
+                                    }
+                                    if (confirm(`Local AI text repair will download about ${MODEL_INFO[settings.repairModelId].size} and can make processing substantially slower. Continue?`)) {
+                                        settings.setTextRepairMode('review');
+                                    }
+                                }}
+                            />
+
+                            <div className="rounded-lg border border-white/10 bg-white/5 p-6 space-y-4">
+                                <label className="block text-xs font-bold uppercase tracking-widest text-dune-gold">Repair policy</label>
+                                <div className="grid gap-3 md:grid-cols-2">
+                                    <button
+                                        type="button"
+                                        onClick={() => settings.setTextRepairMode('review')}
+                                        className={clsx(
+                                            'rounded border p-4 text-left transition-all',
+                                            settings.textRepairMode === 'review'
+                                                ? 'border-dune-gold bg-dune-gold text-black'
+                                                : 'border-white/10 bg-black/20 text-gray-400 hover:border-white/30 hover:text-white',
+                                        )}
+                                    >
+                                        <div className="text-sm font-bold">Review proposals</div>
+                                        <div className="mt-2 text-[10px] opacity-70">Every accepted change remains anchored and reversible.</div>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        disabled
+                                        className="cursor-not-allowed rounded border border-white/10 bg-black/20 p-4 text-left text-gray-600"
+                                    >
+                                        <div className="text-sm font-bold">Auto-apply safe repairs</div>
+                                        <div className="mt-2 text-[10px]">Unavailable until repair precision and reversibility are verified.</div>
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div className="rounded-lg border border-white/10 bg-black/20 p-6 space-y-4">
+                                <div className="flex items-center justify-between gap-4">
+                                    <div>
+                                        <label className="block text-xs font-bold uppercase tracking-widest text-dune-gold">Repair model</label>
+                                        <p className="mt-2 text-xs text-gray-500">Only flagged local context is processed. No model output replaces a whole chapter.</p>
+                                    </div>
+                                    <select
+                                        aria-label="Repair model"
+                                        value={settings.repairModelId}
+                                        onChange={(event) => settings.setRepairModelId(event.target.value as ModelTier)}
+                                        className="rounded border border-white/15 bg-black/30 px-3 py-2 text-xs text-white"
+                                    >
+                                        {(Object.keys(MODEL_INFO) as ModelTier[]).map((tier) => (
+                                            <option key={tier} value={tier}>{MODEL_INFO[tier].name} · {MODEL_INFO[tier].size}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
                     {/* Summarizer Tab */}
                     {activeTab === 'summarizer' && (
                         <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-300">
@@ -527,8 +630,6 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                                 onChange={(enabled) => {
                                     if (!enabled) {
                                         settings.setSummariesEnabled(false);
-                                    } else if (settings.aiEnabled) {
-                                        settings.setSummariesEnabled(true);
                                     } else if (!isAILoading) {
                                         aiState.requestSetup('summaries');
                                     }

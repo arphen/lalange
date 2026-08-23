@@ -3,7 +3,7 @@ import { type ChapterDocType, type GlobalSummaryType } from '../../core/sync/db'
 import { formatReadingTime } from '../../hooks/useReadingTimeEstimate';
 import type { StructureMode } from '../../core/ingest/structure';
 import { clsx } from 'clsx';
-import { ArrowLeft, BookOpen, Ellipsis, Info, Search, X } from 'lucide-react';
+import { ArrowLeft, BookOpen, ChevronDown, ChevronRight, Ellipsis, Info, ListTree, MapPin, Search, X } from 'lucide-react';
 import { getSubchapterDisplayName } from './Sidebar.utils';
 import { isReadingChapter } from './readerNavigation';
 
@@ -47,6 +47,8 @@ const normalizeSearchText = (value: string) => value
 const getPassages = (chapter: ChapterDocType): Passage[] => (
     (chapter.subchapters || []).filter((passage) => passage.startWordIndex > 0)
 );
+
+const getSections = (chapter: ChapterDocType) => chapter.subchapters || [];
 
 const getStructureExplanation = (structureMode: StructureMode | undefined, chapters: ChapterDocType[]) => {
     const hasLongParts = chapters.some((chapter) => chapter.metadata?.reformationReason === 'long-section-split');
@@ -99,6 +101,8 @@ export const SidebarV2: React.FC<SidebarV2Props> = ({
         activeSummaryId ? { kind: 'recaps' } : { kind: 'outline' }
     ));
     const [actionChapterId, setActionChapterId] = React.useState<string | null>(null);
+    const [expandedChapterIds, setExpandedChapterIds] = React.useState<Set<string>>(() => new Set());
+    const [collapsedChapterIds, setCollapsedChapterIds] = React.useState<Set<string>>(() => new Set());
     const [headerMenuOpen, setHeaderMenuOpen] = React.useState(false);
     const [searchQuery, setSearchQuery] = React.useState('');
     const tabsRef = React.useRef<HTMLDivElement>(null);
@@ -119,6 +123,18 @@ export const SidebarV2: React.FC<SidebarV2Props> = ({
         : null;
     const passageRows = passageChapter ? getPassages(passageChapter) : [];
     const normalizedSearchQuery = normalizeSearchText(searchQuery.trim());
+    const totalWords = displayChapters.reduce((total, chapter) => total + (chapter.content?.length || 0), 0);
+    const totalReadingTime = formatReadingTime(totalWords / wpm);
+    const currentChapterPosition = displayChapters.findIndex((chapter) => chapter.id === currentChapter?.id);
+    const wordsBeforeCurrentChapter = currentChapterPosition > 0
+        ? displayChapters
+            .slice(0, currentChapterPosition)
+            .reduce((total, chapter) => total + (chapter.content?.length || 0), 0)
+        : 0;
+    const bookProgress = currentChapterPosition >= 0 && totalWords > 0
+        ? Math.min(1, Math.max(0, (wordsBeforeCurrentChapter + (currentWordIndex || 0)) / totalWords))
+        : 0;
+    const bookProgressPercent = Math.round(bookProgress * 100);
 
     React.useEffect(() => {
         if (isOpen && isModal) closeButtonRef.current?.focus();
@@ -165,6 +181,50 @@ export const SidebarV2: React.FC<SidebarV2Props> = ({
         }
 
         return null;
+    };
+
+    const getChapterProgressPercent = (chapter: ChapterDocType) => {
+        const chapterPosition = displayChapters.findIndex((candidate) => candidate.id === chapter.id);
+        if (currentChapterPosition < 0 || chapterPosition < 0) return 0;
+        if (chapterPosition < currentChapterPosition) return 100;
+        if (chapterPosition > currentChapterPosition) return 0;
+
+        const wordCount = chapter.content?.length || 0;
+        return wordCount > 0
+            ? Math.min(100, Math.max(0, Math.round(((currentWordIndex || 0) / wordCount) * 100)))
+            : 0;
+    };
+
+    const getSectionProgressPercent = (chapter: ChapterDocType, section: Passage) => {
+        if (currentChapter?.id !== chapter.id) return 0;
+
+        const wordIndex = currentWordIndex ?? 0;
+        if (wordIndex >= section.endWordIndex) {
+            return 100;
+        }
+        if (wordIndex <= section.startWordIndex) return 0;
+
+        const sectionLength = Math.max(1, section.endWordIndex - section.startWordIndex);
+        return Math.min(100, Math.max(0, Math.round(((wordIndex - section.startWordIndex) / sectionLength) * 100)));
+    };
+
+    const toggleChapterExpansion = (chapterId: string, isExpanded: boolean) => {
+        if (isExpanded) {
+            setExpandedChapterIds((current) => {
+                const next = new Set(current);
+                next.delete(chapterId);
+                return next;
+            });
+            setCollapsedChapterIds((current) => new Set(current).add(chapterId));
+            return;
+        }
+
+        setCollapsedChapterIds((current) => {
+            const next = new Set(current);
+            next.delete(chapterId);
+            return next;
+        });
+        setExpandedChapterIds((current) => new Set(current).add(chapterId));
     };
 
     const isCurrentPassage = (chapter: ChapterDocType, passage: Passage) => {
@@ -282,10 +342,15 @@ export const SidebarV2: React.FC<SidebarV2Props> = ({
         const isCurrent = currentChapter?.id === chapter.id;
         const isReady = chapter.status === 'ready';
         const hasContent = Boolean(chapter.content?.length);
-        const hasPassages = getPassages(chapter).length > 0;
+        const sections = getSections(chapter);
+        const hasSections = sections.length > 0;
+        const isExpanded = hasSections
+            && !collapsedChapterIds.has(chapter.id)
+            && (expandedChapterIds.has(chapter.id) || isCurrent || (!currentChapter && chapter === displayChapters[0]));
         const isHandoffTarget = chapterHandoffActive && chapterHandoffSelection?.chapterId === chapter.id;
         const isActionsOpen = actionChapterId === chapter.id;
         const readingTime = getChapterReadingTime(chapter);
+        const chapterProgressPercent = getChapterProgressPercent(chapter);
 
         return (
             <div key={chapter.id} className={clsx('reader-chapter-entry', isActionsOpen && 'reader-chapter-entry--menu-open')}>
@@ -296,7 +361,7 @@ export const SidebarV2: React.FC<SidebarV2Props> = ({
                     chapterHandoffActive && isHandoffTarget && 'reader-chapter-line--handoff',
                 )}>
                     <button
-                        ref={isCurrent ? activeDestinationRef : undefined}
+                        ref={isCurrent && (!hasSections || !isExpanded) ? activeDestinationRef : undefined}
                         type="button"
                         onClick={() => handleChapterClick(chapter)}
                         disabled={!isReady && !hasContent}
@@ -311,9 +376,33 @@ export const SidebarV2: React.FC<SidebarV2Props> = ({
                                 {isCurrent ? 'Current' : (readingTime || (chapter.status === 'processing' ? 'Preparing text' : 'Unavailable'))}
                             </span>
                         </span>
-                        {hasPassages && <span className="sr-only">Passages available</span>}
                     </button>
-                    {hasPassages && (
+                    <span
+                        className="reader-chapter-progress"
+                        role="progressbar"
+                        aria-label={`${chapter.title} reading progress`}
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        aria-valuenow={chapterProgressPercent}
+                        data-testid={`chapter-progress-${chapter.id}`}
+                    >
+                        <span style={{ width: `${chapterProgressPercent}%` }} />
+                    </span>
+                    {hasSections && (
+                        <button
+                            type="button"
+                            className="reader-chapter-disclosure"
+                            aria-label={`${isExpanded ? 'Collapse' : 'Expand'} sections for ${chapter.title}`}
+                            aria-expanded={isExpanded}
+                            aria-controls={`reader-sections-${chapter.id}`}
+                            onClick={() => toggleChapterExpansion(chapter.id, isExpanded)}
+                        >
+                            {isExpanded
+                                ? <ChevronDown className="h-4 w-4" aria-hidden="true" />
+                                : <ChevronRight className="h-4 w-4" aria-hidden="true" />}
+                        </button>
+                    )}
+                    {hasSections && (
                         <button
                             type="button"
                             className="reader-chapter-more"
@@ -345,6 +434,55 @@ export const SidebarV2: React.FC<SidebarV2Props> = ({
                                 Start from beginning
                             </button>
                         )}
+                    </div>
+                )}
+                {isExpanded && (
+                    <div id={`reader-sections-${chapter.id}`} className="reader-section-list" aria-label={`${chapter.title} sections`}>
+                        <div className="reader-section-heading">
+                            <ListTree className="h-3.5 w-3.5" aria-hidden="true" />
+                            <span>Sections</span>
+                            <span className="reader-section-count">{sections.length}</span>
+                        </div>
+                        {sections.map((section, sectionIndex) => {
+                            const hasStarted = (chapter.content?.length || 0) > section.startWordIndex;
+                            const isActive = isCurrent
+                                && (currentWordIndex ?? 0) >= section.startWordIndex
+                                && ((currentWordIndex ?? 0) < section.endWordIndex || (sectionIndex === sections.length - 1 && (currentWordIndex ?? 0) >= section.startWordIndex));
+                            const sectionProgressPercent = getSectionProgressPercent(chapter, section);
+                            const isHandoffSelection = chapterHandoffActive
+                                && chapterHandoffSelection?.chapterId === chapter.id
+                                && chapterHandoffSelection.startWordIndex === section.startWordIndex;
+
+                            return (
+                                <button
+                                    key={`${chapter.id}-${section.startWordIndex}`}
+                                    ref={isActive ? activeDestinationRef : undefined}
+                                    type="button"
+                                    className={clsx(
+                                        'reader-section-row',
+                                        isActive && 'reader-section-row--active',
+                                        !hasStarted && 'reader-section-row--unavailable',
+                                        chapterHandoffActive && !isHandoffSelection && 'reader-section-row--dimmed',
+                                        chapterHandoffActive && isHandoffSelection && 'reader-section-row--handoff',
+                                    )}
+                                    onClick={() => handlePassageClick(chapter, section.startWordIndex)}
+                                    disabled={!hasStarted}
+                                    aria-current={isActive ? 'location' : undefined}
+                                    data-testid={`subchapter-btn-${sectionIndex}`}
+                                >
+                                    {isActive ? <MapPin className="h-3.5 w-3.5 shrink-0" aria-hidden="true" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />}
+                                    <span className="reader-section-copy">
+                                        <span className="reader-section-title">{getSubchapterDisplayName(section, chapter.content)}</span>
+                                        <span className="reader-section-progress-track" aria-hidden="true">
+                                            <span style={{ width: `${sectionProgressPercent}%` }} />
+                                        </span>
+                                    </span>
+                                    {(isActive || sectionProgressPercent === 100) && (
+                                        <span className="reader-section-progress-value">{sectionProgressPercent}%</span>
+                                    )}
+                                </button>
+                            );
+                        })}
                     </div>
                 )}
             </div>
@@ -446,6 +584,31 @@ export const SidebarV2: React.FC<SidebarV2Props> = ({
                         </button>
                     )}
                 </div>
+                {currentView.kind === 'outline' && (
+                    <div className="reader-contents-overview">
+                        <div className="reader-contents-overview-meta">
+                            <span>{displayChapters.length} {displayChapters.length === 1 ? 'chapter' : 'chapters'}</span>
+                            <span>{totalReadingTime} total</span>
+                        </div>
+                        <div
+                            className="reader-contents-progress"
+                            role="progressbar"
+                            aria-label="Book reading progress"
+                            aria-valuemin={0}
+                            aria-valuemax={100}
+                            aria-valuenow={bookProgressPercent}
+                            data-testid="book-progress"
+                        >
+                            <div className="reader-contents-progress-label">
+                                <span>Book progress</span>
+                                <span>{bookProgressPercent}%</span>
+                            </div>
+                            <div className="reader-progress-track">
+                                <span style={{ width: `${bookProgressPercent}%` }} />
+                            </div>
+                        </div>
+                    </div>
+                )}
                 {isSearch && <h2 id="reader-contents-title" className="sr-only">Search contents</h2>}
                 {isPassages && passageChapter && (
                     <h2 id="reader-contents-title" className="reader-contents-title reader-contents-title--passages">Passages</h2>

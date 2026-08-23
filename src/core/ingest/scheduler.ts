@@ -1,9 +1,10 @@
 import { useSettingsStore } from '../store/settings';
 import { useAIStore } from '../store/ai';
-import { initDB, type GlobalSummaryType } from '../sync/db';
+import { initDB, type GlobalSummaryType, type ProcessingJobDocType } from '../sync/db';
 import { analyzeDensityRange, type WindowResult } from './analysis';
 import { generateUnifiedCompletion } from '../ai/service';
-import { PACING_MODEL_TIER } from '../ai/webllm';
+import { PACING_MODEL_TIER } from '../ai/modelManifest';
+import { isAdaptivePacingEnabled, isLocalAIFeatureEnabled } from '../ai/policy';
 
 export type TaskType = 'DENSITY' | 'SUMMARY' | 'GLOBAL_SUMMARY';
 
@@ -19,6 +20,8 @@ export interface IngestionTask {
     priority: number;
     status: 'pending' | 'processing' | 'completed' | 'failed' | 'dormant';
     text: string; // The text chunk to process
+    inputRevisionHash?: string;
+    modelFingerprint?: string;
 }
 
 // Global summary task has different structure (spans multiple chapters)
@@ -33,10 +36,13 @@ export interface GlobalSummaryTask {
     type: 'GLOBAL_SUMMARY';
     priority: number;
     status: 'pending' | 'processing' | 'completed' | 'failed' | 'dormant';
+    inputRevisionHash?: string;
+    modelFingerprint?: string;
     // Text is collected at execution time by reading chapters
 }
 
 const SUMMARY_STYLE_GUARD = 'Write only the summary text. Do not mention prompts, instructions, being an AI, or being a chatbot.';
+const SCHEDULER_PIPELINE_VERSION = 'local-ai-scheduler-v1';
 
 const sanitizeSummaryText = (rawSummary: string): string => {
     const cleaned = rawSummary
@@ -60,33 +66,35 @@ export class IngestionScheduler {
     private currentChapterId: string | null = null;
     private currentWordIndex: number = 0;
     private currentGlobalWordIndex: number = 0;  // Tracks position across entire book
-    private previousAiEnabled: boolean = true;
+    private previousPacingEnabled: boolean = true;
     private previousSummariesEnabled: boolean = false;
     private crashPauseLogged = false;
     private settingsUnsubscribe: (() => void) | null = null;
     private disposed = false;
 
     constructor() {
-        // Subscribe to aiEnabled changes to resume processing when re-enabled
+        // Subscribe to feature policy changes to resume processing when enabled
         // Guard for test environment where subscribe may not be available
         if (typeof useSettingsStore.subscribe === 'function') {
             // Track previous state to only trigger on false→true transitions
             const settings = useSettingsStore.getState();
-            this.previousAiEnabled = settings?.aiEnabled ?? true;
+            this.previousPacingEnabled = isAdaptivePacingEnabled(settings ?? {});
             this.previousSummariesEnabled = settings?.summariesEnabled ?? false;
             this.settingsUnsubscribe = useSettingsStore.subscribe((state) => {
                 if (this.disposed) return;
-                const wasDisabled = !this.previousAiEnabled;
-                const isNowEnabled = state.aiEnabled;
+                const wasDisabled = !this.previousPacingEnabled;
+                const isNowEnabled = isAdaptivePacingEnabled(state);
                 const summariesWereDisabled = !this.previousSummariesEnabled;
                 const summariesAreNowEnabled = state.summariesEnabled ?? false;
-                this.previousAiEnabled = isNowEnabled;
+                this.previousPacingEnabled = isNowEnabled;
                 this.previousSummariesEnabled = summariesAreNowEnabled;
                 
                 // Only resume on transition from disabled to enabled
                 if (wasDisabled && isNowEnabled && !this.isRunning) {
-                    console.log("[Scheduler] AI re-enabled, resuming task processing.");
-                    this.processNext();
+                    console.log("[Scheduler] Adaptive pacing enabled, resuming density processing.");
+                    void this.restorePersistedJobs(this.currentBookId || '')
+                        .then(() => this.processNext())
+                        .catch((error) => console.warn('[Scheduler] Could not restore pacing jobs', error));
                 }
 
                 if (summariesWereDisabled && summariesAreNowEnabled) {
@@ -94,7 +102,13 @@ export class IngestionScheduler {
                     this.reconcileTaskActivation();
                     this.wakeUpGlobalSummaryTasks();
                     this.rebalancePriorities();
-                    if (!this.isRunning) this.processNext();
+                    void this.restorePersistedJobs(this.currentBookId || '')
+                        .then(() => {
+                            this.wakeUpGlobalSummaryTasks();
+                            this.rebalancePriorities();
+                            if (!this.isRunning) this.processNext();
+                        })
+                        .catch((error) => console.warn('[Scheduler] Could not restore summary jobs', error));
                 }
             });
         }
@@ -140,6 +154,127 @@ export class IngestionScheduler {
         console.log(`[Scheduler] Removed ${count} tasks and ${globalCount} global summary tasks for book ${bookId}`);
     }
 
+    public async restorePersistedJobs(bookId: string): Promise<void> {
+        if (this.disposed) return;
+
+        const db = await initDB();
+        if (!db.processing_jobs) return;
+        const jobs = await db.processing_jobs.find({
+            selector: {
+                bookId,
+                state: { $in: ['pending', 'running', 'blocked'] },
+            },
+        }).exec();
+        const settings = useSettingsStore.getState();
+        const book = await db.books.findOne(bookId).exec();
+
+        for (const job of jobs) {
+            let checkpoint: Record<string, unknown>;
+            try {
+                checkpoint = JSON.parse(job.checkpoint || '{}') as Record<string, unknown>;
+            } catch {
+                await job.incrementalPatch({ state: 'stale', updatedAt: Date.now() });
+                continue;
+            }
+
+            const featureEnabled = isLocalAIFeatureEnabled(settings, job.feature);
+            if (!featureEnabled) {
+                if (job.state !== 'blocked') await job.incrementalPatch({ state: 'blocked', updatedAt: Date.now() });
+                continue;
+            }
+
+            if (job.feature === 'summary' && typeof checkpoint.summaryIndex === 'number') {
+                if (!book) continue;
+                const alreadyGenerated = (book.globalSummaries || []).some((summary) => (
+                    summary.startWordIndex === checkpoint.globalStartWordIndex
+                ));
+                if (alreadyGenerated) {
+                    await job.incrementalPatch({ state: 'completed', updatedAt: Date.now() });
+                    continue;
+                }
+                if (
+                    typeof checkpoint.globalStartWordIndex !== 'number'
+                    || typeof checkpoint.globalEndWordIndex !== 'number'
+                    || typeof checkpoint.startChapterId !== 'string'
+                    || typeof checkpoint.endChapterId !== 'string'
+                ) {
+                    await job.incrementalPatch({ state: 'stale', updatedAt: Date.now() });
+                    continue;
+                }
+                this.addGlobalSummaryTask({
+                    id: job.id,
+                    bookId,
+                    summaryIndex: checkpoint.summaryIndex,
+                    globalStartWordIndex: checkpoint.globalStartWordIndex,
+                    globalEndWordIndex: checkpoint.globalEndWordIndex,
+                    startChapterId: checkpoint.startChapterId,
+                    endChapterId: checkpoint.endChapterId,
+                }, job.state === 'blocked' ? 'dormant' : 'pending');
+                continue;
+            }
+
+            if (
+                typeof job.sourceUnitId !== 'string'
+                || typeof checkpoint.chapterId !== 'string'
+                || typeof checkpoint.subchapterIndex !== 'number'
+                || typeof checkpoint.startWordIndex !== 'number'
+                || typeof checkpoint.endWordIndex !== 'number'
+            ) {
+                await job.incrementalPatch({ state: 'stale', updatedAt: Date.now() });
+                continue;
+            }
+
+            const chapter = await db.chapters.findOne(checkpoint.chapterId).exec();
+            if (!chapter || chapter.id !== job.sourceUnitId) {
+                await job.incrementalPatch({ state: 'stale', updatedAt: Date.now() });
+                continue;
+            }
+
+            const activeRevisions = await db.content_revisions.find({
+                selector: { bookId, sourceUnitId: chapter.id, state: 'active' },
+                sort: [{ createdAt: 'desc' }],
+                limit: 1,
+            }).exec();
+            const activeRevision = activeRevisions[0];
+            if (
+                job.inputRevisionHash !== 'unknown'
+                && (!activeRevision || activeRevision.textHash !== job.inputRevisionHash)
+            ) {
+                await job.incrementalPatch({ state: 'stale', updatedAt: Date.now() });
+                continue;
+            }
+
+            const startWordIndex = checkpoint.startWordIndex;
+            const endWordIndex = checkpoint.endWordIndex;
+            const words = chapter.content.slice(startWordIndex, endWordIndex);
+            const isComplete = job.feature === 'pacing'
+                ? words.length > 0 && words.length === endWordIndex - startWordIndex
+                    && words.every((_, index) => (chapter.densities || [])[startWordIndex + index] > 0)
+                : false;
+            if (isComplete) {
+                await job.incrementalPatch({ state: 'completed', updatedAt: Date.now() });
+                continue;
+            }
+
+            this.addTask({
+                id: job.id,
+                bookId,
+                chapterId: chapter.id,
+                chapterIndex: chapter.index,
+                subchapterIndex: checkpoint.subchapterIndex,
+                startWordIndex,
+                endWordIndex,
+                type: job.feature === 'pacing' ? 'DENSITY' : 'SUMMARY',
+                text: words.join(' '),
+                inputRevisionHash: job.inputRevisionHash,
+                modelFingerprint: job.modelFingerprint,
+            }, job.state === 'blocked' ? 'dormant' : 'pending');
+        }
+
+        this.wakeUpGlobalSummaryTasks();
+        this.rebalancePriorities();
+    }
+
     public addTask(task: Omit<IngestionTask, 'priority' | 'status'>, initialStatus: 'pending' | 'dormant' = 'pending') {
         if (this.disposed) return;
         // Check if task already exists
@@ -160,6 +295,7 @@ export class IngestionScheduler {
             status: initialStatus
         };
         this.tasks.push(newTask);
+        void this.persistTaskJob(newTask);
         console.log(`[Scheduler] Added task: ${task.type} ${task.chapterId} ${task.subchapterIndex} (${initialStatus})`);
 
         // A newly discovered next-chapter task may already be inside the active
@@ -190,6 +326,7 @@ export class IngestionScheduler {
             status: initialStatus
         };
         this.globalSummaryTasks.push(newTask);
+        void this.persistGlobalSummaryJob(newTask);
         console.log(`[Scheduler] Added global summary task: ${task.bookId} summary ${task.summaryIndex} (words ${task.globalStartWordIndex}-${task.globalEndWordIndex}) (${initialStatus})`);
         
         if (initialStatus === 'pending') {
@@ -202,7 +339,7 @@ export class IngestionScheduler {
         if (!this.currentBookId) return;
         
         const settings = useSettingsStore.getState();
-        if (settings.summariesEnabled === false) return;
+        if (!isLocalAIFeatureEnabled(settings, 'summary')) return;
         const summaryInterval = settings.summaryChunkSize || 2500;
         
         // Wake up global summaries that are within 2 intervals of current position
@@ -228,6 +365,8 @@ export class IngestionScheduler {
         // This ensures we always have enough buffer even with small chunks from malformed epubs.
         const settings = useSettingsStore.getState();
         const wpm = settings.wpm || 300;
+        const pacingEnabled = isLocalAIFeatureEnabled(settings, 'pacing');
+        const summariesEnabled = isLocalAIFeatureEnabled(settings, 'summary');
         
         // Density: aim for 3 minutes of reading time lookahead
         // Summary: aim for 2 minutes (summaries are lower priority)
@@ -273,7 +412,7 @@ export class IngestionScheduler {
             if (
                 task.bookId === this.currentBookId
                 && task.chapterId === this.currentChapterId
-                && !(task.type === 'SUMMARY' && settings.summariesEnabled === false)
+                && (task.type === 'DENSITY' ? pacingEnabled : summariesEnabled)
             ) {
                 const lookaheadWords = task.type === 'DENSITY' ? DENSITY_LOOKAHEAD_WORDS : SUMMARY_LOOKAHEAD_WORDS;
                 const minChunks = task.type === 'DENSITY' ? MIN_DENSITY_CHUNKS : MIN_SUMMARY_CHUNKS;
@@ -388,10 +527,12 @@ export class IngestionScheduler {
             return;
         }
 
-        // Check if AI is disabled - pause processing
+        // Model-dependent work is disabled until its feature policy admits it.
         const settings = useSettingsStore.getState();
-        if (!settings.aiEnabled) {
-            console.log("[Scheduler] AI disabled, pausing task processing.");
+        const pacingEnabled = isLocalAIFeatureEnabled(settings, 'pacing');
+        const summariesEnabled = isLocalAIFeatureEnabled(settings, 'summary');
+        if (!pacingEnabled && !summariesEnabled) {
+            console.log("[Scheduler] All model-dependent features are disabled, pausing task processing.");
             return;
         }
 
@@ -406,16 +547,17 @@ export class IngestionScheduler {
         this.crashPauseLogged = false;
 
         // Check for pending global summary tasks first (lower priority than density but important)
-        const summariesEnabled = settings.summariesEnabled !== false;
         const nextGlobalSummary = !summariesEnabled
             ? undefined
             : this.globalSummaryTasks.find(t => t.status === 'pending');
         const nextTask = this.tasks.find(t =>
-            t.status === 'pending' && (summariesEnabled || t.type !== 'SUMMARY')
+            t.status === 'pending'
+            && (t.type === 'DENSITY' ? pacingEnabled : summariesEnabled)
         );
         
         // Prioritize density tasks over global summaries, but run global summaries when no density pending
-        const hasPendingDensity = this.tasks.some(t => t.status === 'pending' && t.type === 'DENSITY');
+        const hasPendingDensity = pacingEnabled
+            && this.tasks.some(t => t.status === 'pending' && t.type === 'DENSITY');
         
         if (nextGlobalSummary && !hasPendingDensity) {
             // Execute global summary task
@@ -424,15 +566,18 @@ export class IngestionScheduler {
             
             this.isRunning = true;
             nextGlobalSummary.status = 'processing';
+            void this.persistGlobalSummaryJob(nextGlobalSummary);
             
             try {
                 await this.executeGlobalSummaryTask(nextGlobalSummary);
                 console.log(`[Scheduler] [Success] Global Summary Completed: ${nextGlobalSummary.id}`);
                 nextGlobalSummary.status = 'completed';
+                void this.persistGlobalSummaryJob(nextGlobalSummary);
                 this.globalSummaryTasks = this.globalSummaryTasks.filter(t => t.id !== nextGlobalSummary.id);
             } catch (e) {
                 console.error(`[Scheduler] [Failed] Global Summary Error: ${nextGlobalSummary.id}`, e);
                 nextGlobalSummary.status = 'failed';
+                void this.persistGlobalSummaryJob(nextGlobalSummary);
             } finally {
                 this.isRunning = false;
                 if (!this.disposed) this.processNext();
@@ -452,6 +597,7 @@ export class IngestionScheduler {
         
         this.isRunning = true;
         nextTask.status = 'processing';
+        void this.persistTaskJob(nextTask);
         const abortController = new AbortController();
         this.activeTask = nextTask;
         this.activeTaskAbortController = abortController;
@@ -466,20 +612,101 @@ export class IngestionScheduler {
             if (completed) {
                 console.log(`[Scheduler] [Success] Task Completed: [${nextTask.type}] Ch:${nextTask.chapterId.split('_').pop()} Pt:${nextTask.subchapterIndex}`);
                 nextTask.status = 'completed';
+                void this.persistTaskJob(nextTask);
                 this.tasks = this.tasks.filter(t => t.id !== nextTask.id);
             } else {
                 console.log(`[Scheduler] Task interrupted and returned to dormant: ${nextTask.id}`);
                 nextTask.status = 'dormant';
+                void this.persistTaskJob(nextTask);
             }
         } catch (e) {
             console.error(`[Scheduler] [Failed] Task Error: [${nextTask.type}] Ch:${nextTask.chapterId.split('_').pop()} Pt:${nextTask.subchapterIndex}`, e);
             nextTask.status = 'failed';
+            void this.persistTaskJob(nextTask);
             // Move to end or retry logic?
         } finally {
             this.activeTask = null;
             this.activeTaskAbortController = null;
             this.isRunning = false;
             if (!this.disposed) this.processNext(); // Loop
+        }
+    }
+
+    private async persistTaskJob(task: IngestionTask): Promise<void> {
+        try {
+            const db = await initDB();
+            if (!db.processing_jobs) return;
+            const state: ProcessingJobDocType['state'] = task.status === 'dormant' ? 'blocked' : task.status === 'processing' ? 'running' : task.status;
+            const now = Date.now();
+            const existing = await db.processing_jobs.findOne(task.id).exec();
+            const document = {
+                id: task.id,
+                dedupeKey: `${task.bookId}:${task.chapterId}:${task.type}:${task.subchapterIndex}`,
+                feature: task.type === 'DENSITY' ? 'pacing' as const : 'summary' as const,
+                bookId: task.bookId,
+                sourceUnitId: task.chapterId,
+                inputRevisionHash: task.inputRevisionHash || 'unknown',
+                modelFingerprint: task.modelFingerprint || (task.type === 'DENSITY' ? PACING_MODEL_TIER : useSettingsStore.getState().summarizerModel),
+                pipelineVersion: SCHEDULER_PIPELINE_VERSION,
+                state,
+                attemptCount: state === 'running' && existing?.state !== 'running'
+                    ? (existing?.attemptCount || 0) + 1
+                    : existing?.attemptCount ?? 0,
+                checkpoint: JSON.stringify({
+                    chapterId: task.chapterId,
+                    subchapterIndex: task.subchapterIndex,
+                    startWordIndex: task.startWordIndex,
+                    endWordIndex: task.endWordIndex,
+                }),
+                createdAt: existing?.createdAt ?? now,
+                updatedAt: now,
+            };
+            if (existing) {
+                await existing.incrementalModify(() => document);
+            } else {
+                await db.processing_jobs.insert(document);
+            }
+        } catch (error) {
+            console.warn('[Scheduler] Could not persist processing job', error);
+        }
+    }
+
+    private async persistGlobalSummaryJob(task: GlobalSummaryTask): Promise<void> {
+        try {
+            const db = await initDB();
+            if (!db.processing_jobs) return;
+            const state: ProcessingJobDocType['state'] = task.status === 'dormant' ? 'blocked' : task.status === 'processing' ? 'running' : task.status;
+            const now = Date.now();
+            const existing = await db.processing_jobs.findOne(task.id).exec();
+            const document = {
+                id: task.id,
+                dedupeKey: `${task.bookId}:global-summary:${task.summaryIndex}`,
+                feature: 'summary' as const,
+                bookId: task.bookId,
+                inputRevisionHash: 'unknown',
+                modelFingerprint: useSettingsStore.getState().summarizerModel,
+                pipelineVersion: SCHEDULER_PIPELINE_VERSION,
+                state,
+                attemptCount: state === 'running' && existing?.state !== 'running'
+                    ? (existing?.attemptCount || 0) + 1
+                    : existing?.attemptCount ?? 0,
+                checkpoint: JSON.stringify({
+                    summaryIndex: task.summaryIndex,
+                    globalStartWordIndex: task.globalStartWordIndex,
+                    globalEndWordIndex: task.globalEndWordIndex,
+                    startChapterId: task.startChapterId,
+                    endChapterId: task.endChapterId,
+                }),
+                createdAt: existing?.createdAt ?? now,
+                updatedAt: now,
+            };
+            if (existing) {
+                await existing.incrementalModify(() => document);
+            } else {
+                await db.processing_jobs.insert(document);
+            }
+        } catch (error) {
+            console.warn('[Scheduler] Could not persist global summary job', error);
         }
     }
 
@@ -581,7 +808,7 @@ ${SUMMARY_STYLE_GUARD}
 
 ${task.text.substring(0, 3000)}`;
 
-                const { response } = await generateUnifiedCompletion(prompt, summarizerModel);
+                const { response } = await generateUnifiedCompletion(prompt, summarizerModel, 'summary');
 
                 const summary = sanitizeSummaryText(response);
 
@@ -687,7 +914,7 @@ ${task.text.substring(0, 3000)}`;
             const summaryInstruction = settings.summaryPrompt || "Summarize the following text in 5 sentences.";
             const prompt = `${summaryInstruction}\n\n${SUMMARY_STYLE_GUARD}\n\n${collectedText.trim()}`;
 
-            const { response } = await generateUnifiedCompletion(prompt, summarizerModel);
+            const { response } = await generateUnifiedCompletion(prompt, summarizerModel, 'summary');
             const summary = sanitizeSummaryText(response);
 
             console.log(`[Scheduler] Global Summary ${task.summaryIndex} (${summary.length} chars):`, summary.substring(0, 200));

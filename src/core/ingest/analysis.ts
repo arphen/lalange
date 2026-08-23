@@ -1,6 +1,6 @@
 import PQueue from 'p-queue';
 import { getPromptLogprobs } from '../ai/service';
-import { PACING_MODEL_TIER } from '../ai/webllm';
+import { PACING_MODEL_TIER } from '../ai/modelManifest';
 import { createOperationHandle } from '../operations/progressReporter';
 import { useAIStore } from '../store/ai';
 import { useSettingsStore } from '../store/settings';
@@ -54,6 +54,7 @@ export const analyzeDensityRange = async (
     try {
         const rawSurprisals: number[] = [];
         const analysisData: { tokens: string[], surprisals: number[] }[] = [];
+        let hasUnavailableLogprobs = false;
 
         // Process in chunks of WINDOW_SIZE
         for (let i = 0; i < words.length; i += WINDOW_SIZE) {
@@ -80,13 +81,22 @@ export const analyzeDensityRange = async (
                 state: 'running',
             });
 
-            const logprobs = await analysisQueue.add(async () => {
+            const logprobResult = await analysisQueue.add(async () => {
                 console.log(`[Analysis] Analyzing density for chunk ${i}-${i + chunkWords.length} (${chunkWords.length} words)...`);
                 return await getPromptLogprobs(chunkText, PACING_MODEL_TIER);
             });
+            const logprobs = Array.isArray(logprobResult)
+                ? logprobResult
+                : logprobResult.status === 'available'
+                    ? logprobResult.items
+                    : [];
 
             if (!logprobs || logprobs.length === 0) {
-                console.warn('[Analysis] No logprobs returned for chunk. Using default density.');
+                hasUnavailableLogprobs = true;
+                const reason = !Array.isArray(logprobResult) && logprobResult.status === 'unavailable'
+                    ? ` (${logprobResult.reason})`
+                    : '';
+                console.warn(`[Analysis] Input logprobs unavailable${reason}. Using neutral density.`);
                 for (let j = 0; j < chunkWords.length; j++) {
                     windowRawSurprisals.push(0);
                     windowAnalysisData.push({ tokens: [], surprisals: [] });
@@ -146,11 +156,13 @@ export const analyzeDensityRange = async (
             
             // Calculate window-level densities using local percentiles
             // This provides immediate, usable densities even before all windows complete
-            const windowDensities = calculateDensitiesFromSurprisals(
-                windowRawSurprisals, 
-                chunkWords, 
-                useSettingsStore.getState().pacingSensitivity ?? 50
-            );
+            const windowDensities = logprobs.length === 0
+                ? new Array(chunkWords.length).fill(1.0)
+                : calculateDensitiesFromSurprisals(
+                    windowRawSurprisals,
+                    chunkWords,
+                    useSettingsStore.getState().pacingSensitivity ?? 50,
+                );
             
             // Call the incremental save callback
             if (onWindowComplete) {
@@ -180,6 +192,19 @@ export const analyzeDensityRange = async (
                 operation.complete('No words to analyze');
             }
             return { densities: [], analysisData: [], completed: words.length === 0 };
+        }
+
+        if (hasUnavailableLogprobs) {
+            if (signal?.aborted) {
+                operation.cancel();
+            } else {
+                operation.complete('Input logprobs unavailable; using neutral density');
+            }
+            return {
+                densities: new Array(rawSurprisals.length).fill(1.0),
+                analysisData,
+                completed: rawSurprisals.length === words.length,
+            };
         }
 
         const sortedSurprisals = [...rawSurprisals].sort((a, b) => a - b);

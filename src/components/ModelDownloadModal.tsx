@@ -4,14 +4,9 @@ import { clsx } from 'clsx';
 import { useShallow } from 'zustand/react/shallow';
 import { useSettingsStore } from '../core/store/settings';
 import { useAIStore } from '../core/store/ai';
-import {
-    MODEL_INFO,
-    PACING_MODEL_TIER,
-    type ModelTier,
-    isModelCached,
-    getEngine,
-    WEBLLM_ERROR_CODES,
-} from '../core/ai/webllm';
+import { localAIBroker } from '../core/ai/broker';
+import { MODEL_INFO, PACING_MODEL_TIER, type ModelTier } from '../core/ai/modelManifest';
+import { WEBLLM_ERROR_CODES } from '../core/ai/webllm';
 
 /**
  * Intent-driven local AI setup. It never blocks navigation or reading, and AI
@@ -45,7 +40,7 @@ export const AISetupWizard: React.FC = () => {
                 : Object.keys(MODEL_INFO) as ModelTier[];
             const entries = await Promise.all(
                 tiers.map(async (tier) => (
-                    [tier, await isModelCached(tier)] as const
+                    [tier, await localAIBroker.isCached(tier)] as const
                 )),
             );
             setCachedModels(Object.fromEntries(entries));
@@ -64,12 +59,15 @@ export const AISetupWizard: React.FC = () => {
         closeSetup();
 
         try {
-            await getEngine(setupTier);
-            setAiEnabled(true);
-            if (intent === 'summaries') setSummariesEnabled(true);
+            await localAIBroker.prepareModel(setupTier);
+            if (intent === 'pacing') {
+                setAiEnabled(true);
+            } else {
+                setSummariesEnabled(true);
+            }
         } catch (setupError) {
             console.error('AI setup failed', setupError);
-            setAiEnabled(false);
+            if (intent === 'pacing') setAiEnabled(false);
             requestSetup(intent);
             if (setupError instanceof Error) {
                 if (setupError.message === WEBLLM_ERROR_CODES.STORAGE_QUOTA_EXCEEDED) {

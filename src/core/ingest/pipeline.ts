@@ -9,6 +9,9 @@ import { analyzeDensityRange, chunkText } from './analysis';
 import { createOperationHandle } from '../operations/progressReporter';
 import { decodeRawFilePayload, defaultIngestReaderRegistry, encodeRawFilePayload, readFileAsUint8Array } from './readers';
 import type { ReaderStructureMetadata } from './readers';
+import { scanTextForAnomalies } from './anomalyScanner';
+import { fingerprintValue } from '../exchange/fingerprint';
+import { PACING_MODEL_TIER } from '../ai/modelManifest';
 
 // Job control
 const activeJobs = new Set<string>();
@@ -293,8 +296,59 @@ const runProcessChaptersInBackground = async (bookId: string, onProgress?: (mess
                         
                         console.log(`[Pipeline] Chapter ${chapterIndex + 1}: Extracted ${rawText.length} chars of cleaned text.`);
 
-                        // Pipeline: Clean -> Editor/Summary -> Density -> Save
+                        // Index deterministic anomalies without changing the readable revision or loading a model.
                         const rawChunks = chunkText(rawText, settings.summaryChunkSize || 2500);
+                        const canonicalWords = rawChunks.flatMap((chunk) => {
+                            const tokenResult = tokenizeForRSVP(chunk);
+                            return normalizeReferenceTokens(tokenResult.tokens, referenceHandling).tokens;
+                        });
+                        const canonicalText = canonicalWords.join(' ');
+                        const sourceHash = await fingerprintValue(sourceTextBeforeCleaning);
+                        const textHash = await fingerprintValue(canonicalText);
+                        const revisionId = `${chapterId}:deterministic-text-v1:${textHash}`;
+                        const revisionCollection = (db as typeof db & {
+                            content_revisions?: {
+                                bulkUpsert: (documents: unknown[]) => Promise<unknown>;
+                            };
+                        }).content_revisions;
+                        if (revisionCollection) {
+                            await revisionCollection.bulkUpsert([{
+                                id: revisionId,
+                                bookId,
+                                sourceUnitId: chapterId,
+                                sourceHash,
+                                textHash,
+                                pipelineVersion: 'deterministic-text-v1',
+                                acceptedPatchIds: [],
+                                createdAt: Date.now(),
+                                state: 'active',
+                            }]);
+                        }
+                        const anomalyScan = await scanTextForAnomalies({
+                            bookId,
+                            sourceUnitId: chapterId,
+                            revisionHash: textHash,
+                            text: canonicalText,
+                        });
+                        const issueCollection = (db as typeof db & {
+                            text_issues?: {
+                                bulkUpsert: (documents: unknown[]) => Promise<unknown>;
+                            };
+                        }).text_issues;
+                        if (issueCollection && anomalyScan.candidates.length > 0) {
+                            const now = Date.now();
+                            await issueCollection.bulkUpsert(anomalyScan.candidates.map((candidate) => ({
+                                ...candidate,
+                                state: 'open',
+                                createdAt: now,
+                                updatedAt: now,
+                            })));
+                        }
+                        if (anomalyScan.circuitBroken) {
+                            console.warn(`[Pipeline] Anomaly scan circuit breaker tripped for ${chapterId}: ${anomalyScan.circuitBreakerReason}`);
+                        }
+
+                        // Pipeline: Clean -> Editor/Summary -> Density -> Save
                         console.log(`[Pipeline] Chapter ${chapterIndex + 1}: Split into ${rawChunks.length} chunks for AI processing.`);
                         
                         const hasContent = rawChunks.some(c => c.trim().length > 0);
@@ -373,7 +427,9 @@ const runProcessChaptersInBackground = async (bookId: string, onProgress?: (mess
                                 startWordIndex,
                                 endWordIndex,
                                 type: 'DENSITY',
-                                text: chunk
+                                text: chunk,
+                                inputRevisionHash: textHash,
+                                modelFingerprint: PACING_MODEL_TIER,
                             }, densityInitialStatus);
 
                             // NOTE: Per-chunk SUMMARY tasks are deprecated in favor of global summaries
@@ -594,6 +650,7 @@ export const resumeIncompleteAnalysis = async (bookId: string, currentChapterId?
     if (currentChapterId) {
         scheduler.setCursor(bookId, currentChapterId, currentWordIndex, globalWordIndex);
     }
+    await scheduler.restorePersistedJobs(bookId);
 
     let totalScheduled = 0;
     let skippedPast = 0;
@@ -666,7 +723,13 @@ export const resumeIncompleteAnalysis = async (bookId: string, currentChapterId?
                     startWordIndex: sub.startWordIndex,
                     endWordIndex: sub.endWordIndex,
                     type: 'DENSITY',
-                    text: chunkText
+                    text: chunkText,
+                    inputRevisionHash: (await db.content_revisions.find({
+                        selector: { bookId, sourceUnitId: chapterId, state: 'active' },
+                        sort: [{ createdAt: 'desc' }],
+                        limit: 1,
+                    }).exec())[0]?.textHash || 'unknown',
+                    modelFingerprint: PACING_MODEL_TIER,
                 }, initialStatus);
                 totalScheduled++;
             }

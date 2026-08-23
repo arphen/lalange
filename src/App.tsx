@@ -18,6 +18,7 @@ import { useAIStore } from './core/store/ai'
 import { clsx } from 'clsx'
 import { GlobalNavSidebar, type ViewState } from './components/GlobalNavSidebar'
 import { SeoHead } from './components/SeoHead'
+import { isAdaptivePacingEnabled } from './core/ai/policy'
 
 function NotFound() {
   return (
@@ -51,9 +52,9 @@ function App() {
   const theme = useSettingsStore((state) => state.theme);
   const setTheme = useSettingsStore((state) => state.setTheme);
   const navSidebarCollapsed = useSettingsStore((state) => state.navSidebarCollapsed);
-  const aiEnabled = useSettingsStore((state) => state.aiEnabled);
+  const adaptivePacingEnabled = useSettingsStore((state) => isAdaptivePacingEnabled(state));
   const showReaderAIStatus = useAIStore((state) => (
-    aiEnabled
+    adaptivePacingEnabled
     && !state.isSetupOpen
     && (
       state.lifecycleState === 'downloading'

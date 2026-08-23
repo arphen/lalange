@@ -22,6 +22,22 @@ describe('analyzeDensityRange (Percentile-Based)', () => {
         expect(densities).toEqual([1.0, 1.0]);
     });
 
+    it('uses neutral densities when input logprobs are unavailable', async () => {
+        vi.mocked(getPromptLogprobs).mockResolvedValue({
+            status: 'unavailable',
+            items: [],
+            reason: 'runtime-not-supported',
+        });
+
+        const result = await analyzeDensityRange(['hello', 'world']);
+
+        expect(result.densities).toEqual([1.0, 1.0]);
+        expect(result.analysisData).toEqual([
+            { tokens: [], surprisals: [] },
+            { tokens: [], surprisals: [] },
+        ]);
+    });
+
     it('should produce variation using percentile-based scoring', async () => {
         // Mock logprobs with varying surprisal levels
         // Word 1: "the" -> very predictable (logprob -0.1, surprisal 0.1)
@@ -32,7 +48,7 @@ describe('analyzeDensityRange (Percentile-Based)', () => {
             { token: ' cat', logprob: -1.0 },
             { token: ' ephemeral', logprob: -5.0 }
         ];
-        vi.mocked(getPromptLogprobs).mockResolvedValue(mockLogprobs);
+        vi.mocked(getPromptLogprobs).mockResolvedValue({ status: 'available', items: mockLogprobs });
 
         const words = ['the', 'cat', 'ephemeral'];
         const { densities, analysisData } = await analyzeDensityRange(words);
@@ -48,7 +64,7 @@ describe('analyzeDensityRange (Percentile-Based)', () => {
     });
 
     it('always uses the dedicated pacing model', async () => {
-        vi.mocked(getPromptLogprobs).mockResolvedValue([{ token: 'hello', logprob: -1 }]);
+        vi.mocked(getPromptLogprobs).mockResolvedValue({ status: 'available', items: [{ token: 'hello', logprob: -1 }] });
 
         await analyzeDensityRange(['hello']);
 
@@ -63,7 +79,7 @@ describe('analyzeDensityRange (Percentile-Based)', () => {
             { token: 'cat', logprob: -1.0 },
             { token: ' extraordinarily', logprob: -1.0 }
         ];
-        vi.mocked(getPromptLogprobs).mockResolvedValue(mockLogprobs);
+        vi.mocked(getPromptLogprobs).mockResolvedValue({ status: 'available', items: mockLogprobs });
 
         const words = ['cat', 'extraordinarily'];
         const { densities } = await analyzeDensityRange(words);
@@ -81,7 +97,7 @@ describe('analyzeDensityRange (Percentile-Based)', () => {
             { token: 'ple', logprob: -1.0 },
             { token: ' text', logprob: -0.1 }
         ];
-        vi.mocked(getPromptLogprobs).mockResolvedValue(mockLogprobs);
+        vi.mocked(getPromptLogprobs).mockResolvedValue({ status: 'available', items: mockLogprobs });
         
         const words = ['simple', 'text'];
         const { densities, analysisData } = await analyzeDensityRange(words);
@@ -94,7 +110,7 @@ describe('analyzeDensityRange (Percentile-Based)', () => {
     });
 
     it('stops before the next window when the scan is aborted', async () => {
-        vi.mocked(getPromptLogprobs).mockResolvedValue([{ token: 'word', logprob: -1 }]);
+        vi.mocked(getPromptLogprobs).mockResolvedValue({ status: 'available', items: [{ token: 'word', logprob: -1 }] });
         const controller = new AbortController();
         const words = new Array(600).fill('word');
 

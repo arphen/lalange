@@ -53,7 +53,8 @@ describe('IngestionScheduler', () => {
             summarizerBasePrompt: 'Summarize',
             summarizerFragments: [],
             enableJunkRemoval: false,
-            aiEnabled: true
+            aiEnabled: true,
+            summariesEnabled: true,
         });
         scheduler = new IngestionScheduler();
 
@@ -82,6 +83,13 @@ describe('IngestionScheduler', () => {
                 findOne: vi.fn().mockReturnValue({
                     exec: vi.fn().mockResolvedValue({ id: 'book1' })
                 })
+            },
+            processing_jobs: {
+                find: vi.fn(),
+                findOne: vi.fn().mockReturnValue({
+                    exec: vi.fn().mockResolvedValue(undefined)
+                }),
+                insert: vi.fn().mockResolvedValue(undefined),
             }
         };
         (initDB as any).mockResolvedValue(mockDB);
@@ -147,6 +155,80 @@ describe('IngestionScheduler', () => {
 
         expect(analyzeDensityRange).toHaveBeenCalled();
         expect(mockChapter.incrementalModify).toHaveBeenCalled();
+    });
+
+    it('persists dormant task metadata as a blocked processing job', async () => {
+        scheduler.addTask({
+            id: 'persisted-task',
+            bookId: 'book1',
+            chapterId: 'chapter1',
+            subchapterIndex: 2,
+            startWordIndex: 100,
+            endWordIndex: 150,
+            type: 'DENSITY',
+            text: 'some text',
+            inputRevisionHash: 'revision-1',
+        }, 'dormant');
+
+        await new Promise(resolve => setTimeout(resolve, 10));
+
+        expect(mockDB.processing_jobs.insert).toHaveBeenCalledWith(expect.objectContaining({
+            id: 'persisted-task',
+            feature: 'pacing',
+            inputRevisionHash: 'revision-1',
+            state: 'blocked',
+            checkpoint: expect.stringContaining('"subchapterIndex":2'),
+        }));
+    });
+
+    it('restores a pending persisted density job from its checkpoint', async () => {
+        mockChapter = {
+            id: 'chapter1',
+            index: 0,
+            content: ['one', 'two', 'three'],
+            densities: [0, 0, 0],
+            incrementalModify: vi.fn(),
+            incrementalPatch: vi.fn(),
+        };
+        mockDB.chapters.findOne.mockReturnValue({
+            exec: vi.fn().mockResolvedValue(mockChapter),
+        });
+        const persistedJob = {
+            id: 'restored-density',
+            bookId: 'book1',
+            sourceUnitId: 'chapter1',
+            feature: 'pacing',
+            inputRevisionHash: 'revision-1',
+            modelFingerprint: 'tiny',
+            pipelineVersion: 'local-ai-scheduler-v1',
+            state: 'pending',
+            attemptCount: 0,
+            checkpoint: JSON.stringify({
+                chapterId: 'chapter1',
+                subchapterIndex: 0,
+                startWordIndex: 0,
+                endWordIndex: 3,
+            }),
+            incrementalPatch: vi.fn(),
+        };
+        mockDB.processing_jobs.find.mockReturnValue({
+            exec: vi.fn().mockResolvedValue([persistedJob]),
+        });
+        mockDB.content_revisions = {
+            find: vi.fn().mockReturnValue({
+                exec: vi.fn().mockResolvedValue([{ textHash: 'revision-1' }]),
+            }),
+        };
+
+        await scheduler.restorePersistedJobs('book1');
+        await new Promise(resolve => setTimeout(resolve, 10));
+
+        expect(analyzeDensityRange).toHaveBeenCalledWith(
+            ['one', 'two', 'three'],
+            expect.any(Function),
+            expect.any(AbortSignal),
+        );
+        expect(persistedJob.incrementalPatch).not.toHaveBeenCalledWith(expect.objectContaining({ state: 'stale' }));
     });
 
     it('should process density but leave summaries pending when summaries are disabled', async () => {

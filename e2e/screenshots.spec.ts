@@ -282,9 +282,12 @@ test('01 Reader Journey Key Flows', async ({ page, isMobile }) => {
   expect(drawerBox).not.toBeNull();
   expect(toolbarBox).not.toBeNull();
   await expect(page.locator('.reader-chapter-line--active')).toHaveCount(1);
-  await expect(page.locator('button[data-testid^="subchapter-btn-"]')).toHaveCount(0);
-  await expect(page.locator('.reader-progress-track')).toHaveCount(0);
-  await expect(page.getByText(/page-based structure|reading sections|Jump within this chapter/i)).toHaveCount(0);
+  const subchapterButtons = page.locator('button[data-testid^="subchapter-btn-"]');
+  expect(await subchapterButtons.count()).toBeGreaterThan(0);
+  await expect(subchapterButtons.first()).toBeVisible();
+  await expect(page.getByTestId('book-progress')).toBeVisible();
+  await expect(page.locator('.reader-chapter-progress').first()).toBeVisible();
+  await expect(page.getByText(/page-based structure|Jump within this chapter/i)).toHaveCount(0);
   const chapterRowBoxes = await chapterButtons.evaluateAll((rows) => rows.map((row) => row.getBoundingClientRect().height));
   expect(chapterRowBoxes.length).toBeGreaterThan(0);
   expect(Math.max(...chapterRowBoxes)).toBeLessThanOrEqual(84);
@@ -412,8 +415,8 @@ test('02 Dark reader is one continuous surface', async ({ page, isMobile }) => {
   expect(contentsStyles).toEqual({
     chapterBackground: 'rgba(0, 0, 0, 0)',
     chapterShadow: 'none',
-    hasNestedSections: false,
-    hasProgressTracks: false,
+    hasNestedSections: true,
+    hasProgressTracks: true,
     hasCurrentRow: true,
   });
   await captureScreenshot(page, isMobile, '07-reader-dark-contents.png');

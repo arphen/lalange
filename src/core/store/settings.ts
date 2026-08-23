@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { type ModelTier } from '../ai/webllm';
+import { type ModelTier } from '../ai/modelManifest';
+import { DEFAULT_LOCAL_AI_FEATURE_SETTINGS, type TextRepairMode } from '../ai/policy';
 import { type DurationStrategyId, DEFAULT_STRATEGY_ID } from '../rsvp/duration';
 import { type DisplayPluginId, DEFAULT_DISPLAY_PLUGIN } from '../rsvp/display';
 import { COMMON_NGRAM_RANK_LIMIT } from '../rsvp/phrases/commonEnglishNgrams';
@@ -51,10 +52,20 @@ interface SettingsState {
     setRiverBottomEnabled: (enabled: boolean) => void;
     focusModeEnabled: boolean;
     setFocusModeEnabled: (enabled: boolean) => void;
+    adaptivePacingEnabled: boolean;
+    setAdaptivePacingEnabled: (enabled: boolean) => void;
     aiEnabled: boolean;
     setAiEnabled: (enabled: boolean) => void;
     summariesEnabled: boolean;
     setSummariesEnabled: (enabled: boolean) => void;
+    textRepairMode: TextRepairMode;
+    setTextRepairMode: (mode: TextRepairMode) => void;
+    ttsAnnotationsEnabled: boolean;
+    setTtsAnnotationsEnabled: (enabled: boolean) => void;
+    structureStrategyId: string;
+    setStructureStrategyId: (strategyId: string) => void;
+    repairModelId: ModelTier;
+    setRepairModelId: (model: ModelTier) => void;
 
     // UI
     sidebarOpen: boolean;
@@ -177,10 +188,20 @@ export const useSettingsStore = create<SettingsState>()(
             setRiverBottomEnabled: (riverBottomEnabled) => set({ riverBottomEnabled }),
             focusModeEnabled: false,
             setFocusModeEnabled: (focusModeEnabled) => set({ focusModeEnabled }),
-            aiEnabled: false,
-            setAiEnabled: (aiEnabled) => set({ aiEnabled }),
+            adaptivePacingEnabled: DEFAULT_LOCAL_AI_FEATURE_SETTINGS.adaptivePacingEnabled,
+            setAdaptivePacingEnabled: (adaptivePacingEnabled) => set({ adaptivePacingEnabled, aiEnabled: adaptivePacingEnabled }),
+            aiEnabled: DEFAULT_LOCAL_AI_FEATURE_SETTINGS.adaptivePacingEnabled,
+            setAiEnabled: (aiEnabled) => set({ aiEnabled, adaptivePacingEnabled: aiEnabled }),
             summariesEnabled: false,
             setSummariesEnabled: (summariesEnabled) => set({ summariesEnabled }),
+            textRepairMode: DEFAULT_LOCAL_AI_FEATURE_SETTINGS.textRepairMode,
+            setTextRepairMode: (textRepairMode) => set({ textRepairMode }),
+            ttsAnnotationsEnabled: DEFAULT_LOCAL_AI_FEATURE_SETTINGS.ttsAnnotationsEnabled,
+            setTtsAnnotationsEnabled: (ttsAnnotationsEnabled) => set({ ttsAnnotationsEnabled }),
+            structureStrategyId: DEFAULT_LOCAL_AI_FEATURE_SETTINGS.structureStrategyId,
+            setStructureStrategyId: (structureStrategyId) => set({ structureStrategyId }),
+            repairModelId: DEFAULT_LOCAL_AI_FEATURE_SETTINGS.repairModelId,
+            setRepairModelId: (repairModelId) => set({ repairModelId }),
 
             sidebarOpen: true,
             setSidebarOpen: (sidebarOpen) => set({ sidebarOpen }),
@@ -271,9 +292,26 @@ export const useSettingsStore = create<SettingsState>()(
             name: 'xyz-settings',
             merge: (persistedState, currentState) => {
                 const persisted = persistedState as Record<string, unknown>;
+                const persistedAdaptivePacing = typeof persisted.adaptivePacingEnabled === 'boolean'
+                    ? persisted.adaptivePacingEnabled
+                    : typeof persisted.aiEnabled === 'boolean'
+                        ? persisted.aiEnabled
+                        : currentState.adaptivePacingEnabled;
                 return {
                     ...currentState,
                     ...persisted,
+                    adaptivePacingEnabled: persistedAdaptivePacing,
+                    aiEnabled: persistedAdaptivePacing,
+                    textRepairMode: persisted.textRepairMode === 'review' || persisted.textRepairMode === 'auto-safe'
+                        ? persisted.textRepairMode
+                        : DEFAULT_LOCAL_AI_FEATURE_SETTINGS.textRepairMode,
+                    ttsAnnotationsEnabled: persisted.ttsAnnotationsEnabled === true,
+                    structureStrategyId: typeof persisted.structureStrategyId === 'string'
+                        ? persisted.structureStrategyId
+                        : DEFAULT_LOCAL_AI_FEATURE_SETTINGS.structureStrategyId,
+                    repairModelId: persisted.repairModelId === 'tiny' || persisted.repairModelId === 'qwen'
+                        ? persisted.repairModelId
+                        : DEFAULT_LOCAL_AI_FEATURE_SETTINGS.repairModelId,
                     commonPhraseRankLimit: normalizeCommonPhraseRankLimit(persisted.commonPhraseRankLimit),
                 };
             },

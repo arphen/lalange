@@ -56,7 +56,8 @@ describe('IngestionScheduler - Global Summary Tasks', () => {
             summarizerModel: 'basic',
             summaryPrompt: 'Summarize this text.',
             summaryChunkSize: 2500,
-            aiEnabled: true
+            aiEnabled: true,
+            summariesEnabled: true,
         });
 
         (useAIStore.getState as any).mockReturnValue({

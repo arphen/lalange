@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Share2 } from 'lucide-react';
+import { ScanLine, Share2 } from 'lucide-react';
 import { initDB, type BookDocType, type ChapterDocType } from '../../core/sync/db';
 import { formatReadingTime } from '../../hooks/useReadingTimeEstimate';
 
@@ -9,10 +9,11 @@ interface BookCardProps {
     onDelete: (e: React.MouseEvent) => void;
     onStop?: (e: React.MouseEvent) => void;
     onEstimateDensity?: (e: React.MouseEvent) => void;
+    onScan?: (e: React.MouseEvent) => void;
     onShare?: (e: React.MouseEvent) => void;
 }
 
-export const BookCard: React.FC<BookCardProps> = ({ book, onOpen, onDelete, onStop, onEstimateDensity, onShare }) => {
+export const BookCard: React.FC<BookCardProps> = ({ book, onOpen, onDelete, onStop, onEstimateDensity, onScan, onShare }) => {
     const [chapters, setChapters] = useState<ChapterDocType[]>([]);
     const [readingTime, setReadingTime] = useState<string>('');
     const [processingStatus, setProcessingStatus] = useState<string>('');
@@ -126,6 +127,16 @@ export const BookCard: React.FC<BookCardProps> = ({ book, onOpen, onDelete, onSt
                         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
                         </svg>
+                    </button>
+                )}
+                {onScan && isReady && (
+                    <button
+                        onClick={onScan}
+                        className="archive-card-action text-gray-500 opacity-0 transition-opacity group-hover:opacity-100"
+                        title="Scan for text anomalies"
+                        aria-label={`Scan ${book.title} for text anomalies`}
+                    >
+                        <ScanLine className="h-5 w-5" strokeWidth={1.5} />
                     </button>
                 )}
                 {onShare && isReady && (

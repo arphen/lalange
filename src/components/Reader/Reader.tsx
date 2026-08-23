@@ -17,6 +17,7 @@ import {
     mergeTransformWithScale,
 } from './lensGestures';
 import { useSettingsStore } from '../../core/store/settings';
+import { isAdaptivePacingEnabled } from '../../core/ai/policy';
 import { useAIStore } from '../../core/store/ai';
 import { useTTSStore } from '../../core/store/tts';
 import { ttsPlayer } from '../../core/tts/player';
@@ -197,7 +198,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
     } | null>(null);
     
     // AI toggle - disable AI features to save battery
-    const aiEnabled = useSettingsStore((s) => s.aiEnabled);
+    const aiEnabled = useSettingsStore((s) => isAdaptivePacingEnabled(s));
     const setAiEnabled = useSettingsStore((s) => s.setAiEnabled);
     const aiIsReady = useAIStore((s) => s.lifecycleState === 'ready');
     const aiIsLoading = useAIStore((s) => (

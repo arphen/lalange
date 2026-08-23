@@ -36,6 +36,45 @@ describe('settings defaults', () => {
         expect(useSettingsStore.getState().commonPhraseRankLimit).toBe(0);
     });
 
+    it('migrates legacy AI enablement to pacing without enabling other features', async () => {
+        localStorage.setItem('xyz-settings', JSON.stringify({
+            state: { aiEnabled: true },
+            version: 0,
+        }));
+
+        await useSettingsStore.persist.rehydrate();
+        const settings = useSettingsStore.getState();
+
+        expect(settings.adaptivePacingEnabled).toBe(true);
+        expect(settings.aiEnabled).toBe(true);
+        expect(settings.summariesEnabled).toBe(false);
+        expect(settings.textRepairMode).toBe('off');
+        expect(settings.ttsAnnotationsEnabled).toBe(false);
+        expect(settings.structureStrategyId).toBe('auto-deterministic');
+    });
+
+    it('preserves the summary setting independently from legacy AI enablement', async () => {
+        localStorage.setItem('xyz-settings', JSON.stringify({
+            state: { aiEnabled: false, summariesEnabled: true },
+            version: 0,
+        }));
+
+        await useSettingsStore.persist.rehydrate();
+
+        expect(useSettingsStore.getState().adaptivePacingEnabled).toBe(false);
+        expect(useSettingsStore.getState().summariesEnabled).toBe(true);
+    });
+
+    it('uses independent local AI defaults for a fresh profile', () => {
+        const settings = useSettingsStore.getInitialState();
+
+        expect(settings.adaptivePacingEnabled).toBe(false);
+        expect(settings.textRepairMode).toBe('off');
+        expect(settings.ttsAnnotationsEnabled).toBe(false);
+        expect(settings.structureStrategyId).toBe('auto-deterministic');
+        expect(settings.summariesEnabled).toBe(false);
+    });
+
     it('normalizes arbitrary values without relying on hydration', () => {
         expect(normalizeCommonPhraseRankLimit(24)).toBe(20);
         expect(normalizeCommonPhraseRankLimit(-20)).toBe(0);

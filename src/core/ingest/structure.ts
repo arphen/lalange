@@ -15,6 +15,13 @@ import {
     type MarkupRecoveryResult,
 } from './markupRecovery';
 import type { ReferenceHandlingMode } from './cleaning';
+import {
+    defaultStructureDiscoveryRegistry,
+    validateStructureProposal,
+    type StructureDiscoveryRegistry,
+    type StructureProposal,
+    type StructureSourceDocument,
+} from './structureStrategies';
 
 export type ChapterSource = 'toc' | 'heading' | 'spine' | 'merged';
 
@@ -231,6 +238,10 @@ export interface EpubStructurePlan {
 
 export interface EpubStructureOptions {
     referenceHandling?: ReferenceHandlingMode;
+    structureStrategyId?: string;
+    structureDiscoveryRegistry?: StructureDiscoveryRegistry;
+    bookId?: string;
+    sourceHash?: string;
 }
 
 const MARKER_START = '__XYZ_CHAPTER_START__';
@@ -1627,6 +1638,121 @@ const buildBoundariesFromToc = (
     return boundaries;
 };
 
+interface StructureDiscoveryAnchors {
+    document: StructureSourceDocument;
+    tocEntries: Map<string, TocEntry>;
+    headingBoundaries: Map<string, ChapterBoundary>;
+    sourceUnits: Map<string, { index: number; title?: string }>;
+}
+
+const createStructureDiscoveryAnchors = async (
+    loadDocument: ContentDocumentLoader,
+    spine: SpineItem[],
+    tocEntries: TocEntry[],
+    headingRecovery: HeadingRecoveryResult | null,
+    opfPath: string,
+    options: EpubStructureOptions,
+): Promise<StructureDiscoveryAnchors> => {
+    const sourceUnits = new Map<string, { index: number; title?: string }>();
+    const units: StructureSourceDocument['units'] = [];
+    for (const spineItem of spine) {
+        const sourceUnitId = `spine:${spineItem.index}`;
+        const document = await loadDocument(spineItem.resolvedPath);
+        const $ = cheerio.load(document.repairedHtml || '');
+        const title = normalizeWhitespace($('h1, h2, h3, h4, h5, h6').first().text()) || undefined;
+        sourceUnits.set(sourceUnitId, { index: spineItem.index, title });
+        units.push({
+            id: sourceUnitId,
+            ordinal: spineItem.index,
+            title,
+            text: normalizeWhitespace($('body').text()),
+        });
+    }
+
+    const lookups = buildPathLookup(spine);
+    const navigationEntries: NonNullable<StructureSourceDocument['navigationEntries']> = [];
+    const navigationById = new Map<string, TocEntry>();
+    tocEntries.forEach((entry, index) => {
+        const sourceIndex = resolveTocEntryToIndex(entry, lookups, 0);
+        if (sourceIndex === null) return;
+        const id = `toc:${index}`;
+        navigationEntries.push({
+            id,
+            title: entry.title,
+            sourceUnitId: `spine:${sourceIndex}`,
+        });
+        navigationById.set(id, entry);
+    });
+
+    const headingBoundaries = new Map<string, ChapterBoundary>();
+    const headings: NonNullable<StructureSourceDocument['headings']> = [];
+    (headingRecovery?.selectedBoundaries || []).forEach((boundary, index) => {
+        const id = `heading:${index}`;
+        const sourceUnitId = `spine:${boundary.index}`;
+        if (!sourceUnits.has(sourceUnitId)) return;
+        headings.push({
+            id,
+            sourceUnitId,
+            title: boundary.title,
+            level: boundary.headingIndex === undefined ? undefined : 1,
+            startOffset: boundary.headingIndex ?? boundary.blockIndex ?? 0,
+        });
+        headingBoundaries.set(id, boundary);
+    });
+
+    const document: StructureSourceDocument = {
+        bookId: options.bookId || opfPath,
+        sourceHash: options.sourceHash || `${opfPath}:${spine.map((item) => item.resolvedPath).join('|')}`,
+        units,
+        navigationEntries,
+        headings,
+    };
+
+    return {
+        document,
+        tocEntries: navigationById,
+        headingBoundaries,
+        sourceUnits,
+    };
+};
+
+const buildChaptersFromStructureProposal = (
+    proposal: StructureProposal,
+    anchors: StructureDiscoveryAnchors,
+    spine: SpineItem[],
+): PlannedChapter[] => {
+    if (proposal.pluginId === 'publisher-navigation') {
+        const selectedEntries = proposal.boundaries
+            .map((boundary) => boundary.titleSourceAnchorId ? anchors.tocEntries.get(boundary.titleSourceAnchorId) : undefined)
+            .filter((entry): entry is TocEntry => Boolean(entry));
+        return buildChaptersFromBoundaries(
+            buildBoundariesFromToc(selectedEntries, spine),
+            spine,
+            'toc',
+        );
+    }
+
+    if (proposal.pluginId === 'source-units' || proposal.boundaries.every((boundary) => !boundary.titleSourceAnchorId)) {
+        const boundaries: ChapterBoundary[] = proposal.boundaries.flatMap((boundary) => {
+            const sourceUnit = anchors.sourceUnits.get(boundary.sourceAnchorId);
+            if (!sourceUnit) return [];
+            return [{
+                index: sourceUnit.index,
+                title: sourceUnit.title || `Chapter ${sourceUnit.index + 1}`,
+                evidence: 'source-spine' as const,
+            }];
+        });
+        return buildChaptersFromBoundaries(boundaries, spine, 'spine');
+    }
+
+    const headingBoundaries = proposal.boundaries.flatMap((boundary) => {
+        const headingId = boundary.titleSourceAnchorId;
+        const heading = headingId ? anchors.headingBoundaries.get(headingId) : undefined;
+        return heading ? [heading] : [];
+    });
+    return buildChaptersFromBoundaries(headingBoundaries, spine, 'heading');
+};
+
 const normalizeArtifactLabel = (value: string): string => normalizeWhitespace(value)
     .toLowerCase()
     .replace(/[\s_-]+/g, ' ')
@@ -2175,6 +2301,36 @@ export const buildEpubStructurePlan = async (
         )) {
             rawChapters = headingFallback;
         }
+    }
+
+    const requestedStrategyId = options.structureStrategyId || 'auto-deterministic';
+    if (requestedStrategyId !== 'auto-deterministic') {
+        if (
+            (requestedStrategyId === 'document-headings' || requestedStrategyId === 'ai-assisted-candidates')
+            && !headingRecovery
+        ) {
+            headingRecovery = await buildHeadingChapters(loadDocument, spine);
+        }
+
+        const structureDiscoveryRegistry = options.structureDiscoveryRegistry || defaultStructureDiscoveryRegistry;
+        const anchors = await createStructureDiscoveryAnchors(
+            loadDocument,
+            spine,
+            tocEntries,
+            headingRecovery,
+            opfPath,
+            options,
+        );
+        const strategy = structureDiscoveryRegistry.resolve(anchors.document, requestedStrategyId);
+        const proposal = validateStructureProposal(
+            anchors.document,
+            await strategy.discover(anchors.document, { signal: new AbortController().signal }),
+        );
+        const discoveredChapters = buildChaptersFromStructureProposal(proposal, anchors, spine);
+        if (discoveredChapters.length === 0) {
+            throw new Error(`Structure strategy produced no usable boundaries: ${requestedStrategyId}`);
+        }
+        rawChapters = discoveredChapters;
     }
 
     const filtered = await filterNonReadingChapters(

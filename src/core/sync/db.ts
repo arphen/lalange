@@ -1,7 +1,18 @@
 import { createRxDatabase, addRxPlugin, type RxDatabase, type RxCollection, type RxStorage } from 'rxdb';
 import { RxDBMigrationSchemaPlugin } from 'rxdb/plugins/migration-schema';
 import { getRxStorageDexie } from 'rxdb/plugins/storage-dexie';
-import { bookSchema, chapterSchema, readingStateSchema, imageSchema, rawFileSchema } from './schema';
+import {
+    bookSchema,
+    chapterSchema,
+    readingStateSchema,
+    imageSchema,
+    rawFileSchema,
+    textIssueSchema,
+    contentRevisionSchema,
+    repairAnnotationSchema,
+    processingJobSchema,
+} from './schema';
+import type { TextIssueCandidate } from '../ingest/anomalyScanner';
 import type {
     BoundaryEvidence,
     ReformationReason,
@@ -117,6 +128,91 @@ export type TTSSettingsType = {
     speed: number;
 };
 
+export type RepairAction = 'keep' | 'replace' | 'delete' | 'merge' | 'split';
+
+export type RepairProposalType = {
+    candidateId: string;
+    action: RepairAction;
+    replacement?: string;
+    reasonCode: 'encoding-artifact' | 'ocr-substitution' | 'stray-page-marker' | 'broken-boundary' | 'punctuation-artifact' | 'consistent-book-form' | 'uncertain';
+};
+
+export type TextIssueDocType = TextIssueCandidate & {
+    state: 'open' | 'accepted' | 'kept-original' | 'rejected' | 'stale';
+    proposal?: RepairProposalType;
+    createdAt: number;
+    updatedAt: number;
+};
+
+export type ContentRevisionDocType = {
+    id: string;
+    bookId: string;
+    sourceUnitId: string;
+    parentRevisionId?: string;
+    sourceHash: string;
+    textHash: string;
+    pipelineVersion: string;
+    acceptedPatchIds: string[];
+    createdAt: number;
+    state: 'prepared' | 'active' | 'superseded';
+};
+
+export type RepairAnnotationDocType = {
+    id: string;
+    bookId: string;
+    sourceUnitId: string;
+    sourceRevisionId: string;
+    canonicalRevisionId: string;
+    sourceAnchor: {
+        startOffset: number;
+        endOffset: number;
+        startTokenId?: string;
+        endTokenId?: string;
+        contextHash: string;
+    };
+    canonicalAnchor: {
+        startOffset: number;
+        endOffset: number;
+        startTokenId?: string;
+        endTokenId?: string;
+        anchorHash: string;
+    };
+    originalText?: string;
+    replacementText?: string;
+    action: RepairAction;
+    detectorIds: string[];
+    detectorEvidence: Record<string, string | number | boolean>;
+    modelFingerprint?: string;
+    promptFingerprint?: string;
+    validatorFingerprint: string;
+    pipelineFingerprint: string;
+    proposalState: 'proposed' | 'accepted' | 'kept-original' | 'rejected' | 'superseded';
+    acceptedAt?: number;
+    acceptanceAction?: 'accept' | 'keep-original' | 'accept-all-safe';
+    renderRange: {
+        kind: 'text-range';
+        startOffset: number;
+        endOffset: number;
+        anchorHash: string;
+    };
+};
+
+export type ProcessingJobDocType = {
+    id: string;
+    dedupeKey: string;
+    feature: 'pacing' | 'repair' | 'structure' | 'summary' | 'tts-annotation';
+    bookId: string;
+    sourceUnitId?: string;
+    inputRevisionHash: string;
+    modelFingerprint: string;
+    pipelineVersion: string;
+    state: 'pending' | 'running' | 'blocked' | 'completed' | 'failed' | 'cancelled' | 'stale';
+    attemptCount: number;
+    checkpoint?: string;
+    createdAt: number;
+    updatedAt: number;
+};
+
 export type ReadingStateDocType = {
     bookId: string;
     currentChapterId?: string;
@@ -132,6 +228,10 @@ export type ChapterCollection = RxCollection<ChapterDocType>;
 export type ReadingStateCollection = RxCollection<ReadingStateDocType>;
 export type ImageCollection = RxCollection<ImageDocType>;
 export type RawFileCollection = RxCollection<RawFileDocType>;
+export type TextIssueCollection = RxCollection<TextIssueDocType>;
+export type ContentRevisionCollection = RxCollection<ContentRevisionDocType>;
+export type RepairAnnotationCollection = RxCollection<RepairAnnotationDocType>;
+export type ProcessingJobCollection = RxCollection<ProcessingJobDocType>;
 
 export type MyDatabaseCollections = {
     books: BookCollection;
@@ -139,6 +239,10 @@ export type MyDatabaseCollections = {
     reading_states: ReadingStateCollection;
     images: ImageCollection;
     raw_files: RawFileCollection;
+    text_issues: TextIssueCollection;
+    content_revisions: ContentRevisionCollection;
+    repair_annotations: RepairAnnotationCollection;
+    processing_jobs: ProcessingJobCollection;
 };
 
 export type MyDatabase = RxDatabase<MyDatabaseCollections>;
@@ -219,6 +323,18 @@ export const initDB = async (): Promise<MyDatabase> => {
             },
             raw_files: {
                 schema: rawFileSchema
+            },
+            text_issues: {
+                schema: textIssueSchema,
+            },
+            content_revisions: {
+                schema: contentRevisionSchema,
+            },
+            repair_annotations: {
+                schema: repairAnnotationSchema,
+            },
+            processing_jobs: {
+                schema: processingJobSchema,
             }
         });
 

@@ -2,11 +2,14 @@ import React, { useState, useEffect } from 'react';
 import { ScanLine } from 'lucide-react';
 import { initDB, type BookDocType, type MyDatabase } from '../../core/sync/db';
 import { initialIngest, processChaptersInBackground, stopProcessing, estimateBookDensity } from '../../core/ingest/pipeline';
+import { scanBookForAnomalies, scanLibraryForAnomalies } from '../../core/ingest/repair';
 import { decodeRawFilePayload, defaultIngestReaderRegistry } from '../../core/ingest/readers';
 import { useAIStore } from '../../core/store/ai';
 import { useSettingsStore } from '../../core/store/settings';
+import { isAdaptivePacingEnabled } from '../../core/ai/policy';
 import { BookCard } from './BookCard';
 import { ExchangeSheet } from '../Exchange/ExchangeSheet';
+import { RepairReviewPanel } from '../Repair/RepairReviewPanel';
 import { SeoHead } from '../SeoHead';
 import { getOpenGraphType, getPublicRoute } from '../../seo/publicRoutes';
 import { getBookOpenIssue, persistInitialIngest } from './archivePersistence';
@@ -86,6 +89,9 @@ export const Archive: React.FC<ArchiveProps> = ({ onOpenBook, onScanHandoff }) =
     const [status, setStatus] = useState('');
     const [exchangeOpen, setExchangeOpen] = useState(false);
     const [exchangeBookIds, setExchangeBookIds] = useState<string[]>([]);
+    const [scanningBookId, setScanningBookId] = useState<string | null>(null);
+    const [scanningLibrary, setScanningLibrary] = useState(false);
+    const [reviewBook, setReviewBook] = useState<BookDocType | null>(null);
     
     // Only subscribe to the specific AI state properties we need
     const aiIsLoading = useAIStore((s) => (
@@ -95,7 +101,7 @@ export const Archive: React.FC<ArchiveProps> = ({ onOpenBook, onScanHandoff }) =
     ));
     const aiProgress = useAIStore((s) => s.progress);
     const requestAISetup = useAIStore((s) => s.requestSetup);
-    const aiEnabled = useSettingsStore((s) => s.aiEnabled);
+    const adaptivePacingEnabled = useSettingsStore((s) => isAdaptivePacingEnabled(s));
 
     useEffect(() => {
         let sub: { unsubscribe: () => void };
@@ -188,7 +194,7 @@ export const Archive: React.FC<ArchiveProps> = ({ onOpenBook, onScanHandoff }) =
 
     const handleEstimateDensity = async (e: React.MouseEvent, bookId: string) => {
         e.stopPropagation();
-        if (!aiEnabled) {
+        if (!adaptivePacingEnabled) {
             if (!aiIsLoading) requestAISetup('pacing');
             return;
         }
@@ -197,10 +203,44 @@ export const Archive: React.FC<ArchiveProps> = ({ onOpenBook, onScanHandoff }) =
         }
     };
 
+    const handleScanBook = async (e: React.MouseEvent, bookId: string) => {
+        e.stopPropagation();
+        if (scanningLibrary || scanningBookId) return;
+        setScanningBookId(bookId);
+        setStatus('Scanning book for text anomalies...');
+        try {
+            const report = await scanBookForAnomalies(bookId);
+            setStatus(`Scan complete: ${report.candidatesFound} anchored issue${report.candidatesFound === 1 ? '' : 's'} found.`);
+            const scannedBook = books.find((book) => book.id === bookId);
+            if (scannedBook) setReviewBook(scannedBook);
+        } catch (error) {
+            console.error(error);
+            setStatus('Book scan failed.');
+        } finally {
+            setScanningBookId(null);
+        }
+    };
+
+    const handleScanLibrary = async () => {
+        if (books.length === 0 || scanningLibrary || scanningBookId) return;
+        setScanningLibrary(true);
+        setStatus('Scanning library for text anomalies...');
+        try {
+            const report = await scanLibraryForAnomalies();
+            setStatus(`Library scan complete: ${report.candidatesFound} anchored issue${report.candidatesFound === 1 ? '' : 's'} found.`);
+        } catch (error) {
+            console.error(error);
+            setStatus('Library scan failed.');
+        } finally {
+            setScanningLibrary(false);
+        }
+    };
+
     const handleDelete = async (e: React.MouseEvent, bookId: string) => {
         e.stopPropagation();
         if (!confirm('Are you sure you want to delete this book?')) return;
 
+        stopProcessing(bookId);
         const db = await initDB();
         await db.books.findOne(bookId).remove();
 
@@ -216,6 +256,19 @@ export const Archive: React.FC<ArchiveProps> = ({ onOpenBook, onScanHandoff }) =
 
         const readingState = await db.reading_states.findOne({ selector: { bookId } }).exec();
         if (readingState) await readingState.remove();
+
+        const textIssues = await db.text_issues?.find({ selector: { bookId } }).exec() || [];
+        await Promise.all(textIssues.map((issue) => issue.remove()));
+
+        const revisions = await db.content_revisions?.find({ selector: { bookId } }).exec() || [];
+        await Promise.all(revisions.map((revision) => revision.remove()));
+
+        const annotations = await db.repair_annotations?.find({ selector: { bookId } }).exec() || [];
+        await Promise.all(annotations.map((annotation) => annotation.remove()));
+
+        const processingJobs = await db.processing_jobs?.find({ selector: { bookId } }).exec() || [];
+        await Promise.all(processingJobs.map((job) => job.remove()));
+        if (reviewBook?.id === bookId) setReviewBook(null);
     };
 
     const handleDragOver = (e: React.DragEvent) => {
@@ -297,6 +350,18 @@ export const Archive: React.FC<ArchiveProps> = ({ onOpenBook, onScanHandoff }) =
                                     EXCHANGE
                                 </button>
                                 <button
+                                    type="button"
+                                    onClick={handleScanLibrary}
+                                    disabled={books.length === 0 || scanningLibrary || scanningBookId !== null}
+                                    className="archive-action-btn"
+                                    aria-label="Scan library for text anomalies"
+                                >
+                                    <span className="flex items-center gap-2">
+                                        <ScanLine className="h-4 w-4" aria-hidden />
+                                        {scanningLibrary ? 'SCANNING...' : 'SCAN LIBRARY'}
+                                    </span>
+                                </button>
+                                <button
                                     onClick={handleLoadDemo}
                                     disabled={loading}
                                     data-testid="archive-load-demo"
@@ -345,6 +410,7 @@ export const Archive: React.FC<ArchiveProps> = ({ onOpenBook, onScanHandoff }) =
                                     onDelete={(e) => handleDelete(e, book.id)}
                                     onStop={(e) => handleStopProcessing(e, book.id)}
                                     onEstimateDensity={(e) => handleEstimateDensity(e, book.id)}
+                                    onScan={(e) => handleScanBook(e, book.id)}
                                     onShare={(e) => handleShare(e, book)}
                                 />
                             ))}
@@ -362,6 +428,14 @@ export const Archive: React.FC<ArchiveProps> = ({ onOpenBook, onScanHandoff }) =
                 initialIntent="give"
                 libraryComplete
             />
+
+            {reviewBook && (
+                <RepairReviewPanel
+                    bookId={reviewBook.id}
+                    bookTitle={reviewBook.title}
+                    onClose={() => setReviewBook(null)}
+                />
+            )}
         </div>
     );
 };

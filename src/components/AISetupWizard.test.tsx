@@ -44,13 +44,16 @@ vi.mock('../core/ai/webllm', () => ({
         WEBGPU_LIMIT_UNSUPPORTED: 'WEBGPU_LIMIT_UNSUPPORTED',
         WEBGPU_UNAVAILABLE: 'WEBGPU_UNAVAILABLE',
     },
+    isModelCached: vi.fn().mockResolvedValue(false),
+    getEngine: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock('../core/ai/modelManifest', () => ({
     MODEL_INFO: {
         tiny: { name: 'Tiny', size: '700 MB', description: 'Local AI' },
         qwen: { name: 'Qwen', size: '980 MB', description: 'Larger local AI' },
     },
     PACING_MODEL_TIER: 'tiny',
-    isModelCached: vi.fn().mockResolvedValue(false),
-    getEngine: vi.fn().mockResolvedValue(undefined),
 }));
 
 describe('AISetupWizard', () => {
@@ -111,7 +114,7 @@ describe('AISetupWizard', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Download & enable summaries' }));
 
         await waitFor(() => expect(mocks.setSummariesEnabled).toHaveBeenCalledWith(true));
-        expect(mocks.setAiEnabled).toHaveBeenCalledWith(true);
+        expect(mocks.setAiEnabled).not.toHaveBeenCalled();
     });
 
     it('shows a compatibility message when WebGPU limits are too low', async () => {

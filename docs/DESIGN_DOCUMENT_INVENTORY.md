@@ -16,6 +16,7 @@ Reviewed 2026-08-23 against `main` at `cfa2c76` and the current source tree. Thi
 
 ## Future Architecture
 
+- [`LOCAL_AI_PROCESSING_CORE_PLAN.md`](LOCAL_AI_PROCESSING_CORE_PLAN.md) - Keep as the canonical local-AI architecture. It defines default-off selective text repair, prompt-logprob pacing compatibility, one model broker, versioned artifacts, structure-discovery plugins, lifecycle cleanup, UI warnings, and phased acceptance. The current broad AI switch, mutable global engine, randomized logprob fallback, and in-memory scheduler do not yet satisfy it.
 - [`PRE_RENDERED_AUDIOBOOK_IMPLEMENTATION_PLAN.md`](PRE_RENDERED_AUDIOBOOK_IMPLEMENTATION_PLAN.md) - Keep as a future product and implementation proposal. There is currently no `src/core/audio-render/` runtime, artifact schema, OPFS audio store, or rendered playback path.
 - [`CONTINUOUS_TTS_PACING_AND_WPM_PLAN.md`](CONTINUOUS_TTS_PACING_AND_WPM_PLAN.md) - Keep as the active future plan for continuity-aware TTS pacing and honest WPM controls. The current player exposes queue inventory, but not the pacing controller, buffered-audio telemetry, or delivered-WPM contract described here.
 - [`RENDERING_SERVICES_ARCHITECTURE_PERFORMANCE_PLAN.md`](RENDERING_SERVICES_ARCHITECTURE_PERFORMANCE_PLAN.md) - Keep and update as the broad reader architecture follow-up. The session controller, context projector, reader benchmark, structured display projector, and operation progress primitive have landed; the full ownership refactor and measurements have not.

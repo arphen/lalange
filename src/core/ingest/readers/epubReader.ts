@@ -8,6 +8,7 @@ import type {
 import { stripFileExtension } from './utils';
 import type { IngestReaderPlugin, ReaderPreparedBook, ReaderResolvedChapter } from './types';
 import { useSettingsStore } from '../../store/settings';
+import type { StructureDiscoveryRegistry } from '../structureStrategies';
 
 const EPUB_MIME_TYPES = ['application/epub+zip'];
 const EPUB_EXTENSIONS = ['epub'];
@@ -15,6 +16,7 @@ const EPUB_EXTENSIONS = ['epub'];
 export interface EpubReaderDependencies {
     loadZip: (input: File | Uint8Array) => Promise<JSZip>;
     buildEpubStructurePlan: (zip: JSZip, options?: EpubStructureOptions) => Promise<EpubStructurePlan>;
+    structureDiscoveryRegistry?: StructureDiscoveryRegistry;
     loadPlannedChapterSources: (
         zip: JSZip,
         slices: ChapterSlice[],
@@ -51,8 +53,13 @@ export class EpubIngestReader implements IngestReaderPlugin {
     public async prepareInitial(file: File, onProgress?: (message: string) => void): Promise<ReaderPreparedBook> {
         onProgress?.('Analyzing EPUB structure...');
         const zip = await this.dependencies.loadZip(file);
-        const referenceHandling = useSettingsStore.getState().footnoteSuppressor ? 'suppress' : 'compact';
-        const structure = await this.dependencies.buildEpubStructurePlan(zip, { referenceHandling });
+        const settings = useSettingsStore.getState();
+        const referenceHandling = settings.footnoteSuppressor ? 'suppress' : 'compact';
+        const structure = await this.dependencies.buildEpubStructurePlan(zip, {
+            referenceHandling,
+            structureStrategyId: settings.structureStrategyId,
+            structureDiscoveryRegistry: this.dependencies.structureDiscoveryRegistry,
+        });
 
         onProgress?.('Extracting images...');
         const images: ReaderPreparedBook['images'] = [];
@@ -108,8 +115,13 @@ export class EpubIngestReader implements IngestReaderPlugin {
 
     public async loadChapters(rawData: Uint8Array): Promise<ReaderResolvedChapter[]> {
         const zip = await this.dependencies.loadZip(rawData);
-        const referenceHandling = useSettingsStore.getState().footnoteSuppressor ? 'suppress' : 'compact';
-        const structure = await this.dependencies.buildEpubStructurePlan(zip, { referenceHandling });
+        const settings = useSettingsStore.getState();
+        const referenceHandling = settings.footnoteSuppressor ? 'suppress' : 'compact';
+        const structure = await this.dependencies.buildEpubStructurePlan(zip, {
+            referenceHandling,
+            structureStrategyId: settings.structureStrategyId,
+            structureDiscoveryRegistry: this.dependencies.structureDiscoveryRegistry,
+        });
 
         const chapters: ReaderResolvedChapter[] = [];
         for (const chapter of structure.chapters) {

@@ -99,6 +99,7 @@ export function GlobalNavSidebar({ view, currentBook, onNavigate, onScanHandoff 
         {view === 'settings' && (
           <div className="flex flex-col gap-1 mb-2 animate-in slide-in-from-left-2 duration-200">
               <SettingsSubItem label="Pacing Engine" path="/settings/pacing" />
+              <SettingsSubItem label="Text Repair" path="/settings/repair" />
               <SettingsSubItem label="Summarizer" path="/settings/summarizer" />
               <SettingsSubItem label="Librarian" path="/settings/librarian" />
               <SettingsSubItem label="Text to Speech" path="/settings/tts" />

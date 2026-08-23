@@ -6,6 +6,7 @@ export const PWA_PRECACHE_GLOB_IGNORES = [
   '**/local_models/**',
   '**/*.wasm',
   '**/assets/web-llm-*.js',
+  '**/assets/localModel.worker-*.js',
   '**/assets/kokoro-*.js',
   '**/assets/transformers.web-*.js',
   // Piper (Slovenian TTS) and its ONNX Runtime, pulled in only on first use.

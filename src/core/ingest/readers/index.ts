@@ -7,10 +7,12 @@ import { PdfIngestReader, type PdfReaderDependencies } from './pdfReader';
 import { parsePdfWithPdfJs } from './pdfjsAdapter';
 import { PlainTextIngestReader } from './plainTextReader';
 import { IngestReaderRegistry } from './registry';
+import { defaultStructureDiscoveryRegistry, type StructureDiscoveryRegistry } from '../structureStrategies';
 
 export interface DefaultReaderDependencies {
     loadZip: (input: File | Uint8Array) => Promise<JSZip>;
     buildEpubStructurePlan: typeof buildEpubStructurePlan;
+    structureDiscoveryRegistry: StructureDiscoveryRegistry;
     loadPlannedChapterSources: typeof loadPlannedChapterSources;
     decodeText: (data: Uint8Array) => string;
     parsePdf: PdfReaderDependencies['parsePdf'];
@@ -22,6 +24,7 @@ export const createDefaultIngestReaderRegistry = (
     const resolvedDependencies: DefaultReaderDependencies = {
         loadZip: dependencies.loadZip || ((input) => JSZip.loadAsync(input)),
         buildEpubStructurePlan: dependencies.buildEpubStructurePlan || buildEpubStructurePlan,
+        structureDiscoveryRegistry: dependencies.structureDiscoveryRegistry || defaultStructureDiscoveryRegistry,
         loadPlannedChapterSources: dependencies.loadPlannedChapterSources || loadPlannedChapterSources,
         decodeText: dependencies.decodeText || decodeUtf8,
         parsePdf: dependencies.parsePdf || parsePdfWithPdfJs,
@@ -31,6 +34,7 @@ export const createDefaultIngestReaderRegistry = (
         new EpubIngestReader({
             loadZip: resolvedDependencies.loadZip,
             buildEpubStructurePlan: resolvedDependencies.buildEpubStructurePlan,
+            structureDiscoveryRegistry: resolvedDependencies.structureDiscoveryRegistry,
             loadPlannedChapterSources: resolvedDependencies.loadPlannedChapterSources,
         }),
         new PdfIngestReader({ parsePdf: resolvedDependencies.parsePdf }),
@@ -52,6 +56,24 @@ export { PlainTextIngestReader } from './plainTextReader';
 export { MarkdownIngestReader } from './markdownReader';
 export { encodeRawFilePayload, decodeRawFilePayload } from './rawFilePayload';
 export { readFileAsUint8Array } from './utils';
+export {
+    StructureDiscoveryRegistry,
+    createAISelectedStructureStrategy,
+    defaultStructureDiscoveryRegistry,
+    documentHeadingsStrategy,
+    publisherNavigationStrategy,
+    sourceUnitsStrategy,
+    validateStructureProposal,
+} from '../structureStrategies';
+export type {
+    StructureBoundary,
+    StructureDiscoveryPlugin,
+    StructureHeadingCandidate,
+    StructureNavigationEntry,
+    StructureProposal,
+    StructureSourceDocument,
+    StructureSourceUnit,
+} from '../structureStrategies';
 export type {
     IngestReaderPlugin,
     ReaderPreparedBook,

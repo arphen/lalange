@@ -31,16 +31,89 @@ describe('Sidebar V2', () => {
         vi.clearAllMocks();
     });
 
-    it('renders a flat outline without implementation or progress noise', () => {
+    it('renders chapter sections and reading progress in the outline', () => {
         render(<Sidebar {...defaultProps} structureMode="generated" />);
 
         expect(screen.getByRole('heading', { name: 'Contents' })).toBeInTheDocument();
         expect(screen.getByTestId('sidebar-chapter-button')).toHaveTextContent('Chapter 1');
+        expect(screen.getByTestId('subchapter-btn-0')).toHaveTextContent('Hello world this is a...');
+        expect(screen.getByTestId('subchapter-btn-1')).toHaveTextContent('test chapter with many words...');
+        expect(screen.getByRole('button', { name: 'Collapse sections for Chapter 1' })).toBeInTheDocument();
+        expect(screen.getByTestId('book-progress')).toHaveAttribute('aria-valuenow', '0');
+        expect(screen.getByTestId('chapter-progress-chapter-1')).toHaveAttribute('aria-valuenow', '0');
+        expect(screen.getByText('Book progress')).toBeInTheDocument();
+        expect(screen.queryByText(/page-based structure|Jump within this chapter/i)).not.toBeInTheDocument();
+    });
+
+    it('keeps section disclosure separate from chapter navigation', () => {
+        const onLoadChapter = vi.fn();
+        render(<Sidebar {...defaultProps} onLoadChapter={onLoadChapter} />);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Collapse sections for Chapter 1' }));
+
+        expect(onLoadChapter).not.toHaveBeenCalled();
         expect(screen.queryByTestId('subchapter-btn-0')).not.toBeInTheDocument();
-        expect(screen.queryByRole('button', { name: /Expand|Collapse sections/i })).not.toBeInTheDocument();
-        expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
-        expect(screen.queryByText(/page-based structure|reading sections|Jump within this chapter/i)).not.toBeInTheDocument();
-        expect(screen.queryByText(/Reading index|Book progress/i)).not.toBeInTheDocument();
+
+        fireEvent.click(screen.getByRole('button', { name: 'Expand sections for Chapter 1' }));
+        expect(screen.getByTestId('subchapter-btn-0')).toBeInTheDocument();
+    });
+
+    it('loads a visible section and reports book, chapter, and section progress', () => {
+        const onLoadChapter = vi.fn();
+        const secondChapter = createMockChapter({ id: 'chapter-2', index: 1, title: 'Chapter 2' });
+        const firstChapter = createMockChapter();
+        render(
+            <Sidebar
+                {...defaultProps}
+                chapters={[firstChapter, secondChapter]}
+                currentChapter={firstChapter}
+                currentWordIndex={7}
+                onLoadChapter={onLoadChapter}
+            />,
+        );
+
+        expect(screen.getByTestId('book-progress')).toHaveAttribute('aria-valuenow', '35');
+        expect(screen.getByTestId('chapter-progress-chapter-1')).toHaveAttribute('aria-valuenow', '70');
+        expect(screen.getByTestId('chapter-progress-chapter-2')).toHaveAttribute('aria-valuenow', '0');
+        expect(screen.getByTestId('subchapter-btn-0')).toHaveTextContent('100%');
+        expect(screen.getByTestId('subchapter-btn-1')).toHaveTextContent('40%');
+
+        fireEvent.click(screen.getByTestId('subchapter-btn-1'));
+        expect(onLoadChapter).toHaveBeenCalledWith('chapter-1', 5);
+    });
+
+    it('keeps processing and sectionless chapters readable in the outline', () => {
+        const onLoadChapter = vi.fn();
+        const processingChapter = createMockChapter({
+            id: 'processing-chapter',
+            title: 'Processing chapter',
+            status: 'processing',
+            content: ['Partial', 'text'],
+            subchapters: undefined,
+        });
+        const emptyChapter = createMockChapter({
+            id: 'empty-chapter',
+            index: 1,
+            title: 'Empty chapter',
+            status: 'pending',
+            content: [],
+            subchapters: undefined,
+        });
+        render(
+            <Sidebar
+                {...defaultProps}
+                chapters={[processingChapter, emptyChapter]}
+                onLoadChapter={onLoadChapter}
+            />,
+        );
+
+        expect(screen.getAllByTestId('sidebar-chapter-button')[0]).toHaveTextContent(/~< 1 min/);
+        expect(screen.queryByRole('button', { name: /sections for Processing chapter/i })).not.toBeInTheDocument();
+        expect(screen.getByTestId('chapter-progress-processing-chapter')).toHaveAttribute('aria-valuenow', '0');
+        expect(screen.getAllByTestId('sidebar-chapter-button')[1]).toBeDisabled();
+
+        fireEvent.click(screen.getAllByTestId('sidebar-chapter-button')[0]);
+        expect(onLoadChapter).toHaveBeenCalledWith('processing-chapter');
     });
 
     it('navigates immediately from an inactive chapter row', () => {
