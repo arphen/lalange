@@ -1,15 +1,38 @@
 import { act, fireEvent, render, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TTSPlayer } from './TTSPlayer';
-import { initTTS, splitIntoSentences, streamSpeech } from '../../core/tts';
+import {
+    initTTS,
+    isTTSModelCached,
+    predownloadPiperVoice,
+    splitIntoSentences,
+    streamSpeech,
+} from '../../core/tts';
 import { ttsPlayer } from '../../core/tts/player';
 
 const mocks = vi.hoisted(() => ({
     voice: 'af_heart',
     backendPreference: 'auto' as 'auto' | 'wasm' | 'webgpu',
     bufferAhead: 5,
+    speed: 1,
+    continuityMode: 'continuous' as 'continuous' | 'prefer-speed',
+    pacingSnapshot: {
+        preferredSpeed: 1,
+        effectiveSpeed: 1,
+        sustainableSpeed: 1,
+        generationRtf: null,
+        paceState: 'measuring' as const,
+        continuityMode: 'continuous' as const,
+        hasStableMeasurement: false,
+        deliveredWpm: null,
+        reason: 'measuring' as const,
+    },
     setSpeed: vi.fn(),
+    setContinuityMode: vi.fn(),
+    setPacingSnapshot: vi.fn(),
     setVoice: vi.fn(),
+    setActiveVoiceOverride: vi.fn(),
+    activeVoiceOverride: null as string | null,
     setGenerating: vi.fn(),
     setError: vi.fn(),
     setPlaybackState: vi.fn(),
@@ -29,15 +52,21 @@ vi.mock('../../core/store/tts', () => ({
             loadProgress: 0,
             loadStatus: '',
             volume: 1,
-            speed: 1,
+            speed: mocks.speed,
             voice: mocks.voice,
+            activeVoiceOverride: mocks.activeVoiceOverride,
             backendPreference: mocks.backendPreference,
             bufferAhead: mocks.bufferAhead,
+            continuityMode: mocks.continuityMode,
+            pacingSnapshot: mocks.pacingSnapshot,
             currentWordIndex: mocks.ttsWordIndex,
             duration: 0,
             setVolume: vi.fn(),
             setSpeed: mocks.setSpeed,
+            setContinuityMode: mocks.setContinuityMode,
+            setPacingSnapshot: mocks.setPacingSnapshot,
             setVoice: mocks.setVoice,
+            setActiveVoiceOverride: mocks.setActiveVoiceOverride,
         }),
         {
             getState: () => ({
@@ -61,6 +90,7 @@ const VOICES = vi.hoisted(() => [
     { id: 'af_heart', name: 'Heart', engine: 'kokoro', gender: 'female', quality: 'A', language: 'en-US', languageLabel: 'American English', flag: '🇺🇸' },
     { id: 'am_adam', name: 'Adam', engine: 'kokoro', gender: 'male', quality: 'A', language: 'en-US', languageLabel: 'American English', flag: '🇺🇸' },
     { id: 'sl_SI-artur-medium', name: 'Artur', engine: 'piper', gender: 'male', quality: 'B', language: 'sl-SI', languageLabel: 'Slovenian', flag: '🇸🇮' },
+    { id: 'en_US-lessac-medium', name: 'Lessac', engine: 'piper', gender: 'female', quality: 'B', language: 'en-US', languageLabel: 'American English', flag: '🇺🇸', downloadMB: 63 },
 ]);
 
 vi.mock('../../core/tts', () => ({
@@ -70,6 +100,10 @@ vi.mock('../../core/tts', () => ({
     splitIntoSentences: vi.fn(() => mocks.sentences),
     listVoices: vi.fn(() => VOICES),
     getVoice: vi.fn((voiceId: string) => VOICES.find((voice) => voice.id === voiceId)),
+    getFallbackVoice: vi.fn((voiceId: string) => voiceId === 'af_heart' ? VOICES[3] : undefined),
+    getVoiceEngine: vi.fn((voiceId: string) => VOICES.find((voice) => voice.id === voiceId)?.engine ?? 'kokoro'),
+    isTTSModelCached: vi.fn(() => Promise.resolve(false)),
+    predownloadPiperVoice: vi.fn(() => Promise.resolve()),
     resolveVoiceId: vi.fn((voice: string) => VOICES.some((entry) => entry.id === voice) ? voice : 'af_heart'),
 }));
 
@@ -78,6 +112,8 @@ vi.mock('../../core/tts/player', () => ({
         dispose: vi.fn(),
         stop: vi.fn(),
         clearQueue: vi.fn(),
+        discardQueuedAudioAfter: vi.fn(),
+        getState: vi.fn(() => ({ isPlaying: true, currentSentenceIndex: 0, queueSize: 3 })),
         getQueueSize: vi.fn(() => 0),
         getBufferedAheadCount: vi.fn(() => 0),
         checkBuffer: vi.fn(),
@@ -86,6 +122,8 @@ vi.mock('../../core/tts/player', () => ({
         pause: vi.fn(),
         play: vi.fn(),
         hasAudioForSentence: vi.fn(() => false),
+        getAudibleTime: vi.fn(() => 0),
+        resetTelemetry: vi.fn(),
         armMediaSession: vi.fn(() => Promise.resolve()),
     },
 }));
@@ -95,11 +133,172 @@ describe('TTSPlayer voice changes', () => {
         mocks.voice = 'af_heart';
         mocks.backendPreference = 'auto';
         mocks.bufferAhead = 5;
+        mocks.speed = 1;
+        mocks.activeVoiceOverride = null;
         mocks.playbackState = 'idle';
         mocks.ttsWordIndex = 0;
         mocks.sentences = [{ index: 0, text: 'Hello world.', startWordIndex: 0, endWordIndex: 1 }];
         mocks.setSpeed.mockReset();
         vi.clearAllMocks();
+        mocks.setActiveVoiceOverride.mockImplementation((override: string | null) => {
+            mocks.activeVoiceOverride = override;
+        });
+    });
+
+    const renderLimitedPlayback = async () => {
+        vi.mocked(streamSpeech).mockReturnValue((async function* () {})());
+        const rendered = render(<TTSPlayer words={['Hello', 'world.']} currentWordIndex={0} />);
+        fireEvent.click(rendered.container.querySelector('button')!);
+
+        await waitFor(() => expect(ttsPlayer.play).toHaveBeenCalled());
+        await waitFor(() => expect(isTTSModelCached).toHaveBeenCalledWith('en_US-lessac-medium'));
+        await act(async () => {
+            await Promise.resolve();
+        });
+        const playerOptions = vi.mocked(ttsPlayer.setOptions).mock.calls.at(-1)?.[0];
+        const generationOptions = vi.mocked(streamSpeech).mock.calls.at(-1)?.[1];
+        act(() => {
+            playerOptions?.onBufferSnapshot?.({
+                bufferedAudioSeconds: 1,
+                isShrinking: true,
+                nextAudioReady: false,
+                deliveredWpm: null,
+            });
+            for (let sampleIndex = 0; sampleIndex < 5; sampleIndex++) {
+                generationOptions?.onGenerationSample?.({ generationSeconds: 8, audioSeconds: 4 });
+            }
+        });
+
+        return rendered;
+    };
+
+    it('shows a fallback recommendation only after the device-limit thresholds are met', async () => {
+        const { getByTestId } = await renderLimitedPlayback();
+
+        await waitFor(() => expect(getByTestId('tts-fallback-recommendation')).toBeInTheDocument());
+        expect(getByTestId('tts-fallback-recommendation')).toHaveTextContent(
+            'A lighter local voice may keep up better.',
+        );
+    });
+
+    it('requires explicit download consent and does not activate after predownload', async () => {
+        vi.mocked(isTTSModelCached).mockResolvedValue(false);
+        const { getByRole } = await renderLimitedPlayback();
+
+        const downloadButton = await waitFor(() => getByRole('button', {
+            name: 'Download lighter voice - 63 MB',
+        }));
+        expect(initTTS).toHaveBeenCalledWith('af_heart', undefined, expect.any(Function));
+
+        fireEvent.click(downloadButton);
+
+        await waitFor(() => expect(predownloadPiperVoice).toHaveBeenCalledWith(
+            'en_US-lessac-medium',
+            expect.any(Function),
+        ));
+        expect(initTTS).not.toHaveBeenCalledWith(
+            'en_US-lessac-medium',
+            expect.anything(),
+            expect.any(Function),
+        );
+        expect(mocks.setActiveVoiceOverride).not.toHaveBeenCalled();
+        expect(mocks.setVoice).not.toHaveBeenCalled();
+    });
+
+    it('activates a cached fallback only after the user chooses to try it', async () => {
+        vi.mocked(isTTSModelCached).mockResolvedValue(true);
+        const { getByRole } = await renderLimitedPlayback();
+
+        const tryButton = await waitFor(() => getByRole('button', { name: 'Try lighter voice' }));
+        expect(initTTS).toHaveBeenCalledWith('af_heart', undefined, expect.any(Function));
+
+        fireEvent.click(tryButton);
+
+        await waitFor(() => expect(initTTS).toHaveBeenCalledWith(
+            'en_US-lessac-medium',
+            undefined,
+            expect.any(Function),
+        ));
+        expect(mocks.setActiveVoiceOverride).toHaveBeenCalledWith('en_US-lessac-medium');
+        expect(mocks.setVoice).not.toHaveBeenCalled();
+    });
+
+    it('offers retry after a failed fallback download without switching voices', async () => {
+        vi.mocked(isTTSModelCached).mockResolvedValue(false);
+        vi.mocked(predownloadPiperVoice)
+            .mockRejectedValueOnce(new Error('Network unavailable'))
+            .mockResolvedValueOnce(undefined);
+        const { getByRole, getByTestId } = await renderLimitedPlayback();
+
+        fireEvent.click(await waitFor(() => getByRole('button', {
+            name: 'Download lighter voice - 63 MB',
+        })));
+        const retryButton = await waitFor(() => getByRole('button', {
+            name: 'Retry download - 63 MB',
+        }));
+        expect(getByTestId('tts-fallback-recommendation')).toHaveTextContent('Network unavailable');
+
+        fireEvent.click(retryButton);
+
+        await waitFor(() => expect(predownloadPiperVoice).toHaveBeenCalledTimes(2));
+        expect(mocks.setActiveVoiceOverride).not.toHaveBeenCalled();
+    });
+
+    it('warns when a fallback download makes no progress for thirty seconds', async () => {
+        vi.mocked(isTTSModelCached).mockResolvedValue(false);
+        let finishDownload: (() => void) | undefined;
+        vi.mocked(predownloadPiperVoice).mockImplementation(() => new Promise<void>((resolve) => {
+            finishDownload = resolve;
+        }));
+        const { getByRole, getByTestId } = await renderLimitedPlayback();
+
+        vi.useFakeTimers();
+        try {
+            fireEvent.click(getByRole('button', { name: 'Download lighter voice - 63 MB' }));
+            expect(predownloadPiperVoice).toHaveBeenCalledWith(
+                'en_US-lessac-medium',
+                expect.any(Function),
+            );
+
+            act(() => {
+                vi.advanceTimersByTime(30_000);
+            });
+
+            expect(getByTestId('tts-fallback-recommendation')).toHaveTextContent(
+                'Download is taking longer than expected',
+            );
+            finishDownload?.();
+            await act(async () => {
+                await Promise.resolve();
+            });
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('dismisses the recommendation while preserving the preferred voice', async () => {
+        const { getByRole, queryByTestId } = await renderLimitedPlayback();
+
+        fireEvent.click(await waitFor(() => getByRole('button', { name: 'Keep Heart' })));
+
+        await waitFor(() => expect(queryByTestId('tts-fallback-recommendation')).not.toBeInTheDocument());
+        expect(mocks.setVoice).not.toHaveBeenCalled();
+        expect(mocks.setActiveVoiceOverride).not.toHaveBeenCalled();
+    });
+
+    it('returns from an active fallback without changing the preferred voice', async () => {
+        mocks.activeVoiceOverride = 'en_US-lessac-medium';
+        const { getByRole } = render(<TTSPlayer words={['Hello', 'world.']} currentWordIndex={0} />);
+
+        fireEvent.click(getByRole('button', { name: 'Return to Heart' }));
+
+        await waitFor(() => expect(initTTS).toHaveBeenCalledWith(
+            'af_heart',
+            undefined,
+            expect.any(Function),
+        ));
+        expect(mocks.setActiveVoiceOverride).toHaveBeenCalledWith(null);
+        expect(mocks.setVoice).not.toHaveBeenCalled();
     });
 
     it('initializes the fp32-only TTS runtime for the selected voice', async () => {
@@ -285,6 +484,31 @@ describe('TTSPlayer voice changes', () => {
                 mocks.sentences.slice(0, 6),
                 expect.any(Object),
             );
+        });
+    });
+
+    it('replaces farther-ahead audio when speed changes during playback', async () => {
+        mocks.sentences = Array.from({ length: 4 }, (_, index) => ({
+            index,
+            text: `Sentence ${index}.`,
+            startWordIndex: index,
+            endWordIndex: index,
+        }));
+        vi.mocked(streamSpeech).mockReturnValue((async function* () {})());
+
+        const { container, rerender } = render(
+            <TTSPlayer words={['chapter']} currentWordIndex={0} />,
+        );
+        fireEvent.click(container.querySelector('button')!);
+        await waitFor(() => expect(streamSpeech).toHaveBeenCalledTimes(1));
+
+        mocks.playbackState = 'playing';
+        mocks.speed = 1.2;
+        rerender(<TTSPlayer words={['chapter']} currentWordIndex={0} />);
+
+        await waitFor(() => {
+            expect(ttsPlayer.discardQueuedAudioAfter).toHaveBeenCalledWith(1);
+            expect(streamSpeech).toHaveBeenCalledTimes(2);
         });
     });
 

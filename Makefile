@@ -1,6 +1,6 @@
 # Makefile for XYZ Setup
 
-.PHONY: setup install-deps install-ollama start-ollama pull-model dev build run test-ollama ollama-test
+.PHONY: setup install-deps install-ollama start-ollama pull-model dev stop build run test-ollama ollama-test
 
 # Detect OS!
 OS := $(shell uname -s)
@@ -63,6 +63,15 @@ ollama-test: test-ollama
 dev: install-deps
 	@echo "Starting local Vite development server (HTTP)..."
 	@VITE_HTTPS=0 npm run dev
+
+stop:
+	@pids="$$(pgrep -f "$(CURDIR)/node_modules/.bin/vite" || true)"; \
+	if [ -z "$$pids" ]; then \
+		echo "No Vite server running for this checkout."; \
+	else \
+		echo "Stopping Vite server(s): $$pids"; \
+		kill $$pids 2>/dev/null || true; \
+	fi
 
 build: install-deps
 	@echo "Building production bundle..."

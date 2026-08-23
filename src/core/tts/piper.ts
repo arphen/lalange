@@ -38,6 +38,10 @@ export interface PiperVoiceInfo {
     id: string;
     name: string;
     gender: 'female' | 'male';
+    language: 'en-US' | 'en-GB' | 'sl-SI';
+    languageLabel: string;
+    flag: string;
+    quality: 'low' | 'medium';
     /** Approximate model download size, for the settings UI */
     downloadMB: number;
     description?: string;
@@ -48,8 +52,56 @@ export const PIPER_VOICES: PiperVoiceInfo[] = [
         id: 'sl_SI-artur-medium',
         name: 'Artur',
         gender: 'male',
+        language: 'sl-SI',
+        languageLabel: 'Slovenian',
+        flag: '🇸🇮',
+        quality: 'medium',
         downloadMB: 63,
         description: 'Slovenian, medium quality',
+    },
+    {
+        id: 'en_US-amy-low',
+        name: 'Amy',
+        gender: 'female',
+        language: 'en-US',
+        languageLabel: 'American English',
+        flag: '🇺🇸',
+        quality: 'low',
+        downloadMB: 63,
+        description: 'Lighter American English voice',
+    },
+    {
+        id: 'en_US-danny-low',
+        name: 'Danny',
+        gender: 'male',
+        language: 'en-US',
+        languageLabel: 'American English',
+        flag: '🇺🇸',
+        quality: 'low',
+        downloadMB: 63,
+        description: 'Lighter American English voice',
+    },
+    {
+        id: 'en_GB-southern_english_female-low',
+        name: 'Southern English',
+        gender: 'female',
+        language: 'en-GB',
+        languageLabel: 'British English',
+        flag: '🇬🇧',
+        quality: 'low',
+        downloadMB: 63,
+        description: 'Lighter British English voice',
+    },
+    {
+        id: 'en_GB-alan-low',
+        name: 'Alan',
+        gender: 'male',
+        language: 'en-GB',
+        languageLabel: 'British English',
+        flag: '🇬🇧',
+        quality: 'low',
+        downloadMB: 63,
+        description: 'Lighter British English voice',
     },
 ];
 
@@ -66,12 +118,47 @@ let initPromise: Promise<void> | null = null;
 let initVoiceId: string | null = null;
 
 let piperModule: PiperModule | null = null;
+const predownloadPromises = new Map<string, Promise<void>>();
 
 async function loadPiperLibrary(): Promise<PiperModule> {
     if (!piperModule) {
         piperModule = await import('@mintplex-labs/piper-tts-web');
     }
     return piperModule;
+}
+
+/**
+ * Download a Piper voice into OPFS without creating an inference session.
+ * This keeps the active Kokoro session available while the optional model loads.
+ */
+export async function predownloadPiperVoice(
+    voiceId: string,
+    onProgress?: (progress: number, status: string) => void,
+): Promise<void> {
+    if (!isPiperVoiceId(voiceId)) throw new Error(`Unknown Piper voice: ${voiceId}`);
+
+    const existingPromise = predownloadPromises.get(voiceId);
+    if (existingPromise) return existingPromise;
+
+    const promise = (async () => {
+        const piper = await loadPiperLibrary();
+        onProgress?.(0, 'Preparing lighter voice download');
+        await piper.download(voiceId, ({ url, loaded, total }) => {
+            if (!total) return;
+            const progress = Math.max(0, Math.min(1, loaded / total));
+            const file = url.split('/').pop() ?? 'model';
+            onProgress?.(progress, `Downloading ${file}`);
+        });
+        onProgress?.(1, 'Lighter voice ready');
+    })();
+
+    predownloadPromises.set(voiceId, promise);
+    try {
+        await promise;
+    } catch (error) {
+        predownloadPromises.delete(voiceId);
+        throw error;
+    }
 }
 
 /**
@@ -259,8 +346,10 @@ export async function clearPiperCache(voiceId?: string): Promise<void> {
 
     const piper = await loadPiperLibrary();
     if (voiceId) {
+        predownloadPromises.delete(voiceId);
         await piper.remove(voiceId);
     } else {
+        predownloadPromises.clear();
         await piper.flush();
     }
 

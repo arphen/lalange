@@ -9,6 +9,7 @@
 
 import { type TTSAudioResult } from './audio';
 import { type SentenceBoundary } from './sentences';
+import type { GenerationSample } from './realtimePacer';
 import {
     generateKokoroSpeech,
     initKokoro,
@@ -30,6 +31,11 @@ import {
     PIPER_VOICES,
     unloadPiper,
 } from './piper';
+import {
+    getTTSDefaultVoice,
+    getTTSFallbackCandidates,
+    registerTTSModelPlugin,
+} from './modelRegistry';
 
 export type TTSEngineId = 'kokoro' | 'piper';
 
@@ -43,6 +49,7 @@ export interface VoiceInfo {
     languageLabel: string;
     flag: string;
     quality: 'A' | 'B' | 'C' | 'D';
+    downloadMB?: number;
     description?: string;
 }
 
@@ -50,8 +57,6 @@ const KOKORO_ACCENTS = {
     american: { language: 'en-US', languageLabel: 'American English', flag: '🇺🇸' },
     british: { language: 'en-GB', languageLabel: 'British English', flag: '🇬🇧' },
 } as const;
-
-const SLOVENIAN = { language: 'sl-SI', languageLabel: 'Slovenian', flag: '🇸🇮' } as const;
 
 export const VOICES: VoiceInfo[] = [
     ...KOKORO_VOICES.map((voice): VoiceInfo => ({
@@ -69,12 +74,34 @@ export const VOICES: VoiceInfo[] = [
         engine: 'piper',
         gender: voice.gender,
         quality: 'B',
+        downloadMB: voice.downloadMB,
         description: voice.description,
-        ...SLOVENIAN,
+        language: voice.language,
+        languageLabel: voice.languageLabel,
+        flag: voice.flag,
     })),
 ];
 
-export const DEFAULT_VOICE = KOKORO_DEFAULT_VOICE;
+registerTTSModelPlugin({
+    id: 'kokoro',
+    getDefaultVoice: (availableVoices) => availableVoices.some((voice) => voice.id === KOKORO_DEFAULT_VOICE)
+        ? KOKORO_DEFAULT_VOICE
+        : undefined,
+});
+
+registerTTSModelPlugin({
+    id: 'piper',
+    getFallbackCandidates: (preferredVoice, availableVoices) => {
+        if (preferredVoice.engine === 'piper') return [];
+        return availableVoices.filter((candidate) => (
+            candidate.engine === 'piper'
+            && candidate.language === preferredVoice.language
+            && candidate.gender === preferredVoice.gender
+        ));
+    },
+});
+
+export const DEFAULT_VOICE = getTTSDefaultVoice(VOICES) ?? KOKORO_DEFAULT_VOICE;
 
 export function listVoices(): VoiceInfo[] {
     return VOICES;
@@ -94,6 +121,13 @@ export function resolveVoiceId(voiceId: string | undefined): string {
 
 export function getVoiceEngine(voiceId: string | undefined): TTSEngineId {
     return isPiperVoiceId(voiceId) ? 'piper' : 'kokoro';
+}
+
+export function getFallbackVoice(preferredVoiceId: string | undefined): VoiceInfo | undefined {
+    const preferredVoice = getVoice(resolveVoiceId(preferredVoiceId));
+    if (!preferredVoice || preferredVoice.engine !== 'kokoro') return undefined;
+
+    return getTTSFallbackCandidates(preferredVoice, VOICES)[0];
 }
 
 /**
@@ -197,11 +231,20 @@ export async function* streamSpeech(
     options: {
         voice?: string;
         speed?: number;
+        getSpeed?: (sentence: SentenceBoundary) => number;
         onSentenceStart?: (sentence: SentenceBoundary) => void;
         onSentenceComplete?: (sentence: SentenceBoundary, audio: TTSAudioResult) => void;
+        onGenerationSample?: (sample: GenerationSample) => void;
     } = {},
 ): AsyncGenerator<{ sentence: SentenceBoundary; audio: TTSAudioResult }> {
-    const { voice: requestedVoice, speed = 1.0, onSentenceStart, onSentenceComplete } = options;
+    const {
+        voice: requestedVoice,
+        speed = 1.0,
+        getSpeed,
+        onSentenceStart,
+        onSentenceComplete,
+        onGenerationSample,
+    } = options;
     const voice = resolveVoiceId(requestedVoice);
 
     if (!isTTSReady(voice)) {
@@ -214,7 +257,14 @@ export async function* streamSpeech(
         onSentenceStart?.(sentence);
 
         try {
-            const audio = await generateSpeech(sentence.text, { voice, speed });
+            const sentenceSpeed = getSpeed?.(sentence) ?? speed;
+            const startedAt = performance.now();
+            const audio = await generateSpeech(sentence.text, { voice, speed: sentenceSpeed });
+            const generationSeconds = Math.max(0.0001, (performance.now() - startedAt) / 1000);
+            onGenerationSample?.({
+                generationSeconds,
+                audioSeconds: audio.duration,
+            });
 
             // Track where each sentence lands in the chapter's audio timeline
             // so reading and listening positions stay convertible.

@@ -16,6 +16,8 @@ vi.mock('../../core/store/tts', () => ({
         setBufferAhead: vi.fn(),
         speed: 1,
         setSpeed: vi.fn(),
+        continuityMode: 'continuous',
+        setContinuityMode: vi.fn(),
         volume: 1,
         setVolume: vi.fn(),
         isReady: true,

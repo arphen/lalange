@@ -740,6 +740,8 @@ export const TTSSettings: React.FC = () => {
         setBufferAhead,
         speed,
         setSpeed,
+        continuityMode,
+        setContinuityMode,
         volume,
         setVolume,
         isLoading,
@@ -978,7 +980,7 @@ export const TTSSettings: React.FC = () => {
                         type="range"
                         min="0.5"
                         max="2"
-                        step="0.25"
+                        step="0.1"
                         value={speed}
                         onChange={(e) => setSpeed(parseFloat(e.target.value))}
                         className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-purple-500"
@@ -988,6 +990,17 @@ export const TTSSettings: React.FC = () => {
                             ? 'Piper has no speed setting of its own, so this stretches playback and shifts pitch slightly. Stay near 1x for the most natural voice.'
                             : 'Slower speeds are more natural, faster speeds help cover more ground.'}
                     </p>
+                    <button
+                        type="button"
+                        role="switch"
+                        aria-checked={continuityMode === 'continuous'}
+                        onClick={() => setContinuityMode(continuityMode === 'continuous' ? 'prefer-speed' : 'continuous')}
+                        className="flex w-full items-center justify-between border border-white/10 bg-black/20 px-3 py-2 text-left text-xs text-gray-300 transition-colors hover:border-purple-400/50"
+                        title="Keep audio continuous; the device may slow it down"
+                    >
+                        <span>Continuous audio</span>
+                        <span className="text-purple-400">{continuityMode === 'continuous' ? 'ON' : 'OFF'}</span>
+                    </button>
                 </div>
                 
                 <div className="bg-white/5 rounded-lg p-6 border border-white/10 space-y-4">

@@ -32,6 +32,12 @@ const piperLibrary = vi.hoisted(() => ({
         static _instance: unknown = null;
         static create = createSession;
     },
+    download: vi.fn(async (
+        _voiceId: string,
+        callback?: (progress: { url: string; loaded: number; total: number }) => void,
+    ) => {
+        callback?.({ url: 'https://host/model.onnx', loaded: 100, total: 100 });
+    }),
     stored: vi.fn(async () => [] as string[]),
     remove: vi.fn(async () => undefined),
     flush: vi.fn(async () => undefined),
@@ -59,7 +65,7 @@ const {
     isPiperReady,
     isPiperVoiceCached,
     isPiperVoiceId,
-    unloadPiper,
+    predownloadPiperVoice,
 } = await import('./piper');
 
 const SLOVENIAN_VOICE = 'sl_SI-artur-medium';
@@ -93,7 +99,7 @@ function wavBlob(value = 16384, sampleCount = 4): Blob {
 }
 
 beforeEach(async () => {
-    await unloadPiper();
+    await clearPiperCache();
     vi.clearAllMocks();
     sessions.createdVoiceIds.length = 0;
     piperLibrary.TtsSession._instance = null;
@@ -107,8 +113,38 @@ describe('PIPER_VOICES', () => {
 
     it('recognises its own voice ids only', () => {
         expect(isPiperVoiceId(SLOVENIAN_VOICE)).toBe(true);
+        expect(isPiperVoiceId('en_US-amy-low')).toBe(true);
         expect(isPiperVoiceId('af_heart')).toBe(false);
         expect(isPiperVoiceId(undefined)).toBe(false);
+    });
+});
+
+describe('predownloadPiperVoice', () => {
+    it('downloads a voice without creating an inference session', async () => {
+        const onProgress = vi.fn();
+
+        await predownloadPiperVoice('en_US-amy-low', onProgress);
+
+        expect(piperLibrary.download).toHaveBeenCalledWith('en_US-amy-low', expect.any(Function));
+        expect(createSession).not.toHaveBeenCalled();
+        expect(onProgress).toHaveBeenCalledWith(1, 'Downloading model.onnx');
+        expect(onProgress).toHaveBeenLastCalledWith(1, 'Lighter voice ready');
+    });
+
+    it('shares one in-flight predownload for a voice', async () => {
+        let resolveDownload: (() => void) | undefined;
+        piperLibrary.download.mockImplementationOnce(async () => new Promise<void>((resolve) => {
+            resolveDownload = resolve;
+        }));
+
+        const first = predownloadPiperVoice('en_US-amy-low');
+        const second = predownloadPiperVoice('en_US-amy-low');
+        await vi.waitFor(() => expect(piperLibrary.download).toHaveBeenCalledOnce());
+        resolveDownload?.();
+
+        await Promise.all([first, second]);
+
+        expect(piperLibrary.download).toHaveBeenCalledTimes(1);
     });
 });
 

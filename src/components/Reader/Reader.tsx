@@ -64,7 +64,7 @@ const getDensityColor = (score: number) => {
 };
 
 const COMPACT_LANDSCAPE_MEDIA_QUERY = '(orientation: landscape) and (max-height: 640px)';
-const DESKTOP_READER_MEDIA_QUERY = '(min-width: 768px)';
+const DESKTOP_READER_MEDIA_QUERY = '(min-width: 900px)';
 const LONG_WORD_SPLIT_MIN_LENGTH = 12;
 const LONG_WORD_SPLIT_SEGMENT_LENGTH = 8;
 const TOUCH_TAP_MAX_MOVEMENT_PX = 10;
@@ -81,6 +81,9 @@ const CHAPTER_CHOOSER_HIDE_AFTER_PLAYBACK_MS = 320;
 
 type ChapterTransitionPhase = 'braking' | 'crossing' | 'launching';
 const TTS_RIVER_REFRESH_INTERVAL_MS = 1000;
+const TTS_MIN_SPEED = 0.5;
+const TTS_MAX_SPEED = 2;
+const TTS_SPEED_STEP = 0.1;
 
 const useDeferredResourceDisposal = <Resource extends { dispose: () => void }>(resource: Resource) => {
     const resourceLifecycleRef = useRef({ active: resource, generation: 0 });
@@ -245,13 +248,14 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
     const [bookImages, setBookImages] = useState<ImageDocType[]>([]);
     const [globalSummaries, setGlobalSummaries] = useState<GlobalSummaryType[]>([]);
     const [isDesktopLayout, setIsDesktopLayout] = useState(() => (
-        typeof window === 'undefined' || window.innerWidth >= 768
+        typeof window === 'undefined' || window.innerWidth >= 900
     ));
     const [showChapters, setShowChapters] = useState(() => (
-        typeof window === 'undefined' || window.innerWidth >= 768
+        typeof window === 'undefined' || window.innerWidth >= 900
     ));
     const contentsTriggerRef = useRef<HTMLButtonElement>(null);
     const contentsPanelRef = useRef<HTMLDivElement>(null);
+    const readerMainStageRef = useRef<HTMLDivElement>(null);
     const previousContentsOpenRef = useRef(false);
     const [chapterHandoffSelection, setChapterHandoffSelection] = useState<ChapterHandoffSelection | null>(null);
     const [inspectingChapterId, setInspectingChapterId] = useState<string | null>(null);
@@ -268,6 +272,28 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
     const [showNotes, setShowNotes] = useState(false);
     const ttsPlaybackState = useTTSStore((s) => s.playbackState);
     const ttsPosition = useTTSStore((s) => s.currentPosition);
+        const ttsSpeed = useTTSStore((s) => s.speed);
+        const setTtsSpeed = useTTSStore((s) => s.setSpeed);
+        const ttsContinuityMode = useTTSStore((s) => s.continuityMode);
+        const setTtsContinuityMode = useTTSStore((s) => s.setContinuityMode);
+        const ttsPacingSnapshot = useTTSStore((s) => s.pacingSnapshot);
+        const [showTtsSpeedPrompt, setShowTtsSpeedPrompt] = useState(false);
+        const ttsLimitedAnnouncementRef = useRef(false);
+        const [ttsLimitedAnnouncement, setTtsLimitedAnnouncement] = useState('');
+        const ttsIsLimited = ttsPacingSnapshot.effectiveSpeed < ttsSpeed;
+        const ttsEffectiveSpeedLabel = `${ttsPacingSnapshot.effectiveSpeed.toFixed(1)}x`;
+
+        useEffect(() => {
+            if (!showTTSPlayer || !ttsIsLimited) {
+                ttsLimitedAnnouncementRef.current = false;
+                setTtsLimitedAnnouncement('');
+                return;
+            }
+            if (ttsLimitedAnnouncementRef.current) return;
+
+            ttsLimitedAnnouncementRef.current = true;
+            setTtsLimitedAnnouncement(`Speech is slowed to ${ttsEffectiveSpeedLabel} to keep audio continuous on this device.`);
+        }, [showTTSPlayer, ttsEffectiveSpeedLabel, ttsIsLimited]);
     const ttsPlaybackActive = showTTSPlayer && (
         ttsPlaybackState === 'preparing'
         || ttsPlaybackState === 'generating'
@@ -1507,6 +1533,12 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
         setChapterHandoffSelection(null);
     }, []);
 
+    const focusCurrentReadingPosition = useCallback(() => {
+        setChapterHandoffSelection(null);
+        if (!isDesktopLayout) setShowChapters(false);
+        queueMicrotask(() => readerMainStageRef.current?.focus({ preventScroll: true }));
+    }, [isDesktopLayout]);
+
     const handleContentsKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
         if (isDesktopLayout || event.key !== 'Tab' || !contentsPanelRef.current) return;
 
@@ -2067,14 +2099,45 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
     }, []);
 
     const handleSlower = useCallback(() => {
+        if (showTTSPlayer) {
+            setShowTtsSpeedPrompt(false);
+            setTtsSpeed(Number(Math.max(TTS_MIN_SPEED, ttsSpeed - TTS_SPEED_STEP).toFixed(1)));
+            return;
+        }
         const delta = calculateMomentumDelta();
         setWpm(Math.max(50, wpm - delta));
-    }, [wpm, setWpm, calculateMomentumDelta]);
+    }, [calculateMomentumDelta, setTtsSpeed, setWpm, showTTSPlayer, ttsSpeed, wpm]);
 
     const handleFaster = useCallback(() => {
+        if (showTTSPlayer) {
+            const nextSpeed = Number(Math.min(TTS_MAX_SPEED, ttsSpeed + TTS_SPEED_STEP).toFixed(1));
+            setTtsSpeed(nextSpeed);
+            if (
+                ttsContinuityMode === 'continuous'
+                && ttsIsLimited
+                && nextSpeed > ttsPacingSnapshot.effectiveSpeed
+            ) {
+                setShowTtsSpeedPrompt(true);
+            }
+            return;
+        }
         const delta = calculateMomentumDelta();
         setWpm(wpm + delta); // No max limit
-    }, [wpm, setWpm, calculateMomentumDelta]);
+    }, [calculateMomentumDelta, setTtsSpeed, setWpm, showTTSPlayer, ttsContinuityMode, ttsIsLimited, ttsPacingSnapshot, ttsSpeed, wpm]);
+
+    const handleKeepContinuous = useCallback(() => {
+        setTtsContinuityMode('continuous');
+        setShowTtsSpeedPrompt(false);
+    }, [setTtsContinuityMode]);
+
+    const handlePreferSpeed = useCallback(() => {
+        setTtsContinuityMode('prefer-speed');
+        setShowTtsSpeedPrompt(false);
+    }, [setTtsContinuityMode]);
+
+    useEffect(() => {
+        if (!showTTSPlayer) setShowTtsSpeedPrompt(false);
+    }, [showTTSPlayer]);
 
     // Live update sidebar for processing chapters
     useEffect(() => {
@@ -2232,9 +2295,15 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
     const hasSeenDestinationHistory = currentWordIndex > contextHistoryStartRef.current;
 
     // Color based on actual speed vs target
-    const speedColor = actualWpm === 0 ? 'text-gray-500' : 
-        actualWpm < wpm * 0.8 ? 'text-blue-400' : 
+    const speedColor = actualWpm === 0 ? 'text-gray-500' :
+        actualWpm < wpm * 0.8 ? 'text-blue-400' :
         actualWpm > wpm * 1.2 ? 'text-cyan-300' : 'text-emerald-300';
+    const isTtsSpeedDock = showTTSPlayer;
+    const ttsHasMeasuredWpm = ttsPacingSnapshot.deliveredWpm !== null;
+    const ttsPreferredSpeedLabel = `${ttsSpeed.toFixed(1)}x`;
+    const ttsFasterTooltip = ttsIsLimited
+        ? `Faster speech: ${Math.min(TTS_MAX_SPEED, ttsSpeed + TTS_SPEED_STEP).toFixed(1)}x. This device is keeping audio continuous at ${ttsEffectiveSpeedLabel}.`
+        : `Faster speech: ${Math.min(TTS_MAX_SPEED, ttsSpeed + TTS_SPEED_STEP).toFixed(1)}x`;
 
     // Calculate word to render for React (to avoid stale content on re-renders)
     // When playing, the loop updates the DOM directly.
@@ -2343,10 +2412,16 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                 </div>
             )}
             {/* Floating Header / Controls */}
-            <div className={clsx(
+            <div
+                className={clsx(
                 'reader-toolbar absolute top-0 left-0 right-0 z-[90] p-2 md:p-4 flex justify-between items-start pointer-events-none',
                 isDesktopLayout && showChapters && 'reader-toolbar--contents-open',
-            )}>
+                !isDesktopLayout && showChapters && 'opacity-0 pointer-events-none',
+                )}
+                aria-hidden={!isDesktopLayout && showChapters}
+                inert={!isDesktopLayout && showChapters}
+                style={{ right: isDesktopLayout && showChapters ? 'var(--reader-contents-width)' : undefined }}
+            >
                 {onBack ? (
                     <button
                         onClick={onBack}
@@ -2512,7 +2587,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
             {/* Backdrop click-shield for sidebar on mobile/small-screens */}
             <div
                 className={clsx(
-                    'reader-contents-backdrop fixed left-0 right-0 bottom-0 bg-black/60 backdrop-blur-xs z-[75] md:hidden transition-opacity',
+                    'reader-contents-backdrop fixed left-0 right-0 bottom-0 bg-black/60 backdrop-blur-xs z-[75] transition-opacity',
                     showChapters
                         ? (transitionKind === 'chapter' ? 'opacity-100 pointer-events-none' : 'opacity-100')
                         : 'opacity-0 pointer-events-none',
@@ -2527,7 +2602,8 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                 data-testid="sidebar-container"
                 ref={contentsPanelRef}
                 className={clsx(
-                    'reader-contents-panel fixed right-0 z-[80] transform',
+                    'reader-contents-panel fixed right-0 transform',
+                    isDesktopLayout ? 'z-[80]' : 'z-[100]',
                     showChapters ? 'translate-x-0' : 'translate-x-full pointer-events-none',
                     transitionKind === 'chapter' && chapterTransitionPhase !== null && 'pointer-events-none',
                 )}
@@ -2549,6 +2625,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                     onLoadChapter={(id, index) => {
                         beginChapterTransition(id, index ?? 0, index ?? null);
                     }}
+                    onFocusCurrent={focusCurrentReadingPosition}
                     wpm={wpm}
                     currentWordIndex={currentWordIndex}
                     now={now}
@@ -2645,10 +2722,14 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
 
             {/* Main Reader Area (Full Screen) - uses responsive margins to prevent shifting/squishing text on mobile */}
             <div
+                ref={readerMainStageRef}
                 className={clsx(
                     'reader-main-stage flex-1 h-full relative flex flex-col min-w-0 pb-20 md:pb-0 transition-all duration-300',
                     isDesktopLayout && showChapters && 'reader-main-stage--contents-open',
                 )}
+                aria-hidden={!isDesktopLayout && showChapters}
+                inert={!isDesktopLayout && showChapters}
+                tabIndex={-1}
             >
                 <div className={clsx(
                     'reader-reading-plane w-full h-full flex flex-col relative group mx-auto',
@@ -2865,6 +2946,11 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                 aria-hidden={focusModeEnabled}
                 inert={focusModeEnabled}
             >
+                {ttsLimitedAnnouncement && (
+                    <span className="sr-only" role="status" aria-live="polite">
+                        {ttsLimitedAnnouncement}
+                    </span>
+                )}
                 
                 {/* Skip Summary Button (Only Visible when relevant) */}
                 {(isSummaryActive || (countdown && transitionLabel?.includes('summary'))) && (
@@ -2883,25 +2969,43 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                 <button
                     onClick={handleSlower}
                     className="reader-speed-button p-2 text-white/60 hover:text-white transition-all active:scale-95"
-                    title="Slower (-50 WPM)"
+                    title={isTtsSpeedDock ? `Slower (${Math.max(TTS_MIN_SPEED, ttsSpeed - TTS_SPEED_STEP).toFixed(1)}x)` : 'Slower (-50 WPM)'}
+                    aria-label={isTtsSpeedDock ? 'Slower speech' : 'Slower reading'}
                 >
                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 12H4" />
                     </svg>
                 </button>
 
-                {/* WPM Display */}
+                {/* Speed Display */}
                 <div className="reader-speed-readout flex flex-col items-center px-4 py-1 min-w-[100px]">
-                    {/* Target Speed (The setting) - Prominent for feedback */}
                     <div className="flex items-baseline gap-1 animate-in fade-in zoom-in duration-300">
                         <span className="text-2xl font-mono font-bold text-emerald-300 tabular-nums transition-all">
-                            {wpm}
+                            {isTtsSpeedDock
+                                ? (ttsHasMeasuredWpm ? ttsPacingSnapshot.deliveredWpm : ttsPreferredSpeedLabel)
+                                : wpm}
                         </span>
-                        <span className="text-[10px] text-emerald-300/70 font-bold uppercase">WPM</span>
+                        <span className="text-[10px] text-emerald-300/70 font-bold uppercase">
+                            {isTtsSpeedDock ? (ttsHasMeasuredWpm ? 'WPM' : 'SPEED') : 'WPM'}
+                        </span>
                     </div>
-                    
-                    {/* Real-time Velocity (The result) - Secondary */}
-                    {actualWpm > 0 && (
+
+                    {isTtsSpeedDock ? (
+                        <div className="flex items-center gap-2 mt-1 min-h-[12px] justify-center">
+                            <span className="text-[8px] text-gray-500 tracking-widest uppercase">
+                                {ttsPlaybackState === 'paused' ? 'PAUSED' : ttsHasMeasuredWpm ? 'SPEECH' : 'PREPARING'}
+                            </span>
+                            {ttsIsLimited && ttsPacingSnapshot.effectiveSpeed < ttsSpeed && (
+                                <span
+                                    className="text-[8px] font-semibold tracking-widest uppercase text-amber-200/80"
+                                    title={`Continuous audio is limited to ${ttsEffectiveSpeedLabel} on this device`}
+                                >
+                                    LIMITED
+                                </span>
+                            )}
+                        </div>
+                    ) : (
+                        actualWpm > 0 && (
                         <div className="flex items-center gap-2 mt-1 w-full justify-center">
                             <span className={`text-xs font-mono tabular-nums ${speedColor}`}>
                                 {actualWpm}
@@ -2910,9 +3014,10 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                                 REAL
                             </span>
                         </div>
+                        )
                     )}
-                    
-                    {actualWpm === 0 && (
+
+                    {!isTtsSpeedDock && actualWpm === 0 && (
                          <span className="text-[9px] text-gray-500 tracking-widest uppercase mt-1">
                             PAUSED
                         </span>
@@ -2923,12 +3028,42 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                 <button
                     onClick={handleFaster}
                     className="reader-speed-button p-2 text-white/60 hover:text-white transition-all active:scale-95"
-                    title="Faster (+50 WPM)"
+                    title={isTtsSpeedDock ? ttsFasterTooltip : 'Faster (+50 WPM)'}
+                    aria-label={isTtsSpeedDock ? 'Faster speech' : 'Faster reading'}
                 >
                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
                     </svg>
                 </button>
+
+                {isTtsSpeedDock && showTtsSpeedPrompt && (
+                    <div
+                        className="absolute bottom-full left-1/2 mb-3 w-[min(19rem,calc(100vw-2rem))] -translate-x-1/2 border border-amber-200/25 bg-black/90 p-3 text-left shadow-xl backdrop-blur-md"
+                        role="dialog"
+                        aria-label="Choose speech pacing"
+                    >
+                        <p className="text-xs font-semibold text-white">Keep audio continuous?</p>
+                        <p className="mt-1 text-[11px] leading-4 text-white/60">
+                            This device may pause at {ttsPreferredSpeedLabel} while it catches up.
+                        </p>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                            <button
+                                type="button"
+                                onClick={handleKeepContinuous}
+                                className="min-h-9 border border-emerald-300/40 px-2 text-[10px] font-semibold uppercase tracking-wide text-emerald-200 hover:border-emerald-200"
+                            >
+                                Keep continuous
+                            </button>
+                            <button
+                                type="button"
+                                onClick={handlePreferSpeed}
+                                className="min-h-9 border border-white/20 px-2 text-[10px] font-semibold uppercase tracking-wide text-white/70 hover:border-white/50 hover:text-white"
+                            >
+                                Use {ttsPreferredSpeedLabel} now (may pause)
+                            </button>
+                        </div>
+                    </div>
+                )}
 
             </div>
 

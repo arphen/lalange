@@ -13,7 +13,11 @@ import {
     streamSpeech,
     splitIntoSentences,
     getVoice,
+    getFallbackVoice,
+    getVoiceEngine,
+    isTTSModelCached,
     listVoices,
+    predownloadPiperVoice,
     resolveVoiceId,
     type SentenceBoundary,
     type TTSAudioResult,
@@ -21,6 +25,8 @@ import {
 } from '../../core/tts';
 import { ttsPlayer } from '../../core/tts/player';
 import { persistListeningHandoff } from '../../core/exchange/handoff';
+import { FallbackAdvisor, type FallbackAdvisorSnapshot } from '../../core/tts/fallbackAdvisor';
+import { RealtimePacer, type BufferSnapshot, type RealtimePacerSnapshot } from '../../core/tts/realtimePacer';
 import { useTTSMediaSession } from '../../core/tts/useMediaSession';
 
 // Configuration
@@ -146,11 +152,17 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
         volume,
         speed,
         voice,
+        activeVoiceOverride,
         backendPreference,
         bufferAhead,
         currentTime,
+        continuityMode,
+        pacingSnapshot,
         setVolume,
         setVoice,
+        setActiveVoiceOverride,
+        setPacingSnapshot,
+        setContinuityMode,
         duration,
     } = useTTSStore(useShallow((state) => ({
         isLoading: state.isLoading,
@@ -161,12 +173,18 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
         volume: state.volume,
         speed: state.speed,
         voice: state.voice,
+        activeVoiceOverride: state.activeVoiceOverride,
         backendPreference: state.backendPreference,
         bufferAhead: state.bufferAhead,
         currentTime: state.currentTime,
+        continuityMode: state.continuityMode,
+        pacingSnapshot: state.pacingSnapshot,
         duration: state.duration,
         setVolume: state.setVolume,
         setVoice: state.setVoice,
+        setActiveVoiceOverride: state.setActiveVoiceOverride,
+        setPacingSnapshot: state.setPacingSnapshot,
+        setContinuityMode: state.setContinuityMode,
     })));
 
     const currentTimeStr = formatTTSPlaybackTime(currentTime);
@@ -179,7 +197,9 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
     const [showVoiceMenu, setShowVoiceMenu] = useState(false);
     const [isExpanded, setIsExpanded] = useState(false);
     const [bufferedSentenceCount, setBufferedSentenceCount] = useState(0);
-    const effectiveVoice = resolveVoiceId(voice);
+    const preferredVoice = resolveVoiceId(voice);
+    const effectiveVoice = resolveVoiceId(activeVoiceOverride ?? preferredVoice);
+    const fallbackCandidate = getFallbackVoice(preferredVoice);
     const selectedDevice = backendPreference === 'auto' ? undefined : backendPreference;
     const safeBufferAhead = Math.max(3, Math.min(12, bufferAhead || DEFAULT_BUFFER_AHEAD));
     const bufferSlotCount = Math.min(6, safeBufferAhead + 1);
@@ -199,6 +219,111 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
     const autoPlayRequestHandledRef = useRef<string | null>(null);
     const wordsChapterIdRef = useRef(chapterId);
     const onPositionCommitRef = useRef(onPositionCommit);
+    const pacerRef = useRef<RealtimePacer | null>(null);
+    const activeDeviceRef = useRef(selectedDevice);
+    const appliedSpeedRef = useRef(speed);
+    const generationTaskRef = useRef<Promise<void> | null>(null);
+    const fallbackAdvisorRef = useRef<FallbackAdvisor | null>(null);
+    const lastBufferSnapshotRef = useRef<BufferSnapshot>({
+        bufferedAudioSeconds: 0,
+        isShrinking: false,
+        nextAudioReady: false,
+        deliveredWpm: null,
+    });
+    const fallbackTrialBaselineRef = useRef<RealtimePacerSnapshot | null>(null);
+    const fallbackTrialAudioSecondsRef = useRef(0);
+    const fallbackTrialSamplesRef = useRef(0);
+    const fallbackTrialUnderrunsRef = useRef(0);
+    const fallbackTransitionIdRef = useRef(0);
+    const fallbackDownloadWarningTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const [fallbackAdvisorSnapshot, setFallbackAdvisorSnapshot] = useState<FallbackAdvisorSnapshot>(() => ({
+        eligible: false,
+        stableAudioSeconds: 0,
+        consecutiveLowSpeedSamples: 0,
+        underrunsInWindow: 0,
+        dismissed: false,
+        trialFailed: false,
+        reason: 'measuring',
+    }));
+    const [fallbackCached, setFallbackCached] = useState<boolean | null>(null);
+    const [fallbackCachedVoiceId, setFallbackCachedVoiceId] = useState<string | null>(null);
+    const [fallbackDownloadVoiceId, setFallbackDownloadVoiceId] = useState<string | null>(null);
+    const [fallbackDownloadState, setFallbackDownloadState] = useState<'idle' | 'downloading' | 'ready' | 'error'>('idle');
+    const [fallbackDownloadProgress, setFallbackDownloadProgress] = useState(0);
+    const [fallbackDownloadStatus, setFallbackDownloadStatus] = useState('');
+    const [fallbackDownloadError, setFallbackDownloadError] = useState<string | null>(null);
+    const [fallbackTrialState, setFallbackTrialState] = useState<'idle' | 'measuring' | 'not-better'>('idle');
+
+    if (pacerRef.current === null) {
+        pacerRef.current = new RealtimePacer(speed, continuityMode);
+    }
+    if (fallbackAdvisorRef.current === null) {
+        fallbackAdvisorRef.current = new FallbackAdvisor();
+    }
+    const currentFallbackCached = fallbackCachedVoiceId === fallbackCandidate?.id ? fallbackCached : null;
+    const currentFallbackDownloadState = fallbackDownloadVoiceId === fallbackCandidate?.id
+        ? fallbackDownloadState
+        : 'idle';
+    const currentFallbackDownloadError = fallbackDownloadVoiceId === fallbackCandidate?.id
+        ? fallbackDownloadError
+        : null;
+
+    const observeFallback = useCallback((
+        snapshot: RealtimePacerSnapshot,
+        measuredAudioSeconds = 0,
+        isGenerationSample = false,
+    ) => {
+        const advisor = fallbackAdvisorRef.current;
+        if (!advisor) return;
+
+        const buffer = lastBufferSnapshotRef.current;
+        const result = advisor.observe(snapshot, {
+            engine: getVoiceEngine(activeVoiceRef.current),
+            hasCandidate: fallbackCandidate !== undefined,
+            isPlaying: ttsPlayer.getState().isPlaying,
+            isWarmup: !hasStartedPlaybackRef.current,
+            isGenerationSample,
+            isBufferShrinking: buffer.isShrinking,
+            bufferedAudioSeconds: buffer.bufferedAudioSeconds,
+            measuredAudioSeconds,
+            audibleTimeSeconds: ttsPlayer.getAudibleTime?.(),
+        });
+        setFallbackAdvisorSnapshot(result);
+    }, [fallbackCandidate]);
+
+    const resetFallbackAdvisor = useCallback((preserveTrialFailure = false) => {
+        const advisor = fallbackAdvisorRef.current;
+        if (advisor) setFallbackAdvisorSnapshot(advisor.reset({ preserveTrialFailure }));
+        fallbackTrialBaselineRef.current = null;
+        fallbackTrialAudioSecondsRef.current = 0;
+        fallbackTrialSamplesRef.current = 0;
+        fallbackTrialUnderrunsRef.current = 0;
+        setFallbackTrialState('idle');
+    }, []);
+
+    useEffect(() => {
+        let cancelled = false;
+
+        if (!fallbackCandidate) return () => {
+            cancelled = true;
+        };
+
+        void isTTSModelCached(fallbackCandidate.id).then((cached) => {
+            if (!cancelled) {
+                setFallbackCachedVoiceId(fallbackCandidate.id);
+                setFallbackCached(cached);
+            }
+        }).catch(() => {
+            if (!cancelled) {
+                setFallbackCachedVoiceId(fallbackCandidate.id);
+                setFallbackCached(false);
+            }
+        });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [fallbackCandidate]);
 
     const refreshBufferedSentenceCount = useCallback((sentenceIndex?: number) => {
         const currentSentenceIndex = sentenceIndex ?? useTTSStore.getState().currentSentence ?? 0;
@@ -215,18 +340,32 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
         onPositionCommitRef.current = onPositionCommit;
     }, [onPositionCommit]);
 
+    useEffect(() => {
+        const pacer = pacerRef.current;
+        if (!pacer) return;
+        setPacingSnapshot(pacer.setPreferredSpeed(speed));
+    }, [setPacingSnapshot, speed]);
+
+    useEffect(() => {
+        const pacer = pacerRef.current;
+        if (!pacer) return;
+        setPacingSnapshot(pacer.setContinuityMode(continuityMode));
+    }, [continuityMode, setPacingSnapshot]);
+
     const commitCurrentPosition = useCallback(() => {
         if (!hasStartedPlaybackRef.current) return;
         onPositionCommitRef.current?.(useTTSStore.getState().currentWordIndex);
     }, []);
 
     useEffect(() => {
-        const repairedInvalidVoice = voice !== effectiveVoice;
+        const repairedInvalidVoice = voice !== preferredVoice;
         const voiceChanged = activeVoiceRef.current !== effectiveVoice;
+        const deviceChanged = activeDeviceRef.current !== selectedDevice;
         activeVoiceRef.current = effectiveVoice;
+        activeDeviceRef.current = selectedDevice;
 
-        if (repairedInvalidVoice) setVoice(effectiveVoice);
-        if (!repairedInvalidVoice && !voiceChanged) return;
+        if (repairedInvalidVoice) setVoice(preferredVoice);
+        if (!repairedInvalidVoice && !voiceChanged && !deviceChanged) return;
 
         generationIdRef.current += 1;
         abortControllerRef.current?.abort();
@@ -235,9 +374,10 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
         isGeneratingRef.current = false;
         hasStartedPlaybackRef.current = false;
         useTTSStore.getState().setGenerating(false);
+        if (pacerRef.current) setPacingSnapshot(pacerRef.current.reset());
         ttsPlayer.stop();
         ttsPlayer.clearQueue();
-    }, [effectiveVoice, setVoice, voice]);
+    }, [effectiveVoice, preferredVoice, selectedDevice, setPacingSnapshot, setVoice, voice]);
     
     useEffect(() => {
         if (!bookId || !chapterId || !hasStartedPlaybackRef.current) return;
@@ -259,14 +399,14 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
             timestamp: now,
         };
         useTTSStore.getState().updatePosition(position);
-        void persistListeningHandoff({ position, voice: effectiveVoice, speed }).catch((error) => {
+        void persistListeningHandoff({ position, voice: preferredVoice, speed }).catch((error) => {
             console.error('[TTS UI] Failed to persist handoff position:', error);
         });
     }, [
         bookId,
         chapterId,
         currentTime,
-        effectiveVoice,
+        preferredVoice,
         playbackState,
         speed,
     ]);
@@ -278,6 +418,10 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
         
         if (bookChanged || chapterChanged) {
             generationIdRef.current += 1;
+            fallbackTransitionIdRef.current += 1;
+            activeVoiceRef.current = preferredVoice;
+            setActiveVoiceOverride(null);
+            resetFallbackAdvisor();
 
             // Abort any ongoing generation
             if (abortControllerRef.current) {
@@ -292,6 +436,7 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
             startSentenceIndexRef.current = 0;
             chapterEndHandledRef.current = false;
             useTTSStore.getState().setGenerating(false);
+            if (pacerRef.current) setPacingSnapshot(pacerRef.current.reset());
             
             // Full player reset - stop, clear queue, reset state
             ttsPlayer.stop();
@@ -301,7 +446,7 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
         
         bookIdRef.current = bookId;
         chapterIdRef.current = chapterId;
-    }, [bookId, chapterId]);
+    }, [bookId, chapterId, preferredVoice, resetFallbackAdvisor, setActiveVoiceOverride, setPacingSnapshot]);
     
     // Split words into sentences on mount/change
     useEffect(() => {
@@ -318,16 +463,25 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
                 commitCurrentPosition();
             }
             generationIdRef.current += 1;
+            fallbackTransitionIdRef.current += 1;
+            activeVoiceRef.current = preferredVoice;
+            setActiveVoiceOverride(null);
+            resetFallbackAdvisor();
 
             // Stop generation
             if (abortControllerRef.current) {
                 abortControllerRef.current.abort();
+            }
+            if (fallbackDownloadWarningTimerRef.current !== null) {
+                clearTimeout(fallbackDownloadWarningTimerRef.current);
+                fallbackDownloadWarningTimerRef.current = null;
             }
             isGeneratingRef.current = false;
             generatorRef.current = null;
             hasStartedPlaybackRef.current = false;
             chapterEndHandledRef.current = false;
             useTTSStore.getState().setGenerating(false);
+            if (pacerRef.current) setPacingSnapshot(pacerRef.current.reset());
             
             // Clear player
             ttsPlayer.clearQueue();
@@ -337,7 +491,7 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
         
         wordsRef.current = words;
         wordsChapterIdRef.current = chapterId;
-    }, [chapterId, commitCurrentPosition, words]);
+    }, [chapterId, commitCurrentPosition, preferredVoice, resetFallbackAdvisor, setActiveVoiceOverride, setPacingSnapshot, words]);
     
     // Initialize TTS engine
     const handleInit = useCallback(async (): Promise<boolean> => {
@@ -359,13 +513,15 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
         return () => {
             commitCurrentPosition();
             generationIdRef.current += 1;
+            fallbackTransitionIdRef.current += 1;
+            setActiveVoiceOverride(null);
             if (abortControllerRef.current) {
                 abortControllerRef.current.abort();
             }
             isGeneratingRef.current = false;
             ttsPlayer.dispose();
         };
-    }, [commitCurrentPosition]);
+    }, [commitCurrentPosition, setActiveVoiceOverride]);
 
     // Register with the OS media session as soon as the panel opens, so the system
     // Play button is already there and ready before the user taps play in-app.
@@ -380,51 +536,278 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
         if (isGeneratingRef.current || sentences.length === 0) return;
         if (fromSentenceIndex >= sentences.length) return;
         if (sentenceCount <= 0) return;
-        
-        const generationId = generationIdRef.current + 1;
-        generationIdRef.current = generationId;
-        const abortController = new AbortController();
-        abortControllerRef.current = abortController;
-        const signal = abortController.signal;
-        
-        isGeneratingRef.current = true;
-        useTTSStore.getState().setGenerating(true);
-        
-        const endIndex = Math.min(fromSentenceIndex + sentenceCount, sentences.length);
-        const sentencesToGenerate = sentences.slice(fromSentenceIndex, endIndex);
+        const task = (async () => {
+            const generationId = generationIdRef.current + 1;
+            generationIdRef.current = generationId;
+            const abortController = new AbortController();
+            abortControllerRef.current = abortController;
+            const signal = abortController.signal;
 
-        const generator = streamSpeech(sentencesToGenerate, {
-            voice: effectiveVoice,
-            speed,
-        });
-        generatorRef.current = generator;
-        
-        try {
-            for await (const { sentence, audio } of generator) {
-                if (signal.aborted) break;
-                await ttsPlayer.queueAudio(audio, sentence);
-                refreshBufferedSentenceCount(sentence.index);
-            }
-        } catch (err) {
-            if (!signal.aborted) {
-                console.error('[TTS] Generation error:', err);
-                const message = err instanceof Error ? err.message : 'Failed to generate audio.';
-                const store = useTTSStore.getState();
-                store.setError(message);
-                ttsPlayer.stop();
-            }
-        } finally {
-            if (generationIdRef.current === generationId) {
-                isGeneratingRef.current = false;
-                useTTSStore.getState().setGenerating(false);
-                generatorRef.current = null;
-                if (abortControllerRef.current === abortController) {
-                    abortControllerRef.current = null;
+            isGeneratingRef.current = true;
+            useTTSStore.getState().setGenerating(true);
+
+            const endIndex = Math.min(fromSentenceIndex + sentenceCount, sentences.length);
+            const sentencesToGenerate = sentences.slice(fromSentenceIndex, endIndex);
+
+            const generator = streamSpeech(sentencesToGenerate, {
+                voice: activeVoiceRef.current,
+                speed,
+                getSpeed: () => pacerRef.current?.snapshot().effectiveSpeed ?? speed,
+                onGenerationSample: (sample) => {
+                    const pacer = pacerRef.current;
+                    if (!pacer) return;
+
+                    const updatedSnapshot = pacer.observeGeneration(sample);
+                    setPacingSnapshot(updatedSnapshot);
+                    observeFallback(updatedSnapshot, sample.audioSeconds, true);
+
+                    if (fallbackTrialState !== 'measuring' || getVoiceEngine(activeVoiceRef.current) !== 'piper') return;
+                    fallbackTrialAudioSecondsRef.current += sample.audioSeconds;
+                    fallbackTrialSamplesRef.current += 1;
+                    if (
+                        fallbackTrialAudioSecondsRef.current < 10
+                        || fallbackTrialSamplesRef.current < 3
+                    ) return;
+
+                    const baseline = fallbackTrialBaselineRef.current;
+                    const isMateriallyBetter = Boolean(
+                        baseline
+                        && updatedSnapshot.sustainableSpeed >= baseline.sustainableSpeed + 0.15
+                        && fallbackTrialUnderrunsRef.current === 0,
+                    );
+                    if (!isMateriallyBetter) {
+                        setFallbackTrialState('not-better');
+                        const advisor = fallbackAdvisorRef.current;
+                        if (advisor) setFallbackAdvisorSnapshot(advisor.markTrialFailed());
+                    } else {
+                        setFallbackTrialState('idle');
+                    }
+                },
+            });
+            generatorRef.current = generator;
+
+            try {
+                for await (const { sentence, audio } of generator) {
+                    if (signal.aborted) break;
+                    await ttsPlayer.queueAudio(audio, sentence);
+                    refreshBufferedSentenceCount(sentence.index);
                 }
-                ttsPlayer.checkBuffer();
+            } catch (err) {
+                if (!signal.aborted) {
+                    console.error('[TTS] Generation error:', err);
+                    const message = err instanceof Error ? err.message : 'Failed to generate audio.';
+                    const store = useTTSStore.getState();
+                    store.setError(message);
+                    ttsPlayer.stop();
+                }
+            } finally {
+                if (generationIdRef.current === generationId) {
+                    isGeneratingRef.current = false;
+                    useTTSStore.getState().setGenerating(false);
+                    generatorRef.current = null;
+                    if (abortControllerRef.current === abortController) {
+                        abortControllerRef.current = null;
+                    }
+                    ttsPlayer.checkBuffer();
+                }
+            }
+        })();
+
+        generationTaskRef.current = task;
+        try {
+            await task;
+        } finally {
+            if (generationTaskRef.current === task) generationTaskRef.current = null;
+        }
+    }, [observeFallback, refreshBufferedSentenceCount, sentences, setPacingSnapshot, speed, fallbackTrialState]);
+
+    const cancelGeneration = useCallback(async () => {
+        generationIdRef.current += 1;
+        abortControllerRef.current?.abort();
+        abortControllerRef.current = null;
+        generatorRef.current = null;
+        isGeneratingRef.current = false;
+        useTTSStore.getState().setGenerating(false);
+
+        const pendingGeneration = generationTaskRef.current;
+        await pendingGeneration?.catch(() => undefined);
+    }, []);
+
+    const transitionToVoice = useCallback(async (
+        targetVoice: string,
+        targetOverride: string | null,
+        preserveTrialFailure = false,
+    ) => {
+        if (sentences.length === 0 || targetVoice === activeVoiceRef.current) return;
+
+        const transitionId = ++fallbackTransitionIdRef.current;
+        const baseline = pacerRef.current?.snapshot() ?? pacingSnapshot;
+        const currentSentenceIndex = ttsPlayer.getState().currentSentenceIndex;
+        const bridgeEndSentenceIndex = Math.min(currentSentenceIndex + 2, sentences.length - 1);
+        const firstMissingSentenceIndex = bridgeEndSentenceIndex + 1;
+
+        await cancelGeneration();
+        if (fallbackTransitionIdRef.current !== transitionId) return;
+
+        ttsPlayer.discardQueuedAudioAfter(bridgeEndSentenceIndex);
+
+        try {
+            const targetDevice = getVoiceEngine(targetVoice) === 'piper' ? undefined : selectedDevice;
+            await initTTS(targetVoice, targetDevice, () => undefined);
+            if (fallbackTransitionIdRef.current !== transitionId) return;
+
+            activeVoiceRef.current = targetVoice;
+            setActiveVoiceOverride(targetOverride);
+            if (targetOverride) {
+                fallbackTrialBaselineRef.current = baseline;
+                fallbackTrialAudioSecondsRef.current = 0;
+                fallbackTrialSamplesRef.current = 0;
+                fallbackTrialUnderrunsRef.current = 0;
+                setFallbackTrialState('measuring');
+            } else {
+                resetFallbackAdvisor(preserveTrialFailure);
+            }
+            if (pacerRef.current) setPacingSnapshot(pacerRef.current.reset());
+            ttsPlayer.resetTelemetry();
+
+            const sentenceCount = Math.min(
+                safeBufferAhead,
+                sentences.length - firstMissingSentenceIndex,
+            );
+            if (sentenceCount > 0) void generateFrom(firstMissingSentenceIndex, sentenceCount);
+        } catch (error) {
+            if (fallbackTransitionIdRef.current !== transitionId) return;
+            let transitionError: unknown = error;
+
+            if (targetOverride) {
+                try {
+                    await initTTS(preferredVoice, selectedDevice, () => undefined);
+                    if (fallbackTransitionIdRef.current !== transitionId) return;
+                    activeVoiceRef.current = preferredVoice;
+                    setActiveVoiceOverride(null);
+                    resetFallbackAdvisor(preserveTrialFailure);
+                    if (pacerRef.current) setPacingSnapshot(pacerRef.current.reset());
+                    ttsPlayer.resetTelemetry();
+                    const sentenceCount = Math.min(
+                        safeBufferAhead,
+                        sentences.length - firstMissingSentenceIndex,
+                    );
+                    if (sentenceCount > 0) void generateFrom(firstMissingSentenceIndex, sentenceCount);
+                    setFallbackDownloadError('The lighter voice could not be prepared. Continuing with the preferred voice.');
+                    return;
+                } catch (restoreError) {
+                    transitionError = restoreError;
+                }
+            }
+
+            const message = transitionError instanceof Error ? transitionError.message : 'Audio playback failed.';
+            useTTSStore.getState().setError(message);
+            ttsPlayer.stop();
+        }
+    }, [
+        cancelGeneration,
+        generateFrom,
+        pacingSnapshot,
+        preferredVoice,
+        resetFallbackAdvisor,
+        safeBufferAhead,
+        selectedDevice,
+        sentences.length,
+        setActiveVoiceOverride,
+        setPacingSnapshot,
+    ]);
+
+    const handleDownloadFallback = useCallback(async () => {
+        if (!fallbackCandidate || currentFallbackDownloadState === 'downloading') return;
+
+        const scheduleWarning = () => {
+            if (fallbackDownloadWarningTimerRef.current !== null) {
+                clearTimeout(fallbackDownloadWarningTimerRef.current);
+            }
+            fallbackDownloadWarningTimerRef.current = setTimeout(() => {
+                setFallbackDownloadStatus('Download is taking longer than expected');
+            }, 30_000);
+        };
+
+        setFallbackDownloadVoiceId(fallbackCandidate.id);
+        setFallbackDownloadState('downloading');
+        setFallbackDownloadProgress(0);
+        setFallbackDownloadStatus('Preparing lighter voice download');
+        setFallbackDownloadError(null);
+        scheduleWarning();
+
+        try {
+            await predownloadPiperVoice(fallbackCandidate.id, (progress, status) => {
+                setFallbackDownloadProgress(progress);
+                setFallbackDownloadStatus(status);
+                scheduleWarning();
+            });
+            setFallbackCached(true);
+            setFallbackDownloadState('ready');
+        } catch (error) {
+            setFallbackDownloadState('error');
+            setFallbackDownloadError(error instanceof Error ? error.message : 'Download failed.');
+        } finally {
+            if (fallbackDownloadWarningTimerRef.current !== null) {
+                clearTimeout(fallbackDownloadWarningTimerRef.current);
+                fallbackDownloadWarningTimerRef.current = null;
             }
         }
-    }, [effectiveVoice, refreshBufferedSentenceCount, sentences, speed]);
+    }, [currentFallbackDownloadState, fallbackCandidate]);
+
+    const handleTryFallback = useCallback(() => {
+        if (!fallbackCandidate || currentFallbackCached !== true) return;
+        void transitionToVoice(fallbackCandidate.id, fallbackCandidate.id);
+    }, [currentFallbackCached, fallbackCandidate, transitionToVoice]);
+
+    const handleReturnToPreferred = useCallback(() => {
+        if (activeVoiceRef.current === preferredVoice) return;
+        void transitionToVoice(preferredVoice, null, fallbackTrialState === 'not-better');
+    }, [fallbackTrialState, preferredVoice, transitionToVoice]);
+
+    const handleKeepPreferred = useCallback(() => {
+        const advisor = fallbackAdvisorRef.current;
+        if (advisor) setFallbackAdvisorSnapshot(advisor.dismiss());
+    }, []);
+
+    const handleClosePanel = useCallback(() => {
+        setIsExpanded(false);
+        if (activeVoiceRef.current === preferredVoice) return;
+        void transitionToVoice(preferredVoice, null, true);
+    }, [preferredVoice, transitionToVoice]);
+
+    useEffect(() => {
+        const speedChanged = appliedSpeedRef.current !== speed;
+        appliedSpeedRef.current = speed;
+        if (!speedChanged) return;
+        if (!hasStartedPlaybackRef.current) return;
+        if (playbackState !== 'playing' && playbackState !== 'generating' && playbackState !== 'preparing') return;
+        if (sentences.length === 0) return;
+
+        generationIdRef.current += 1;
+        abortControllerRef.current?.abort();
+        abortControllerRef.current = null;
+        generatorRef.current = null;
+        isGeneratingRef.current = false;
+        useTTSStore.getState().setGenerating(false);
+
+        const currentSentenceIndex = ttsPlayer.getState().currentSentenceIndex;
+        const safetySentenceIndex = currentSentenceIndex + 1;
+        ttsPlayer.discardQueuedAudioAfter(safetySentenceIndex);
+
+        const firstMissingSentenceIndex = ttsPlayer.hasAudioForSentence(currentSentenceIndex)
+            ? ttsPlayer.hasAudioForSentence(safetySentenceIndex)
+                ? safetySentenceIndex + 1
+                : safetySentenceIndex
+            : currentSentenceIndex;
+        const sentenceCount = Math.min(
+            safeBufferAhead,
+            sentences.length - firstMissingSentenceIndex,
+        );
+        if (sentenceCount > 0) {
+            void generateFrom(firstMissingSentenceIndex, sentenceCount);
+        }
+    }, [generateFrom, playbackState, safeBufferAhead, sentences.length, speed]);
 
     const startFromSentence = useCallback(async (requestedSentenceIndex: number) => {
         if (sentences.length === 0) return;
@@ -487,6 +870,26 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
             },
             onSentenceChange: refreshBufferedSentenceCount,
             onAudioQueued: (sentenceIndex) => refreshBufferedSentenceCount(sentenceIndex),
+            onBufferSnapshot: (snapshot) => {
+                lastBufferSnapshotRef.current = snapshot;
+                const pacer = pacerRef.current;
+                if (!pacer) return;
+                const updatedSnapshot = pacer.observeBuffer(snapshot);
+                setPacingSnapshot(updatedSnapshot);
+                observeFallback(updatedSnapshot);
+            },
+            onUnderrun: (sentenceIndex) => {
+                if (sentenceIndex >= sentences.length - 1) return;
+                const pacer = pacerRef.current;
+                if (!pacer) return;
+                if (fallbackTrialState === 'measuring' && getVoiceEngine(activeVoiceRef.current) === 'piper') {
+                    fallbackTrialUnderrunsRef.current += 1;
+                }
+                const updatedSnapshot = pacer.reportUnderrun();
+                setPacingSnapshot(updatedSnapshot);
+                fallbackAdvisorRef.current?.reportUnderrun(ttsPlayer.getAudibleTime?.());
+                observeFallback(updatedSnapshot);
+            },
             onBufferLow: (currentSentenceIndex) => {
                 refreshBufferedSentenceCount(currentSentenceIndex);
                 if (currentSentenceIndex >= sentences.length) {
@@ -517,7 +920,18 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
                 }
             },
         });
-    }, [safeBufferAhead, sentences, onPositionChange, onChapterEnd, generateFrom, playbackState, refreshBufferedSentenceCount]);
+    }, [
+        safeBufferAhead,
+        sentences,
+        onPositionChange,
+        onChapterEnd,
+        generateFrom,
+        playbackState,
+        refreshBufferedSentenceCount,
+        setPacingSnapshot,
+        observeFallback,
+        fallbackTrialState,
+    ]);
     
     // Handle stop - full reset of all TTS resources
     const handleStop = useCallback(() => {
@@ -536,12 +950,13 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
         startSentenceIndexRef.current = 0;
         chapterEndHandledRef.current = false;
         useTTSStore.getState().setGenerating(false);
+        if (pacerRef.current) setPacingSnapshot(pacerRef.current.reset());
 
         // Full player reset
         ttsPlayer.stop();
         ttsPlayer.clearQueue();
         setBufferedSentenceCount(0);
-    }, []);
+    }, [setPacingSnapshot]);
 
     useEffect(() => {
         if (!autoPlayChapterId || !chapterId || autoPlayChapterId !== chapterId) return;
@@ -628,6 +1043,11 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
         return Array.from(groups, ([label, groupVoices]) => ({ label, voices: groupVoices }));
     }, []);
     const currentVoice = getVoice(effectiveVoice);
+    const preferredVoiceInfo = getVoice(preferredVoice);
+    const isFallbackActive = activeVoiceOverride !== null && effectiveVoice !== preferredVoice;
+    const showFallbackRecommendation = fallbackAdvisorSnapshot.eligible
+        && fallbackCandidate !== undefined
+        && !isFallbackActive;
 
     const handlePlayAction = useCallback(() => {
         if (playbackState === 'playing') return;
@@ -705,7 +1125,7 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
                 </div>
                 {compact && (
                     <button
-                        onClick={() => setIsExpanded(false)}
+                        onClick={handleClosePanel}
                         className="text-cyan-100/60 hover:text-cyan-100 transition-colors"
                     >
                         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -733,7 +1153,9 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
                     
                     <div className="flex-1 min-w-0">
                         <p className="truncate text-sm font-semibold tracking-wide text-white">
-                            {currentVoice?.name ?? 'Select Voice'}
+                            {isFallbackActive
+                                ? `${currentVoice?.name ?? 'Lighter voice'} - lighter voice`
+                                : currentVoice?.name ?? 'Select Voice'}
                         </p>
                         <p className="truncate text-xs text-cyan-100/65">
                             {getStatusText()}
@@ -764,6 +1186,28 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
                     ))}
                 </div>
 
+                <div className="flex items-center justify-between gap-3 border-t border-white/10 pt-2 text-xs">
+                    <div className="flex items-baseline gap-2">
+                        <span className="text-[10px] uppercase tracking-[0.16em] text-cyan-200/50">Speech</span>
+                        <span className="font-semibold tabular-nums text-cyan-100">{pacingSnapshot.effectiveSpeed.toFixed(1)}x</span>
+                        {pacingSnapshot.effectiveSpeed < speed && (
+                            <span className="text-[10px] uppercase tracking-wide text-amber-200/80" title="This device is slowing speech to keep audio continuous">
+                                limited
+                            </span>
+                        )}
+                    </div>
+                    <button
+                        type="button"
+                        role="switch"
+                        aria-checked={continuityMode === 'continuous'}
+                        onClick={() => setContinuityMode(continuityMode === 'continuous' ? 'prefer-speed' : 'continuous')}
+                        className="border border-white/15 px-2 py-1 text-[10px] uppercase tracking-wide text-white/70 transition-colors hover:border-cyan-200/50 hover:text-white"
+                        title="Keep audio continuous; the device may slow it down"
+                    >
+                        {continuityMode === 'continuous' ? 'Continuous audio' : 'Prefer speed'}
+                    </button>
+                </div>
+
                 {/* Voice and volume */}
                 <div className="space-y-3">
                     {/* Voice Selector */}
@@ -791,6 +1235,7 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
                                             <button
                                                 key={v.id}
                                                 onClick={() => {
+                                                    setActiveVoiceOverride(null);
                                                     setVoice(v.id);
                                                     setShowVoiceMenu(false);
                                                 }}
@@ -834,6 +1279,101 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
                         </div>
                     </div>
                 </div>
+
+                {isFallbackActive && (
+                    <div
+                        data-testid="tts-fallback-active"
+                        className="space-y-2 border border-cyan-200/15 bg-cyan-300/5 px-2.5 py-2"
+                    >
+                        <p className="text-xs text-cyan-50">
+                            Preferred voice: {preferredVoiceInfo?.name ?? 'selected voice'}
+                        </p>
+                        {fallbackTrialState === 'not-better' && (
+                            <p className="text-xs text-amber-100/85">
+                                This voice is not keeping up better on this device.
+                            </p>
+                        )}
+                        <div className="flex flex-wrap items-center gap-2">
+                            <button
+                                type="button"
+                                onClick={handleReturnToPreferred}
+                                className="border border-cyan-200/30 px-2 py-1 text-[10px] uppercase tracking-wide text-cyan-50 transition-colors hover:border-cyan-100"
+                            >
+                                Return to {preferredVoiceInfo?.name ?? 'preferred voice'}
+                            </button>
+                            {fallbackTrialState === 'not-better' && (
+                                <button
+                                    type="button"
+                                    onClick={() => setFallbackTrialState('idle')}
+                                    className="border border-white/15 px-2 py-1 text-[10px] uppercase tracking-wide text-white/70 transition-colors hover:border-white/40 hover:text-white"
+                                >
+                                    Keep {currentVoice?.name ?? 'lighter voice'}
+                                </button>
+                            )}
+                        </div>
+                    </div>
+                )}
+
+                {showFallbackRecommendation && fallbackCandidate && (
+                    <div
+                        data-testid="tts-fallback-recommendation"
+                        role="status"
+                        className="space-y-2 border border-amber-200/20 bg-amber-100/5 px-2.5 py-2"
+                    >
+                        <p className="text-xs leading-5 text-amber-50">
+                            This voice is running very slowly on this device. A lighter local voice may keep up better.
+                        </p>
+                        {currentFallbackDownloadState === 'downloading' ? (
+                            <div className="space-y-1">
+                                <div className="flex items-center justify-between gap-2 text-[10px] text-amber-100/75">
+                                    <span>{fallbackDownloadStatus || 'Downloading lighter voice'}</span>
+                                    <span>{Math.round(fallbackDownloadProgress * 100)}%</span>
+                                </div>
+                                <div className="h-1 bg-white/10">
+                                    <div
+                                        className="h-full bg-amber-200 transition-[width] duration-300"
+                                        style={{ width: `${fallbackDownloadProgress * 100}%` }}
+                                    />
+                                </div>
+                            </div>
+                        ) : currentFallbackCached === true ? (
+                            <button
+                                type="button"
+                                onClick={handleTryFallback}
+                                className="border border-amber-100/40 px-2 py-1 text-[10px] uppercase tracking-wide text-amber-50 transition-colors hover:border-amber-50"
+                            >
+                                Try lighter voice
+                            </button>
+                        ) : currentFallbackCached === false ? (
+                            <div className="space-y-2">
+                                <p className="text-[11px] leading-4 text-amber-100/65">
+                                    The voice will change. Text and speech stay on this device.
+                                </p>
+                                <button
+                                    type="button"
+                                    onClick={handleDownloadFallback}
+                                    className="border border-amber-100/40 px-2 py-1 text-[10px] uppercase tracking-wide text-amber-50 transition-colors hover:border-amber-50"
+                                >
+                                    {currentFallbackDownloadState === 'error'
+                                        ? `Retry download - ${fallbackCandidate.downloadMB ?? 63} MB`
+                                        : `Download lighter voice - ${fallbackCandidate.downloadMB ?? 63} MB`}
+                                </button>
+                                {currentFallbackDownloadError && (
+                                    <p className="text-[11px] leading-4 text-rose-200/80">{currentFallbackDownloadError}</p>
+                                )}
+                            </div>
+                        ) : (
+                            <p className="text-[11px] text-amber-100/65">Checking lighter voice availability...</p>
+                        )}
+                        <button
+                            type="button"
+                            onClick={handleKeepPreferred}
+                            className="border border-white/15 px-2 py-1 text-[10px] uppercase tracking-wide text-white/70 transition-colors hover:border-white/40 hover:text-white"
+                        >
+                            Keep {preferredVoiceInfo?.name ?? 'preferred voice'}
+                        </button>
+                    </div>
+                )}
             </div>
             
             {/* Loading progress bar */}

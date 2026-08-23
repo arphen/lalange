@@ -8,6 +8,7 @@
 import { type TTSAudioResult } from './audio';
 import { type SentenceBoundary } from './sentences';
 import { useTTSStore } from '../store/tts';
+import type { BufferSnapshot } from './realtimePacer';
 
 // Configuration
 const MAX_QUEUED_BUFFERS = 10;
@@ -94,6 +95,8 @@ export interface AudioPlayerOptions {
     onError?: (error: Error) => void;
     onAudioQueued?: (sentenceIndex: number, queueSize: number) => void;
     onBufferLow?: (currentSentenceIndex: number) => void;
+    onBufferSnapshot?: (snapshot: BufferSnapshot) => void;
+    onUnderrun?: (sentenceIndex: number) => void;
 }
 
 interface QueuedAudio {
@@ -174,6 +177,8 @@ class TTSAudioPlayer {
     private currentSentence: SentenceBoundary | null = null;
     private currentWordProgressBoundaries: number[] = [];
     private rafId: number | null = null;
+    private lastBufferedAudioSeconds: number | null = null;
+    private deliveredProgressSamples: Array<{ time: number; wordPosition: number }> = [];
     
     private async ensureContext(): Promise<AudioContext> {
         if (!this.audioContext) {
@@ -269,6 +274,9 @@ class TTSAudioPlayer {
     clearQueue(): void {
         this.cancelScheduledSources();
         this.audioQueue.clear();
+        this.lastBufferedAudioSeconds = null;
+        this.deliveredProgressSamples = [];
+        this.options.onBufferSnapshot?.(this.getBufferSnapshot());
         logTTSPlayerDebug('[TTS Player] Queue cleared');
     }
     
@@ -288,8 +296,68 @@ class TTSAudioPlayer {
         return count;
     }
 
+    discardQueuedAudioAfter(sentenceIndex: number): void {
+        for (const [queuedIndex] of this.audioQueue) {
+            if (queuedIndex > sentenceIndex) this.audioQueue.delete(queuedIndex);
+        }
+
+        for (const [scheduledIndex, scheduled] of this.scheduledSources) {
+            if (scheduledIndex <= sentenceIndex) continue;
+            try {
+                scheduled.source.stop();
+                scheduled.source.disconnect();
+            } catch {
+                // Already stopped
+            }
+            this.scheduledSources.delete(scheduledIndex);
+        }
+
+        this.lastBufferedAudioSeconds = null;
+        this.scheduleBufferedSentences();
+    }
+
+    resetTelemetry(): void {
+        this.lastBufferedAudioSeconds = null;
+        this.deliveredProgressSamples = [];
+        this.options.onBufferSnapshot?.(this.getBufferSnapshot());
+    }
+
     checkBuffer(): void {
         this.options.onBufferLow?.(this.currentSentenceIndex);
+    }
+
+    getBufferSnapshot(): BufferSnapshot {
+        const currentItem = this.audioQueue.get(this.currentSentenceIndex);
+        let currentRemaining = currentItem?.duration ?? 0;
+
+        if (currentItem && this.isPlaying && this.audioContext && this.currentSentence === currentItem.sentence) {
+            const elapsed = clamp(
+                this.audioContext.currentTime - this.sentenceStartTime,
+                0,
+                currentItem.duration,
+            );
+            currentRemaining = Math.max(0, currentItem.duration - elapsed);
+        }
+
+        let bufferedAudioSeconds = currentRemaining;
+        let nextSentenceIndex = this.currentSentenceIndex + 1;
+        while (true) {
+            const queued = this.audioQueue.get(nextSentenceIndex);
+            if (!queued) break;
+            bufferedAudioSeconds += queued.duration;
+            nextSentenceIndex += 1;
+        }
+
+        const isShrinking = this.lastBufferedAudioSeconds !== null
+            && bufferedAudioSeconds < this.lastBufferedAudioSeconds - 0.05;
+        this.lastBufferedAudioSeconds = bufferedAudioSeconds;
+
+        return {
+            bufferedAudioSeconds,
+            isShrinking,
+            nextAudioReady: this.audioQueue.has(this.currentSentenceIndex + 1),
+            deliveredWpm: this.getDeliveredWpm(),
+        };
     }
 
     // jsdom (used in tests) doesn't implement HTMLMediaElement.play(), returning
@@ -429,6 +497,7 @@ class TTSAudioPlayer {
         const aheadCount = this.getBufferedAheadCount();
         logTTSPlayerDebug(`[TTS Player] Contiguous buffer: ${aheadCount} ahead`);
         this.options.onBufferLow?.(this.currentSentenceIndex);
+        this.options.onBufferSnapshot?.(this.getBufferSnapshot());
         
         const sentenceIndex = sentence.index;
         source.onended = () => {
@@ -552,6 +621,9 @@ class TTSAudioPlayer {
             }
         }
 
+        if (!this.audioQueue.has(promotedSentenceIndex)) {
+            this.options.onUnderrun?.(sentenceIndex);
+        }
         this.currentSource = null;
         this.currentSentenceIndex = sentenceIndex + 1;
         this.cleanupOldBuffers();
@@ -579,6 +651,7 @@ class TTSAudioPlayer {
         this.startWordTracking();
         this.options.onSentenceChange?.(sentence.index);
         this.options.onBufferLow?.(this.currentSentenceIndex);
+        this.options.onBufferSnapshot?.(this.getBufferSnapshot());
     }
 
     private cancelScheduledSources(): void {
@@ -609,13 +682,16 @@ class TTSAudioPlayer {
             );
             const safeDuration = this.currentSentenceDuration > 0 ? this.currentSentenceDuration : 0.001;
             const progress = Math.min(1, elapsed / safeDuration);
+            this.recordDeliveredProgress();
             
-            if (
+            const shouldPublishClock = (
                 elapsed >= this.currentSentenceDuration
                 || elapsed - this.lastClockUpdateTime >= CLOCK_UPDATE_INTERVAL_SECONDS
-            ) {
+            );
+            if (shouldPublishClock) {
                 useTTSStore.getState().setCurrentTime(elapsed);
                 this.lastClockUpdateTime = elapsed;
+                this.options.onBufferSnapshot?.(this.getBufferSnapshot());
             }
             
             // Calculate current word within sentence
@@ -670,6 +746,8 @@ class TTSAudioPlayer {
             );
             useTTSStore.getState().setCurrentTime(elapsed);
             this.lastClockUpdateTime = elapsed;
+            this.recordDeliveredProgress();
+            this.options.onBufferSnapshot?.(this.getBufferSnapshot());
         }
         this.isPlaying = false;
         this.stopWordTracking();
@@ -687,6 +765,7 @@ class TTSAudioPlayer {
         this.cancelScheduledSources();
 
         this.currentWordProgressBoundaries = [];
+        this.lastBufferedAudioSeconds = null;
         
         useTTSStore.getState().setPlaybackState('paused');
     }
@@ -732,6 +811,51 @@ class TTSAudioPlayer {
     
     getCurrentWordIndex(): number {
         return useTTSStore.getState().currentWordIndex;
+    }
+
+    getAudibleTime(): number {
+        return this.audioContext?.currentTime ?? 0;
+    }
+
+    private recordDeliveredProgress(): void {
+        if (!this.audioContext || !this.currentSentence) return;
+
+        const elapsed = clamp(
+            this.audioContext.currentTime - this.sentenceStartTime,
+            0,
+            this.currentSentenceDuration,
+        );
+        const wordCount = this.currentSentence.endWordIndex - this.currentSentence.startWordIndex + 1;
+        const progress = this.currentSentenceDuration > 0
+            ? elapsed / this.currentSentenceDuration
+            : 0;
+        const wordPosition = this.currentSentence.startWordIndex + progress * wordCount;
+        const lastSample = this.deliveredProgressSamples.at(-1);
+
+        if (lastSample && wordPosition < lastSample.wordPosition) {
+            this.deliveredProgressSamples = [];
+        }
+
+        this.deliveredProgressSamples.push({
+            time: this.audioContext.currentTime,
+            wordPosition,
+        });
+
+        const cutoff = this.audioContext.currentTime - 10;
+        this.deliveredProgressSamples = this.deliveredProgressSamples.filter((sample) => sample.time >= cutoff);
+    }
+
+    private getDeliveredWpm(): number | null {
+        if (this.deliveredProgressSamples.length < 2) return null;
+
+        const first = this.deliveredProgressSamples[0];
+        const last = this.deliveredProgressSamples.at(-1);
+        if (!last) return null;
+
+        const elapsedSeconds = last.time - first.time;
+        if (elapsedSeconds < 2) return null;
+
+        return Math.round(Math.max(0, (last.wordPosition - first.wordPosition) / elapsedSeconds * 60));
     }
     
     dispose(): void {

@@ -48,6 +48,7 @@ const {
     DEFAULT_VOICE,
     clearTTSCache,
     generateSpeech,
+    getFallbackVoice,
     getVoice,
     getVoiceEngine,
     initTTS,
@@ -83,6 +84,20 @@ describe('voice registry', () => {
         const voice = getVoice(SLOVENIAN_VOICE);
         expect(voice?.language).toBe('sl-SI');
         expect(voice?.languageLabel).toBe('Slovenian');
+    });
+
+    it('maps English voices to same-locale, same-gender Piper fallbacks', () => {
+        expect(getFallbackVoice('af_heart')).toMatchObject({
+            id: 'en_US-amy-low',
+            language: 'en-US',
+            gender: 'female',
+        });
+        expect(getFallbackVoice('bm_george')).toMatchObject({
+            id: 'en_GB-alan-low',
+            language: 'en-GB',
+            gender: 'male',
+        });
+        expect(getFallbackVoice(SLOVENIAN_VOICE)).toBeUndefined();
     });
 
     it('gives every voice the fields the pickers render', () => {
@@ -233,6 +248,37 @@ describe('streamSpeech', () => {
         expect(results).toHaveLength(2);
         expect(sentences[0]).toMatchObject({ audioStartTime: 0, audioEndTime: 2 });
         expect(sentences[1]).toMatchObject({ audioStartTime: 2, audioEndTime: 5 });
+    });
+
+    it('resolves speed for each sentence and reports generation timing', async () => {
+        const getSpeed = vi.fn((sentence: (typeof sentences)[number]) => sentence.index === 0 ? 0.8 : 0.9);
+        const onGenerationSample = vi.fn();
+
+        const results = [];
+        for await (const result of streamSpeech(sentences, {
+            voice: SLOVENIAN_VOICE,
+            getSpeed,
+            onGenerationSample,
+        })) {
+            results.push(result);
+        }
+
+        expect(results).toHaveLength(2);
+        expect(getSpeed).toHaveBeenNthCalledWith(1, sentences[0]);
+        expect(getSpeed).toHaveBeenNthCalledWith(2, sentences[1]);
+        expect(piper.generatePiperSpeech).toHaveBeenNthCalledWith(1, sentences[0].text, {
+            voice: SLOVENIAN_VOICE,
+            speed: 0.8,
+        });
+        expect(piper.generatePiperSpeech).toHaveBeenNthCalledWith(2, sentences[1].text, {
+            voice: SLOVENIAN_VOICE,
+            speed: 0.9,
+        });
+        expect(onGenerationSample).toHaveBeenCalledTimes(2);
+        expect(onGenerationSample).toHaveBeenCalledWith({
+            generationSeconds: expect.any(Number),
+            audioSeconds: 1,
+        });
     });
 
     it('does not advance the audible sentence while generating ahead', async () => {

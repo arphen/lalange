@@ -85,17 +85,34 @@ async function closeChaptersDrawerIfOpen(page: Page): Promise<void> {
   const toggle = page.getByTestId('toggle-chapters');
   if (await toggle.getAttribute('aria-expanded') !== 'true') return;
 
-  await toggle.click();
+  const backToContents = page.getByRole('button', { name: 'Back to Contents' });
+  if (await backToContents.isVisible().catch(() => false)) {
+    await backToContents.click();
+  }
+
+  const closeButton = page.getByRole('button', { name: 'Close contents' });
+  if (await closeButton.isVisible().catch(() => false)) {
+    await closeButton.click();
+  } else {
+    await toggle.click();
+  }
   await expect(toggle).toHaveAttribute('aria-expanded', 'false');
 }
 
 async function ensureChaptersDrawerOpen(page: Page): Promise<void> {
   const toggle = page.getByTestId('toggle-chapters');
-  if (await toggle.getAttribute('aria-expanded') === 'true') return;
+  if (await toggle.getAttribute('aria-expanded') !== 'true') {
+    await toggle.click();
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    await expect(page.getByTestId('sidebar-container')).toHaveAttribute('aria-hidden', 'false');
+    await page.waitForTimeout(300);
+  }
 
-  await toggle.click();
-  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
-  await expect(page.getByTestId('sidebar-container')).toHaveAttribute('aria-hidden', 'false');
+  const backToContents = page.getByRole('button', { name: 'Back to Contents' });
+  if (await backToContents.isVisible().catch(() => false)) {
+    await backToContents.click();
+    await expect(page.getByRole('heading', { name: 'Contents' })).toBeVisible();
+  }
 }
 
 async function waitForChapterTransition(page: Page): Promise<void> {
@@ -120,16 +137,28 @@ async function loadFirstTextChapter(page: Page): Promise<void> {
 async function jumpToReadableSubchapter(page: Page): Promise<void> {
   await ensureChaptersDrawerOpen(page);
 
-  const readSubchapterButtons = page.locator('button[data-testid^="subchapter-btn-"]:not([disabled])');
-  const subchapterCount = await readSubchapterButtons.count();
-  if (subchapterCount === 0) {
+  const currentChapterMore = page.locator('.reader-chapter-line--active .reader-chapter-more').first();
+  const chapterMore = (await currentChapterMore.count()) > 0
+    ? currentChapterMore
+    : page.getByRole('button', { name: /More options for/ }).first();
+  if (await chapterMore.count() === 0) {
     await loadFirstTextChapter(page);
     return;
   }
 
-  // Prefer the second subchapter so we have text both above and below the live word.
-  const targetIndex = subchapterCount > 1 ? 1 : 0;
-  await readSubchapterButtons.nth(targetIndex).click();
+  await chapterMore.click();
+  await page.getByRole('menuitem', { name: 'Browse passages' }).click();
+  const passageButtons = page.locator('.reader-passage-row');
+  const passageCount = await passageButtons.count();
+  if (passageCount === 0) {
+    await page.getByRole('button', { name: 'Contents' }).click();
+    await loadFirstTextChapter(page);
+    return;
+  }
+
+  // Prefer a later passage so the reader can show context on both sides.
+  const targetIndex = passageCount > 1 ? 1 : 0;
+  await passageButtons.nth(targetIndex).click();
   await waitForChapterTransition(page);
   await expect(page.getByTestId('rsvp-container')).toBeVisible({ timeout: 30000 });
 }
@@ -227,6 +256,16 @@ test('01 Reader Journey Key Flows', async ({ page, isMobile }) => {
   await openReaderFromArchive(page);
   await jumpToReadableSubchapter(page);
   await expectReaderPlaybackToAdvance(page);
+  if (!isMobile) {
+    const listenButton = page.getByRole('button', { name: 'Listen' });
+    await expect(listenButton).toBeVisible();
+    await listenButton.click();
+    await expect(page.getByTestId('tts-player-panel')).toBeVisible();
+    await expect(page.getByText('Listen Mode')).toBeVisible();
+    await expect(page.getByRole('switch', { name: /continuous audio/i })).toBeVisible();
+    await listenButton.click();
+    await expect(page.getByTestId('tts-player-panel')).toHaveCount(0);
+  }
   await captureScreenshot(page, isMobile, '02-reader-entry.png');
 
   await advanceToDenseReaderContext(page);
@@ -242,43 +281,71 @@ test('01 Reader Journey Key Flows', async ({ page, isMobile }) => {
   expect(closedToolbarBox).not.toBeNull();
   expect(drawerBox).not.toBeNull();
   expect(toolbarBox).not.toBeNull();
+  await expect(page.locator('.reader-chapter-line--active')).toHaveCount(1);
+  await expect(page.locator('button[data-testid^="subchapter-btn-"]')).toHaveCount(0);
+  await expect(page.locator('.reader-progress-track')).toHaveCount(0);
+  await expect(page.getByText(/page-based structure|reading sections|Jump within this chapter/i)).toHaveCount(0);
+  const chapterRowBoxes = await chapterButtons.evaluateAll((rows) => rows.map((row) => row.getBoundingClientRect().height));
+  expect(chapterRowBoxes.length).toBeGreaterThan(0);
+  expect(Math.max(...chapterRowBoxes)).toBeLessThanOrEqual(84);
   const contentsHeaderBox = await page.getByRole('heading', { name: 'Contents' }).boundingBox();
   expect(contentsHeaderBox).not.toBeNull();
   expect(contentsHeaderBox!.x).toBeGreaterThanOrEqual(drawerBox!.x);
   expect(contentsHeaderBox!.y).toBeGreaterThanOrEqual(drawerBox!.y);
-  expect(Math.abs(toolbarBox!.x - closedToolbarBox!.x)).toBeLessThanOrEqual(1);
   expect(Math.abs(toolbarBox!.y - closedToolbarBox!.y)).toBeLessThanOrEqual(1);
   expect(toolbarBox!.y).toBeLessThanOrEqual(20);
   if (isMobile) {
-    expect(drawerBox!.y).toBeGreaterThanOrEqual(toolbarBox!.y + toolbarBox!.height - 1);
+    const viewport = page.viewportSize();
+    expect(Math.abs(toolbarBox!.x - closedToolbarBox!.x)).toBeLessThanOrEqual(1);
+    expect(drawerBox!.y).toBe(0);
+    expect(drawerBox!.height).toBeGreaterThanOrEqual((viewport?.height || 0) - 1);
+    expect(drawerBox!.width).toBeGreaterThanOrEqual((viewport?.width || 0) - 1);
+    await expect(page.locator('.reader-toolbar')).toHaveAttribute('aria-hidden', 'true');
+    await expect(page.locator('.reader-toolbar')).toHaveAttribute('inert', '');
+    await expect(page.locator('.reader-main-stage')).toHaveAttribute('aria-hidden', 'true');
+    await expect(page.locator('.reader-main-stage')).toHaveAttribute('inert', '');
   } else {
     expect(toolbarBox!.x + toolbarBox!.width).toBeLessThanOrEqual(drawerBox!.x + 1);
   }
-  await expect(page.getByRole('button', { name: /fullscreen/i })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: /focus mode|exit focus mode/i })).toBeVisible();
-  const pacingControl = page.getByRole('button', { name: /adaptive pacing/i }).first();
-  await expect(pacingControl).toBeVisible();
-  if (await pacingControl.getAttribute('aria-label') === 'Adaptive pacing unavailable') {
-    await expect(pacingControl).toBeDisabled();
-    await expect(page.getByRole('heading', { name: 'Set up adaptive pacing' })).toHaveCount(0);
+  if (!isMobile) {
+    await expect(page.getByRole('button', { name: /fullscreen/i })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: /focus mode|exit focus mode/i })).toBeVisible();
+    const pacingControl = page.getByRole('button', { name: /adaptive pacing/i }).first();
+    await expect(pacingControl).toBeVisible();
+    if (await pacingControl.getAttribute('aria-label') === 'Adaptive pacing unavailable') {
+      await expect(pacingControl).toBeDisabled();
+      await expect(page.getByRole('heading', { name: 'Set up adaptive pacing' })).toHaveCount(0);
+    }
+    await expect(page.getByRole('button', { name: 'Listen' })).toBeVisible();
+    await expect(page.getByRole('button', { name: /switch to (dark|day) theme/i })).toBeVisible();
   }
-  await expect(page.getByRole('button', { name: 'Listen' })).toBeVisible();
-  await expect(page.getByRole('button', { name: /switch to (dark|day) theme/i })).toBeVisible();
   await expect(page.getByTestId('toggle-chapters')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Close contents' })).toHaveCount(1);
-  const toolbarButtons = page.getByTestId('reader-toolbar-controls').getByRole('button');
-  const firstToolBox = await toolbarButtons.nth(0).boundingBox();
-  const secondToolBox = await toolbarButtons.nth(1).boundingBox();
-  expect(firstToolBox).not.toBeNull();
-  expect(secondToolBox).not.toBeNull();
-  expect(Math.abs(firstToolBox!.y - secondToolBox!.y)).toBeLessThanOrEqual(1);
-  expect(secondToolBox!.x).toBeGreaterThanOrEqual(firstToolBox!.x + firstToolBox!.width - 1);
   if (!isMobile) {
+    const toolbarButtons = page.getByTestId('reader-toolbar-controls').getByRole('button');
+    const firstToolBox = await toolbarButtons.nth(0).boundingBox();
+    const secondToolBox = await toolbarButtons.nth(1).boundingBox();
+    expect(firstToolBox).not.toBeNull();
+    expect(secondToolBox).not.toBeNull();
+    expect(Math.abs(firstToolBox!.y - secondToolBox!.y)).toBeLessThanOrEqual(1);
+    expect(secondToolBox!.x).toBeGreaterThanOrEqual(firstToolBox!.x + firstToolBox!.width - 1);
     const speedControlsBox = await page.getByTestId('speed-controls').boundingBox();
     expect(speedControlsBox).not.toBeNull();
     expect(speedControlsBox!.x + speedControlsBox!.width).toBeLessThanOrEqual(drawerBox!.x);
   }
   await captureScreenshot(page, isMobile, '04-reader-chapters-drawer.png');
+
+  const moreOptionsButton = page.getByRole('button', { name: /More options for/ }).first();
+  await expect(moreOptionsButton).toBeVisible();
+  await moreOptionsButton.click();
+  await expect(page.getByRole('menuitem', { name: 'Browse passages' })).toBeVisible();
+  await page.getByRole('menuitem', { name: 'Browse passages' }).click();
+  await expect(page.getByRole('heading', { name: 'Passages' })).toBeVisible();
+  await expect(page.getByTestId('sidebar-chapter-button')).toHaveCount(0);
+  await expect(page.locator('.reader-passage-row').first()).toBeVisible();
+  await captureScreenshot(page, isMobile, '05-reader-passages.png');
+  await page.getByRole('button', { name: 'Back to Contents' }).click();
+  await expect(page.getByRole('heading', { name: 'Contents' })).toBeVisible();
 
   const chapterCount = await chapterButtons.count();
   const targetChapterButton = chapterCount > 1 ? chapterButtons.nth(1) : chapterButtons.first();
@@ -291,7 +358,7 @@ test('01 Reader Journey Key Flows', async ({ page, isMobile }) => {
 
   await expect(page.getByTestId('rsvp-container')).toBeVisible({ timeout: 30000 });
   await advanceToDenseReaderContext(page);
-  await captureScreenshot(page, isMobile, '05-reader-next-chapter-river-styling.png');
+  await captureScreenshot(page, isMobile, '06-reader-next-chapter-river-styling.png');
 });
 
 test('02 Dark reader is one continuous surface', async ({ page, isMobile }) => {
@@ -332,27 +399,22 @@ test('02 Dark reader is one continuous surface', async ({ page, isMobile }) => {
   await ensureChaptersDrawerOpen(page);
   const contentsStyles = await page.evaluate(() => {
     const chapter = document.querySelector('.reader-chapter-row');
-    const section = document.querySelector('.reader-section-row--active');
-    const bookProgress = document.querySelector('.reader-contents-progress .reader-progress-track');
-    const chapterProgress = chapter?.querySelector('.reader-progress-track');
 
     return {
       chapterBackground: chapter ? getComputedStyle(chapter).backgroundColor : null,
       chapterShadow: chapter ? getComputedStyle(chapter).boxShadow : null,
-      sectionBackground: section ? getComputedStyle(section).backgroundColor : null,
-      bookProgressHeight: bookProgress ? getComputedStyle(bookProgress).height : null,
-      chapterProgressHeight: chapterProgress ? getComputedStyle(chapterProgress).height : null,
-      sectionLocation: section?.getAttribute('aria-current') === 'location' && section.textContent?.includes('Here'),
+      hasNestedSections: Boolean(document.querySelector('.reader-section-row')),
+      hasProgressTracks: Boolean(document.querySelector('.reader-progress-track')),
+      hasCurrentRow: Boolean(document.querySelector('.reader-chapter-line--active')),
     };
   });
 
   expect(contentsStyles).toEqual({
     chapterBackground: 'rgba(0, 0, 0, 0)',
     chapterShadow: 'none',
-    sectionBackground: 'rgba(0, 0, 0, 0)',
-    bookProgressHeight: '3px',
-    chapterProgressHeight: '3px',
-    sectionLocation: true,
+    hasNestedSections: false,
+    hasProgressTracks: false,
+    hasCurrentRow: true,
   });
   await captureScreenshot(page, isMobile, '07-reader-dark-contents.png');
 });

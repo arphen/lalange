@@ -3,7 +3,8 @@
 ## Status
 
 - Prepared: 2026-08-23
-- Scope: planning only; no runtime behavior changes are included in this document
+- Core pacing scope: implemented and validated
+- Piper fallback extension: implemented and validated; Q8 precision rung remains benchmark-gated
 - Primary surfaces: Reader speed dock, TTS generation loop, Web Audio player,
   TTS settings, and listening handoff
 - Default user preference: `1.0x` speech with continuous playback enabled
@@ -47,6 +48,17 @@ say that audio is catching up instead of claiming that playback is continuous.
 9. Keep device capacity local and transient. Sync the user's preferred speed
    and continuity preference, but never sync a limit learned on one device to
    another device.
+10. If Kokoro remains unusably slow, suggest a same-language Piper voice only
+    after sustained measured evidence. Never switch engines from a device name,
+    user-agent check, model label, or one slow sentence.
+11. Never download a fallback model or change voice without an explicit user
+    action. The download size and audible voice change must be stated before
+    that action.
+12. Keep the selected Kokoro voice as the user's preferred voice. A Piper
+    performance override is local to the current device and must not replace
+    the voice sent in a listening handoff.
+13. Call the option a `lighter voice` in the interface. Do not describe it to
+    readers as a worse, low-quality, cheap, or degraded model.
 
 ## User Contract
 
@@ -146,16 +158,16 @@ will do.
 
 Use these names in code and tests even if the shorter UI copy differs.
 
-| Term | Meaning | Owner |
-| --- | --- | --- |
-| `preferredSpeed` | The user's selected `0.5x..2.0x` rate. Existing persisted `speed` remains compatible. | TTS settings store |
-| `effectiveSpeed` | The rate selected for the next generated sentence. At or below preferred speed when continuity is enabled. | Realtime pacing controller |
-| `sustainableSpeed` | A conservative estimate of what current generation and buffer trends can support. | Realtime pacing controller |
-| `generationRtf` | Generation wall seconds divided by produced audible seconds. Internal telemetry only. | Generation loop |
-| `bufferedAudioSeconds` | Remaining current audio plus contiguous queued audio, measured in audible seconds. | Audio player |
-| `deliveredWpm` | Source words actually advanced per audible minute over a rolling window. | Audio player telemetry |
-| `continuityMode` | `continuous` by default, or `prefer-speed` after explicit user choice. | TTS settings store |
-| `paceState` | `measuring`, `steady`, `limited`, `recovering`, or `interrupted`. | Realtime pacing controller |
+| Term                   | Meaning                                                                                                    | Owner                      |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------- | -------------------------- |
+| `preferredSpeed`       | The user's selected `0.5x..2.0x` rate. Existing persisted `speed` remains compatible.                      | TTS settings store         |
+| `effectiveSpeed`       | The rate selected for the next generated sentence. At or below preferred speed when continuity is enabled. | Realtime pacing controller |
+| `sustainableSpeed`     | A conservative estimate of what current generation and buffer trends can support.                          | Realtime pacing controller |
+| `generationRtf`        | Generation wall seconds divided by produced audible seconds. Internal telemetry only.                      | Generation loop            |
+| `bufferedAudioSeconds` | Remaining current audio plus contiguous queued audio, measured in audible seconds.                         | Audio player               |
+| `deliveredWpm`         | Source words actually advanced per audible minute over a rolling window.                                   | Audio player telemetry     |
+| `continuityMode`       | `continuous` by default, or `prefer-speed` after explicit user choice.                                     | TTS settings store         |
+| `paceState`            | `measuring`, `steady`, `limited`, `recovering`, or `interrupted`.                                          | Realtime pacing controller |
 
 The generation loop owns generation timing. The audio player owns audible time,
 queue duration, word progress, and underrun detection. The pacing controller
@@ -211,13 +223,13 @@ Throughput predicts sustainability; buffered seconds show whether the
 prediction is currently working. Add a contiguous audible-time snapshot to
 the player and start with these tuning bands:
 
-| Buffered audio | Controller response |
-| --- | --- |
-| More than 15 seconds and stable | Eligible for slow recovery toward preferred speed |
-| 8 to 15 seconds | Hold the current effective speed |
-| 4 to 8 seconds and shrinking | Lower toward the sustainable estimate |
-| Less than 4 seconds and shrinking | Lower immediately at the next sentence boundary |
-| Missing next audio when the current source ends | Record an underrun and enter `interrupted` |
+| Buffered audio                                  | Controller response                               |
+| ----------------------------------------------- | ------------------------------------------------- |
+| More than 15 seconds and stable                 | Eligible for slow recovery toward preferred speed |
+| 8 to 15 seconds                                 | Hold the current effective speed                  |
+| 4 to 8 seconds and shrinking                    | Lower toward the sustainable estimate             |
+| Less than 4 seconds and shrinking               | Lower immediately at the next sentence boundary   |
+| Missing next audio when the current source ends | Record an underrun and enter `interrupted`        |
 
 Tune these values with generated audio seconds, not sentence counts. Keep a
 hard sentence and memory bound so a chapter with many tiny sentences cannot
@@ -312,14 +324,14 @@ multiplier rather than `0 WPM`.
 
 ### Reader dock modes
 
-| Reader state | Primary value | Secondary value | Minus/plus action |
-| --- | --- | --- | --- |
-| RSVP open or playing | RSVP target WPM | RSVP real WPM or `PAUSED` | Existing momentum WPM change |
-| Listen mode, not sampled yet | Preferred speech multiplier | `SPEECH` or `PREPARING` | Change TTS speed by `0.1x` |
-| TTS steady | Delivered speech WPM | Effective multiplier | Change TTS speed by `0.1x` |
-| TTS limited | Delivered speech WPM plus down mark | `0.8x CONTINUOUS` | Change preferred speed; explain cap when relevant |
-| TTS paused | Last stable speech WPM | `PAUSED - 1.0x SET` | Change TTS speed by `0.1x` |
-| TTS interrupted | Last stable speech WPM | `PREPARING AUDIO` | Controls remain available |
+| Reader state                 | Primary value                       | Secondary value           | Minus/plus action                                 |
+| ---------------------------- | ----------------------------------- | ------------------------- | ------------------------------------------------- |
+| RSVP open or playing         | RSVP target WPM                     | RSVP real WPM or `PAUSED` | Existing momentum WPM change                      |
+| Listen mode, not sampled yet | Preferred speech multiplier         | `SPEECH` or `PREPARING`   | Change TTS speed by `0.1x`                        |
+| TTS steady                   | Delivered speech WPM                | Effective multiplier      | Change TTS speed by `0.1x`                        |
+| TTS limited                  | Delivered speech WPM plus down mark | `0.8x CONTINUOUS`         | Change preferred speed; explain cap when relevant |
+| TTS paused                   | Last stable speech WPM              | `PAUSED - 1.0x SET`       | Change TTS speed by `0.1x`                        |
+| TTS interrupted              | Last stable speech WPM              | `PREPARING AUDIO`         | Controls remain available                         |
 
 Switch the dock to TTS semantics whenever Listen mode is open, including idle
 and paused states. Switching it only while audio is actively playing would make
@@ -332,13 +344,13 @@ unchanged RSVP target.
 
 The state should be legible without turning the reading view into a dashboard.
 
-| Meaning | Visual treatment | Motion | Text behavior |
-| --- | --- | --- | --- |
-| Preferred setting | Existing cyan/neutral control treatment | Normal button response | Multiplier appears after interaction or before WPM is measurable |
-| Healthy continuous audio | Existing emerald buffer fill | No perpetual animation | No badge and no explanation by default |
-| Device-limited pace | Amber downward tick next to the effective rate | One 180-250 ms transition when state changes | One short line on disclosure |
-| Recovering toward preferred pace | Same amber tick at reduced emphasis | Numeric rate changes only at boundaries | No repeated toast |
-| Actual interruption | Red/rose break in the buffer strip plus text | No pulsing loop | `Preparing audio` or the explicit minimum-rate message |
+| Meaning                          | Visual treatment                               | Motion                                       | Text behavior                                                    |
+| -------------------------------- | ---------------------------------------------- | -------------------------------------------- | ---------------------------------------------------------------- |
+| Preferred setting                | Existing cyan/neutral control treatment        | Normal button response                       | Multiplier appears after interaction or before WPM is measurable |
+| Healthy continuous audio         | Existing emerald buffer fill                   | No perpetual animation                       | No badge and no explanation by default                           |
+| Device-limited pace              | Amber downward tick next to the effective rate | One 180-250 ms transition when state changes | One short line on disclosure                                     |
+| Recovering toward preferred pace | Same amber tick at reduced emphasis            | Numeric rate changes only at boundaries      | No repeated toast                                                |
+| Actual interruption              | Red/rose break in the buffer strip plus text   | No pulsing loop                              | `Preparing audio` or the explicit minimum-rate message           |
 
 Color is supporting information only. The downward mark, labels, tooltip, and
 buffer break must carry the same meaning for color-blind users. Use existing
@@ -356,18 +368,18 @@ state.
 
 Use these strings as the initial copy baseline and test their accessible names.
 
-| Context | Copy |
-| --- | --- |
-| Startup on constrained device | `Preparing continuous audio` |
-| Limited-state disclosure | `Set to 1.0x. Playing at 0.8x so this device can keep speaking without pauses.` |
-| Plus tooltip while limited | `Faster speech: 1.1x. This device is keeping audio continuous at 0.8x.` |
-| Faster-choice prompt | `1.1x is faster than this device can currently keep up with.` |
-| Keep limiter action | `Keep continuous` |
-| Override action | `Use 1.1x now (may pause)` |
-| Continuity setting | `Continuous audio` |
-| Continuity setting help | `Slows speech when this device needs more time.` |
-| Minimum-rate interruption | `This device needs a moment to prepare more audio.` |
-| Prefer-speed state | `Preferred speed - pauses possible` |
+| Context                       | Copy                                                                            |
+| ----------------------------- | ------------------------------------------------------------------------------- |
+| Startup on constrained device | `Preparing continuous audio`                                                    |
+| Limited-state disclosure      | `Set to 1.0x. Playing at 0.8x so this device can keep speaking without pauses.` |
+| Plus tooltip while limited    | `Faster speech: 1.1x. This device is keeping audio continuous at 0.8x.`         |
+| Faster-choice prompt          | `1.1x is faster than this device can currently keep up with.`                   |
+| Keep limiter action           | `Keep continuous`                                                               |
+| Override action               | `Use 1.1x now (may pause)`                                                      |
+| Continuity setting            | `Continuous audio`                                                              |
+| Continuity setting help       | `Slows speech when this device needs more time.`                                |
+| Minimum-rate interruption     | `This device needs a moment to prepare more audio.`                             |
+| Prefer-speed state            | `Preferred speed - pauses possible`                                             |
 
 Copy rules:
 
@@ -422,6 +434,278 @@ slots. Do not add a technical paragraph to this panel.
 
 The full TTS settings page can explain the Piper pitch tradeoff and local model
 behavior. The Reader should only explain the immediate pace tradeoff.
+
+## Graceful Kokoro-To-Piper Fallback
+
+### Feasibility and current constraint
+
+The engine router serializes a Kokoro-to-Piper switch, unloads the unused
+model, and routes future sentences by voice ID. The installed Piper runtime
+also exposes English voices. The app now registers the Slovenian
+`sl_SI-artur-medium` voice plus same-language, same-gender English fallback
+voices, so an English book can use Piper without changing language or accent.
+The fallback catalog is provided through `modelRegistry`, leaving future
+providers and languages free to register their own defaults and candidates.
+
+An initial English shortlist is available from the runtime's bundled registry:
+
+| Preferred Kokoro voice | Piper benchmark shortlist                                | Approximate download |
+| ---------------------- | -------------------------------------------------------- | -------------------- |
+| American, female       | `en_US-hfc_female-medium`, `en_US-amy-low`               | 63.1-63.2 MB         |
+| American, male         | `en_US-hfc_male-medium`, `en_US-danny-low`               | about 63 MB          |
+| British, female        | `en_GB-alba-medium`, `en_GB-southern_english_female-low` | about 63 MB          |
+| British, male          | `en_GB-alan-medium`, `en_GB-alan-low`                    | 63.1-63.2 MB         |
+
+The runtime currently registers the four `low` English candidates in this
+table. Do not treat the `low` or `medium` labels as performance evidence. The
+inspected files are nearly the same size, and neither file size nor quality
+label proves faster inference. Benchmark candidate generation RTF, memory,
+startup time, pronunciation, and long-form listening quality on the target
+Safari and Chromium devices before expanding or changing the curated map.
+Keep one fallback per language/accent/gender combination after that evidence
+exists.
+
+The first fallback release should support only mapped `en-US` and `en-GB`
+Kokoro voices. A Slovenian voice is already using Piper and has no Kokoro
+fallback path. If no same-language candidate exists, do not show the offer.
+
+Before shipping a cross-engine switch on desktop, benchmark Kokoro Q8/WASM as
+a same-voice rung. The app already uses the roughly 92 MB Q8 model on iOS, but
+desktop currently always selects FP32. If Q8 materially improves sustained RTF
+on an older Mac, prefer this ladder there:
+
+1. Kokoro FP32 to Kokoro Q8, preserving the selected voice;
+2. Kokoro Q8 to a mapped Piper voice only if Q8 still cannot keep up.
+
+An iPhone is already on Q8 and can proceed directly to the Piper offer. Do not
+assume Q8/WASM beats FP32/WebGPU on every desktop; use the same measured trial
+and rollback rules. Keep this precision experiment separate from the Piper
+implementation so a speed improvement can be attributed to the correct rung.
+
+### Fallback eligibility
+
+Keep engine recommendation policy outside `RealtimePacer`. Add a pure advisor,
+for example `src/core/tts/fallbackAdvisor.ts`, that consumes low-frequency
+pacing snapshots and underrun events. This avoids teaching the pacing
+controller about model catalogs, downloads, prompts, or user consent.
+
+Start with an offer, never an automatic switch, after either condition:
+
+1. Kokoro has produced at least ten seconds of stable measured audio,
+   continuous mode has limited effective speed to `0.6x` or below for three
+   consecutive sentence samples, and the audible buffer is still shrinking;
+   or
+2. Kokoro has reached the `0.5x` floor and produced two true underruns within
+   sixty audible seconds.
+
+The `0.6x` threshold is an initial product boundary, not a hardware truth. Tune
+it only from listening studies and traces. Do not offer fallback:
+
+- during model loading, startup warm-up, a hidden-tab discontinuity, or a user
+  pause;
+- in `prefer-speed` mode, where pauses are already an explicit choice;
+- after one slow or unusually long sentence;
+- for an unmapped language or engine already using Piper;
+- again in the same limited episode after the reader dismisses it; or
+- after Piper was tried and measured no better during the same model session.
+
+Recovery above `0.7x` with a stable buffer ends the limited episode and rearms
+the advisor for a future material slowdown. These separate enter/exit
+thresholds prevent prompt oscillation.
+
+### Reader user flow
+
+#### 1. Nonblocking recommendation
+
+Keep audio running and place one inline recommendation in the expanded Listen
+panel. Do not use a modal, toast, or speed-dock takeover.
+
+> This voice is running very slowly on this device. A lighter local voice may
+> keep up better.
+
+If the candidate is cached:
+
+- `Try lighter voice`
+- `Keep Heart`
+
+If it is not cached:
+
+- `Download lighter voice - 63 MB`
+- `Keep Heart`
+
+Use the actual preferred voice name in the second action. Add one supporting
+line before a download:
+
+> The voice will change. Text and speech stay on this device.
+
+The speed dock continues to show measured WPM and the limited/interrupted state.
+It must not become an engine picker.
+
+#### 2. Download without breaking current speech
+
+Add a Piper predownload helper that stores the selected model without creating
+a Piper inference session. This is important because the current `initTTS`
+path unloads Kokoro before Piper initialization; using it for a first-time
+download would create a long avoidable silence.
+
+After consent, keep Kokoro speaking while the Piper files download and show
+progress in the inline recommendation:
+
+> Downloading lighter voice - 42%
+
+Closing Listen may hide progress but must not silently activate the downloaded
+voice. If download fails or the browser is offline, retain Kokoro and show a
+retry action in the panel. Do not report a playback error for an optional
+fallback download.
+
+The installed Piper download API does not currently expose an abort signal.
+Do not render a fake cancel action. A later library upgrade can add real
+cancellation; until then, allow the download to finish in cache while keeping
+the activation decision revocable.
+
+Track exactly one predownload promise per voice. If no progress arrives for
+thirty seconds, change the inline status to `Download is taking longer than
+expected` and let the reader hide it while listening continues. Do not start a
+second download while the first promise remains unsettled. A page reload is
+the only hard escape from a permanently hung library request until the runtime
+supports cancellation.
+
+#### 3. Boundary-safe engine transition
+
+Once the candidate is cached and the reader has accepted the switch:
+
+1. stop new Kokoro generation;
+2. preserve the current sentence and up to two already generated Kokoro
+   sentences as an audible bridge;
+3. commit the Reader cursor and identify the first sentence after that bridge;
+4. unload Kokoro and initialize the cached Piper model while bridge audio
+   continues;
+5. generate a small contiguous Piper startup buffer from the first missing
+   sentence; and
+6. let the scheduler cross to Piper at a sentence boundary without replaying or
+   skipping text.
+
+The normal voice-change effect currently stops playback and clears the whole
+queue. The fallback path therefore needs an explicit transition operation; it
+must not implement the switch by simply calling the existing persisted
+`setVoice()` action.
+
+If Piper is not ready before bridge audio ends, show `Preparing lighter voice`
+and resume from the committed boundary. Never keep stale Kokoro capacity
+samples after the switch. Immediately before the first Piper sentence starts,
+reset generation samples and the advisor, and add a player telemetry reset that
+clears delivered WPM and buffer trend without deleting the preserved bridge
+buffers. Do not reuse `clearQueue()` for that reset.
+
+#### 4. Trial and rollback
+
+While the override is active, the Listen panel should identify both voices:
+
+> Amy - lighter voice
+>
+> Preferred voice: Heart
+
+Keep `Return to Heart` available beside the voice row. Manually choosing any
+voice exits the fallback override and follows the normal explicit voice-change
+path.
+
+Treat the first Piper run as a trial. After at least ten seconds of generated
+audio and three sentence samples, compare it with the Kokoro episode that
+triggered the offer. Success requires materially better continuity, such as no
+new underrun and at least `0.15x` more sustainable speed. If Piper is not
+better, do not switch back automatically and surprise the reader again. Show:
+
+> This voice is not keeping up better on this device.
+
+Actions:
+
+- `Return to Heart`
+- `Keep Amy`
+
+If Piper also fails at `0.5x`, use the existing honest interruption state.
+There is no third automatic fallback and no engine-switch loop.
+
+### Preference and handoff ownership
+
+Separate voice identity from the active performance override:
+
+| State                                               | Persistence                          | Handoff |
+| --------------------------------------------------- | ------------------------------------ | ------- |
+| `preferredVoice`                                    | Existing local preference            | Yes     |
+| `activeVoiceOverride`                               | Current listening session by default | No      |
+| `fallbackStatus` and download progress              | Transient                            | No      |
+| Measured Kokoro/Piper capacity                      | Transient and bounded                | No      |
+| Cached Piper model files                            | Browser OPFS                         | No      |
+| `fallbackPolicy` (`ask`, `prefer-lighter`, `never`) | Optional device-local setting        | No      |
+
+For compatibility, the existing persisted `voice` can remain the preferred
+voice while runtime code derives `activeVoice = activeVoiceOverride ?? voice`.
+Do not write an accepted session trial through `setVoice()`, and do not place
+the override in `ttsSettings` exchange payloads.
+
+The first release should default to session-only fallback and `ask` policy. A
+full TTS setting may later offer `Prefer lighter voices on this device` and
+`Do not suggest lighter voices`. Both are device policies, not book metadata.
+Define the session boundary as closing Listen, changing books, or reloading the
+page. Any of those clears `activeVoiceOverride`; a completed Piper download may
+remain cached and can be offered as ready on the next eligible session.
+
+### Failure containment
+
+- A failed download leaves Kokoro playback and the preferred voice unchanged.
+- A failed Piper initialization clears the override and resumes Kokoro from the
+  committed sentence after Kokoro reloads.
+- A switch request that becomes stale because of seek, chapter change, voice
+  change, or panel close must not activate later.
+- The transition carries a generation ID and aborts stale sentence results just
+  like normal generation replacement.
+- Never hold live Kokoro and Piper inference sessions at the same time. Cached
+  files may coexist; model sessions may not.
+- Do not send sentence text, voice samples, RTF history, or fallback decisions
+  to analytics or persistence.
+
+### Fallback test plan
+
+Add deterministic coverage for:
+
+- eligibility requires sustained low Kokoro performance, not warm-up noise;
+- recovery and dismissal suppress repeated offers in one episode;
+- prefer-speed, Piper-active, and unmapped-language states are ineligible;
+- a constrained desktop offers a benchmark-approved Q8 rung before Piper;
+- an iPhone already using Q8 does not offer or download the Q8 rung again;
+- candidate mapping preserves language, accent, and gender;
+- an uncached candidate requires explicit download consent;
+- predownload leaves Kokoro loaded and cannot activate the voice by itself;
+- download failure leaves playback untouched;
+- accepted switching preserves the current and bridge sentences exactly once;
+- stale downloads and generations cannot switch after seek or chapter change;
+- engine transition resets pacing, WPM, buffer, and underrun evidence;
+- preferred voice remains persisted and handed off while the override does not;
+- `Return to Heart` resumes at the committed sentence without duplication;
+- Piper-not-better state offers rollback and cannot trigger a switch loop; and
+- keyboard, touch, VoiceOver, offline, and reduced-motion flows expose the same
+  decision and status.
+
+Before enabling recommendations, benchmark every curated candidate on an older
+Intel Mac, iPhone Safari, and CPU/WASM Chromium. Record cold cached startup,
+sentence RTF distribution, peak memory, sustainable speed, and listening
+quality. Piper must demonstrate a material continuity improvement on at least
+the constrained target class; a smaller download alone is not acceptance.
+
+### Fallback acceptance criteria
+
+- No fallback bytes download before explicit consent.
+- No automatic voice or language change occurs.
+- The offer appears only from measured sustained Kokoro underperformance.
+- Accepting a cached fallback does not replay or skip source words.
+- The Reader remains usable while an optional model downloads.
+- Preferred voice, speed, and continuity preference survive fallback and
+  rollback unchanged.
+- Device-local fallback state is absent from listening handoffs.
+- The original voice can be restored from the Listen panel at all times.
+- A fallback that performs no better is reported honestly and is not retried
+  automatically in the same session.
+- Normal healthy Kokoro playback adds no fallback UI or background work.
 
 ## Implementation Plan
 
@@ -746,4 +1030,4 @@ continuity and speech-quality regressions difficult to attribute.
 - [ ] Focused unit, integration, build, and Reader journey checks pass.
 - [ ] A ten-minute constrained-device run has no avoidable burst-and-wait cycle.
 - [ ] Minimum-rate failure is communicated honestly when continuous generation
-  is not possible.
+      is not possible.

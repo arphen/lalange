@@ -116,6 +116,7 @@ describe('Reader Component', () => {
                 removeItem: vi.fn(),
             },
         });
+        useTTSStore.setState({ speed: 1, continuityMode: 'continuous' });
         useSettingsStore.getState().aiEnabled = true;
         useSettingsStore.getState().focusModeEnabled = false;
         useSettingsStore.getState().riverTopEnabled = true;
@@ -405,6 +406,20 @@ describe('Reader Component', () => {
         expect(screen.getByTestId('play-overlay')).toBeInTheDocument();
     });
 
+    it('uses the speed dock for TTS adjustments while Listen mode is open', async () => {
+        render(<Reader book={mockBook} />);
+
+        await waitFor(() => expect(screen.queryByText('Loading book...')).not.toBeInTheDocument());
+        fireEvent.click(screen.getByRole('button', { name: 'Listen' }));
+
+        expect(screen.getByTestId('speed-controls')).toHaveTextContent('1.0x');
+        fireEvent.click(screen.getByRole('button', { name: 'Faster speech' }));
+
+        expect(useTTSStore.getState().speed).toBe(1.1);
+        expect(screen.getByTestId('speed-controls')).toHaveTextContent('1.1x');
+        expect(screen.getByTestId('speed-controls')).not.toHaveTextContent('WPM');
+    });
+
     it('refreshes TTS context rivers once per second while playback is active', async () => {
         render(<Reader book={mockBook} />);
 
@@ -677,7 +692,9 @@ describe('Reader Component', () => {
 
         vi.useFakeTimers();
         try {
-            fireEvent.click(screen.getByTestId('subchapter-btn-1'));
+            fireEvent.click(screen.getByRole('button', { name: 'More options for Chapter 1' }));
+            fireEvent.click(screen.getByRole('menuitem', { name: 'Browse passages' }));
+            fireEvent.click(screen.getByRole('button', { name: /is a test/ }));
 
             expect(screen.getByRole('status')).toHaveTextContent('Chapter 1 / Part 2');
             await act(async () => {
@@ -726,6 +743,48 @@ describe('Reader Component', () => {
 
         unmount();
         Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth });
+    });
+
+    it('should treat widths below 900px as modal Contents ownership', async () => {
+        const originalWidth = window.innerWidth;
+        const originalMatchMedia = window.matchMedia;
+        const setViewport = (width: number) => {
+            Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
+            window.matchMedia = vi.fn((query: string) => ({
+                matches: query.includes('min-width: 900px') && width >= 900,
+                media: query,
+                onchange: null,
+                addListener: vi.fn(),
+                removeListener: vi.fn(),
+                addEventListener: vi.fn(),
+                removeEventListener: vi.fn(),
+                dispatchEvent: vi.fn(),
+            })) as unknown as typeof window.matchMedia;
+        };
+
+        try {
+            setViewport(768);
+            const compact = render(<Reader book={mockBook} />);
+            await waitFor(() => expect(screen.getByTestId('rsvp-container')).toBeInTheDocument());
+            fireEvent.click(screen.getByTestId('toggle-chapters'));
+
+            const compactPanel = await screen.findByRole('dialog', { name: 'Contents' });
+            expect(compactPanel).toHaveAttribute('aria-modal', 'true');
+            expect(document.querySelector('.reader-toolbar')).toHaveAttribute('aria-hidden', 'true');
+            expect(document.querySelector('.reader-toolbar')).toHaveAttribute('inert', '');
+            expect(document.querySelector('.reader-main-stage')).toHaveAttribute('inert', '');
+            compact.unmount();
+
+            setViewport(1024);
+            render(<Reader book={mockBook} />);
+            const desktopPanel = await screen.findByRole('navigation', { name: 'Contents' });
+            expect(desktopPanel).not.toHaveAttribute('aria-modal');
+            expect(document.querySelector('.reader-toolbar')).not.toHaveAttribute('inert');
+            expect(document.querySelector('.reader-main-stage')).not.toHaveAttribute('inert');
+        } finally {
+            window.matchMedia = originalMatchMedia;
+            Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth });
+        }
     });
 
     it('should seek during vertical RSVP drags without waiting for touch end', async () => {

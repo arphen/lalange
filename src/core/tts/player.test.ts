@@ -162,6 +162,94 @@ describe('TTSAudioPlayer word tracking', () => {
         expect(FakeAudioContext.sources[3].start).toHaveBeenCalledWith(6);
     });
 
+    it('keeps the current and one safety sentence when queued audio is discarded', async () => {
+        for (let index = 0; index < 4; index++) {
+            await ttsPlayer.queueAudio(
+                { samples: new Float32Array(4), sampleRate: 24000, duration: 2, text: `Sentence ${index}.` },
+                { index, text: `Sentence ${index}.`, startWordIndex: index, endWordIndex: index },
+            );
+        }
+
+        await ttsPlayer.play(0);
+        ttsPlayer.discardQueuedAudioAfter(1);
+
+        expect(ttsPlayer.getQueueSize()).toBe(2);
+        expect(FakeAudioContext.sources[2].stop).toHaveBeenCalledTimes(1);
+        expect(FakeAudioContext.sources[3].stop).toHaveBeenCalledTimes(1);
+    });
+
+    it('reports remaining contiguous audible seconds and the next-sentence readiness', async () => {
+        for (let index = 0; index < 3; index++) {
+            await ttsPlayer.queueAudio(
+                { samples: new Float32Array(4), sampleRate: 24000, duration: 2, text: `Sentence ${index}.` },
+                { index, text: `Sentence ${index}.`, startWordIndex: index, endWordIndex: index },
+            );
+        }
+
+        await ttsPlayer.play(0);
+        expect(ttsPlayer.getBufferSnapshot()).toEqual({
+            bufferedAudioSeconds: 6,
+            isShrinking: false,
+            nextAudioReady: true,
+            deliveredWpm: null,
+        });
+
+        FakeAudioContext.current!.currentTime = 1;
+        expect(ttsPlayer.getBufferSnapshot()).toEqual({
+            bufferedAudioSeconds: 5,
+            isShrinking: true,
+            nextAudioReady: true,
+            deliveredWpm: null,
+        });
+    });
+
+    it('reports delivered WPM from audible progress and retains it on pause', async () => {
+        const snapshots: Array<{ deliveredWpm: number | null }> = [];
+        ttsPlayer.setOptions({
+            onBufferSnapshot: (snapshot) => snapshots.push({ deliveredWpm: snapshot.deliveredWpm }),
+        });
+        await ttsPlayer.queueAudio(
+            { samples: new Float32Array(4), sampleRate: 24000, duration: 4, text: 'One two three four.' },
+            { index: 0, text: 'One two three four.', startWordIndex: 10, endWordIndex: 13 },
+        );
+
+        await ttsPlayer.play(0);
+        FakeAudioContext.current!.currentTime = 2;
+        nextAnimationFrame?.(0);
+
+        expect(snapshots.at(-1)?.deliveredWpm).toBe(60);
+
+        ttsPlayer.pause();
+
+        expect(snapshots.at(-1)?.deliveredWpm).toBe(60);
+    });
+
+    it('resets telemetry without removing bridge audio', async () => {
+        const snapshots: Array<{ deliveredWpm: number | null; isShrinking: boolean }> = [];
+        ttsPlayer.setOptions({
+            onBufferSnapshot: (snapshot) => snapshots.push({
+                deliveredWpm: snapshot.deliveredWpm,
+                isShrinking: snapshot.isShrinking,
+            }),
+        });
+        for (let index = 0; index < 2; index++) {
+            await ttsPlayer.queueAudio(
+                { samples: new Float32Array(4), sampleRate: 24000, duration: 2, text: `Sentence ${index}.` },
+                { index, text: `Sentence ${index}.`, startWordIndex: index, endWordIndex: index },
+            );
+        }
+
+        await ttsPlayer.play(0);
+        FakeAudioContext.current!.currentTime = 1;
+        nextAnimationFrame?.(0);
+        expect(ttsPlayer.getQueueSize()).toBe(2);
+
+        ttsPlayer.resetTelemetry();
+
+        expect(ttsPlayer.getQueueSize()).toBe(2);
+        expect(snapshots.at(-1)).toEqual({ deliveredWpm: null, isShrinking: false });
+    });
+
     it('continues scheduling from the promoted sentence without a handoff restart', async () => {
         for (let index = 0; index < 3; index++) {
             await ttsPlayer.queueAudio(

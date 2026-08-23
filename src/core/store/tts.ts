@@ -8,6 +8,7 @@ import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';
 import { shallow } from 'zustand/shallow';
 import { useShallow } from 'zustand/react/shallow';
+import type { ContinuityMode, RealtimePacerSnapshot } from '../tts/realtimePacer';
 
 export type TTSPlaybackState = 'idle' | 'loading' | 'preparing' | 'playing' | 'paused' | 'generating';
 export type TTSBackendPreference = 'auto' | 'wasm' | 'webgpu';
@@ -38,9 +39,12 @@ interface TTSState {
     currentWordIndex: number;
     volume: number;
     speed: number;
+    continuityMode: ContinuityMode;
+    pacingSnapshot: RealtimePacerSnapshot;
     
     // Settings (persisted)
     voice: string;
+    activeVoiceOverride: string | null;
     backendPreference: TTSBackendPreference;
     bufferAhead: number;
     autoPlay: boolean;
@@ -63,12 +67,15 @@ interface TTSState {
     setCurrentWordIndex: (index: number) => void;
     setVolume: (volume: number) => void;
     setSpeed: (speed: number) => void;
+    setPacingSnapshot: (snapshot: RealtimePacerSnapshot) => void;
     
     // Actions - Settings
     setVoice: (voice: string) => void;
+    setActiveVoiceOverride: (voice: string | null) => void;
     setBackendPreference: (backendPreference: TTSBackendPreference) => void;
     setBufferAhead: (bufferAhead: number) => void;
     setAutoPlay: (autoPlay: boolean) => void;
+    setContinuityMode: (continuityMode: ContinuityMode) => void;
     
     // Actions - Position
     updatePosition: (position: Partial<TTSPosition>) => void;
@@ -82,6 +89,7 @@ interface TTSPersistedSettings {
     autoPlay: boolean;
     volume: number;
     speed: number;
+    continuityMode: ContinuityMode;
 }
 
 interface TTSSettingsStorage {
@@ -98,7 +106,20 @@ const DEFAULT_TTS_SETTINGS: TTSPersistedSettings = {
     autoPlay: false,
     volume: 1.0,
     speed: 1.0,
+    continuityMode: 'continuous',
 };
+
+const DEFAULT_PACING_SNAPSHOT: RealtimePacerSnapshot = Object.freeze({
+    preferredSpeed: 1,
+    effectiveSpeed: 1,
+    sustainableSpeed: 1,
+    generationRtf: null,
+    paceState: 'measuring',
+    continuityMode: 'continuous',
+    hasStableMeasurement: false,
+    deliveredWpm: null,
+    reason: 'measuring',
+});
 
 function getTTSSettingsStorage(): TTSSettingsStorage | null {
     try {
@@ -132,6 +153,9 @@ function readPersistedTTSSettings(storage: TTSSettingsStorage | null): Partial<T
         if (typeof state.autoPlay === 'boolean') settings.autoPlay = state.autoPlay;
         if (typeof state.volume === 'number') settings.volume = state.volume;
         if (typeof state.speed === 'number') settings.speed = state.speed;
+        if (state.continuityMode === 'continuous' || state.continuityMode === 'prefer-speed') {
+            settings.continuityMode = state.continuityMode;
+        }
         return settings;
     } catch {
         return {};
@@ -146,6 +170,7 @@ function selectPersistedTTSSettings(state: TTSState): TTSPersistedSettings {
         autoPlay: state.autoPlay,
         volume: state.volume,
         speed: state.speed,
+        continuityMode: state.continuityMode,
     };
 }
 
@@ -170,6 +195,8 @@ const ttsStore = create<TTSState>()(
             currentSentence: 0,
             currentWordIndex: 0,
             ...DEFAULT_TTS_SETTINGS,
+            activeVoiceOverride: null,
+            pacingSnapshot: DEFAULT_PACING_SNAPSHOT,
             
             // Position - Initial
             currentPosition: null,
@@ -189,12 +216,15 @@ const ttsStore = create<TTSState>()(
             setCurrentWordIndex: (index) => set({ currentWordIndex: index }),
             setVolume: (volume) => set({ volume: Math.max(0, Math.min(1, volume)) }),
             setSpeed: (speed) => set({ speed: Math.max(0.5, Math.min(2, speed)) }),
+            setPacingSnapshot: (snapshot) => set({ pacingSnapshot: snapshot }),
             
             // Actions - Settings
             setVoice: (voice) => set({ voice }),
+            setActiveVoiceOverride: (activeVoiceOverride) => set({ activeVoiceOverride }),
             setBackendPreference: (backendPreference) => set({ backendPreference }),
             setBufferAhead: (bufferAhead) => set({ bufferAhead: Math.max(3, Math.min(12, Math.round(bufferAhead))) }),
             setAutoPlay: (autoPlay) => set({ autoPlay }),
+            setContinuityMode: (continuityMode) => set({ continuityMode }),
             
             // Actions - Position
             updatePosition: (position) => set((state) => ({
