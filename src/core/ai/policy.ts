@@ -15,7 +15,7 @@ export type LocalAIFeature = 'pacing' | 'repair' | 'structure' | 'summary' | 'tt
 
 export const DEFAULT_LOCAL_AI_FEATURE_SETTINGS: LocalAIFeatureSettings = {
     adaptivePacingEnabled: false,
-    textRepairMode: 'off',
+    textRepairMode: 'review',
     summariesEnabled: false,
     ttsAnnotationsEnabled: false,
     structureStrategyId: 'auto-deterministic',

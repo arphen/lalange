@@ -36,7 +36,7 @@ describe('settings defaults', () => {
         expect(useSettingsStore.getState().commonPhraseRankLimit).toBe(0);
     });
 
-    it('migrates legacy AI enablement to pacing without enabling other features', async () => {
+    it('migrates legacy AI enablement to pacing without enabling other model features', async () => {
         localStorage.setItem('xyz-settings', JSON.stringify({
             state: { aiEnabled: true },
             version: 0,
@@ -48,7 +48,7 @@ describe('settings defaults', () => {
         expect(settings.adaptivePacingEnabled).toBe(true);
         expect(settings.aiEnabled).toBe(true);
         expect(settings.summariesEnabled).toBe(false);
-        expect(settings.textRepairMode).toBe('off');
+        expect(settings.textRepairMode).toBe('review');
         expect(settings.ttsAnnotationsEnabled).toBe(false);
         expect(settings.structureStrategyId).toBe('auto-deterministic');
     });
@@ -65,11 +65,29 @@ describe('settings defaults', () => {
         expect(useSettingsStore.getState().summariesEnabled).toBe(true);
     });
 
+    it('defaults repair to review while preserving an explicit opt-out', async () => {
+        localStorage.setItem('xyz-settings', JSON.stringify({
+            state: { wpm: 420 },
+            version: 0,
+        }));
+
+        await useSettingsStore.persist.rehydrate();
+        expect(useSettingsStore.getState().textRepairMode).toBe('review');
+
+        localStorage.setItem('xyz-settings', JSON.stringify({
+            state: { textRepairMode: 'off' },
+            version: 0,
+        }));
+
+        await useSettingsStore.persist.rehydrate();
+        expect(useSettingsStore.getState().textRepairMode).toBe('off');
+    });
+
     it('uses independent local AI defaults for a fresh profile', () => {
         const settings = useSettingsStore.getInitialState();
 
         expect(settings.adaptivePacingEnabled).toBe(false);
-        expect(settings.textRepairMode).toBe('off');
+        expect(settings.textRepairMode).toBe('review');
         expect(settings.ttsAnnotationsEnabled).toBe(false);
         expect(settings.structureStrategyId).toBe('auto-deterministic');
         expect(settings.summariesEnabled).toBe(false);

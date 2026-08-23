@@ -135,6 +135,16 @@ describe('App Component', () => {
         expect(screen.getByRole('button', { name: 'Switch to day theme' })).toBeInTheDocument();
     });
 
+    it('shows the repair setting in the sidebar on nested settings routes', () => {
+        render(
+            <MemoryRouter initialEntries={['/settings/repair']}>
+                <App />
+            </MemoryRouter>
+        );
+
+        expect(screen.getByRole('button', { name: 'Text Repair' })).toBeInTheDocument();
+    });
+
     it('opens the handoff scanner inside the app', async () => {
         render(
             <MemoryRouter>

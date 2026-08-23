@@ -81,7 +81,7 @@ function App() {
   let view: ViewState = 'archive';
   if (location.pathname.startsWith('/reader')) view = 'reader';
   else if (location.pathname === '/library') view = 'library';
-  else if (location.pathname === '/settings') view = 'settings';
+  else if (location.pathname === '/settings' || location.pathname.startsWith('/settings/')) view = 'settings';
   else if (location.pathname === '/manifesto') view = 'manifesto';
   else if (location.pathname === '/research') view = 'research';
   else if (location.pathname === '/manual') view = 'manual';

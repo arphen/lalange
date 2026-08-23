@@ -302,7 +302,7 @@ export const useSettingsStore = create<SettingsState>()(
                     ...persisted,
                     adaptivePacingEnabled: persistedAdaptivePacing,
                     aiEnabled: persistedAdaptivePacing,
-                    textRepairMode: persisted.textRepairMode === 'review' || persisted.textRepairMode === 'auto-safe'
+                    textRepairMode: persisted.textRepairMode === 'off' || persisted.textRepairMode === 'review' || persisted.textRepairMode === 'auto-safe'
                         ? persisted.textRepairMode
                         : DEFAULT_LOCAL_AI_FEATURE_SETTINGS.textRepairMode,
                     ttsAnnotationsEnabled: persisted.ttsAnnotationsEnabled === true,

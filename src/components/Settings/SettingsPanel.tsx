@@ -549,7 +549,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
 
                             <div className="rounded-lg border border-magma-vent/40 bg-magma-vent/10 p-6 space-y-3">
                                 <div className="flex items-center justify-between gap-4">
-                                    <h4 className="text-sm font-bold uppercase tracking-widest text-magma-vent">Off by default</h4>
+                                    <h4 className="text-sm font-bold uppercase tracking-widest text-magma-vent">Review mode by default</h4>
                                     <span className="text-xs text-gray-400">{MODEL_INFO[settings.repairModelId].size}</span>
                                 </div>
                                 <p className="text-sm leading-relaxed text-gray-300">

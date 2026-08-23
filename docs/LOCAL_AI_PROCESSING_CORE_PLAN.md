@@ -25,9 +25,10 @@ mandatory ingestion stage.
 
 1. Deterministic extraction, cleaning, chapter construction, and reading must
    work when no model has ever been downloaded.
-2. Local-AI text repair is off by default. Enabling adaptive pacing does not
-   implicitly enable text repair, summaries, TTS annotation, or AI-assisted
-   structure discovery.
+2. Local-AI text repair starts in review mode by default. It does not load a
+  model until a proposal is requested, and users can still turn it off.
+  Enabling adaptive pacing does not implicitly enable summaries, TTS
+  annotation, or AI-assisted structure discovery.
 3. A fast deterministic scanner may index suspicious spans by default because
    it does not load a model, mutate text, or block reading. Only those bounded
    spans and their local context may be sent to the model.
@@ -191,20 +192,21 @@ Fresh-profile defaults:
 | --- | --- | --- | --- |
 | Deterministic extraction and cleaning | On | No | Required reading path |
 | Deterministic anomaly indexing | On | No | Records candidates only |
-| Local-AI text repair | Off | No | Explicit opt-in and warning |
+| Local-AI text repair | Review | No | Bounded proposals; explicit opt-out |
 | Adaptive prompt-logprob pacing | Off | No | Preserve current fresh-profile behavior |
 | Automatic summaries | Off | No | Independent of pacing and repair |
 | AI TTS annotations | Off | No | Separate from TTS playback |
 | Structure strategy | `auto-deterministic` | No | AI strategy is explicit and experimental |
 
 Migration must preserve an existing user's `aiEnabled` value as their adaptive
-pacing preference only. It must not turn on repair, summaries, TTS annotation,
-or AI structure. Existing `summariesEnabled` remains authoritative. Legacy
-model settings should be migrated once and then removed from feature code.
+pacing preference only. A missing repair setting defaults to review mode, while
+an existing explicit `off` value remains off. Existing `summariesEnabled`
+remains authoritative. Legacy model settings should be migrated once and then
+removed from feature code.
 
-Turning repair on applies to future imports by default. The UI separately
-offers **Scan current book** and **Scan library** actions, with a candidate and
-time estimate before work starts. This avoids surprising reprocessing of every
+Review mode applies to future imports by default. The UI separately offers
+**Scan current book** and **Scan library** actions, with a candidate and time
+estimate before work starts. This avoids surprising reprocessing of every
 stored book after a settings change.
 
 ## Model Capabilities And Initial Roles
@@ -781,9 +783,11 @@ The text-repair card contains:
 - pause/cancel action; and
 - link to the issue review surface.
 
-Initial enablement requires affirmative confirmation with copy equivalent to:
+Turning repair back on after an explicit opt-out requires affirmative
+confirmation with copy equivalent to:
 
-> Local AI text repair is off by default. When enabled, XYZ downloads an
+> Local AI text repair is available in review mode by default. When enabled,
+> XYZ downloads an
 > on-device model of about 1 GB. Processing can make imports substantially
 > slower, increase battery use, and temporarily compete with adaptive pacing or
 > text-to-speech. Only flagged passages are processed, book text stays on this
@@ -1018,7 +1022,8 @@ The architecture is complete when all of the following are true:
 ## Resolved Decisions
 
 - Selective candidate repair replaces whole-text regeneration.
-- Text repair is off by default; deterministic candidate indexing may remain on.
+- Text repair starts in review mode by default; deterministic candidate indexing
+  may remain on without loading a model.
 - Review-only ships before automatic application.
 - Pacing keeps input-token logprobs and its dedicated model role.
 - The current TinyLlama logprob model remains the initial pacing default.
