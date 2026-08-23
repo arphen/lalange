@@ -169,6 +169,7 @@ export class IngestionScheduler {
         const book = await db.books.findOne(bookId).exec();
 
         for (const job of jobs) {
+            if (job.feature !== 'pacing' && job.feature !== 'summary') continue;
             let checkpoint: Record<string, unknown>;
             try {
                 checkpoint = JSON.parse(job.checkpoint || '{}') as Record<string, unknown>;

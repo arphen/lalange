@@ -4,6 +4,12 @@ import type { ModelTier } from '../ai/modelManifest';
 import { initDB, type ContentRevisionDocType, type RepairAnnotationDocType } from '../sync/db';
 import type { TextIssueCandidate } from './anomalyScanner';
 import { scanTextForAnomalies } from './anomalyScanner';
+import {
+    buildRepairPrompt as buildRepairResponsePrompt,
+    MAX_REPLACEMENT_LENGTH,
+    parseRepairResponse,
+    REPAIR_SYSTEM_PROMPT,
+} from './repairResponse';
 
 export type RepairAction = 'keep' | 'replace' | 'delete' | 'merge' | 'split';
 export type RepairReasonCode =
@@ -58,17 +64,6 @@ export interface ActivatedRepairResult {
 }
 
 const MAX_CONTEXT_LENGTH = 1500;
-const MAX_REPLACEMENT_LENGTH = 256;
-const REPAIR_REASON_CODES = new Set<RepairReasonCode>([
-    'encoding-artifact',
-    'ocr-substitution',
-    'stray-page-marker',
-    'broken-boundary',
-    'punctuation-artifact',
-    'consistent-book-form',
-    'uncertain',
-]);
-const REPAIR_ACTIONS = new Set<RepairAction>(['keep', 'replace', 'delete', 'merge', 'split']);
 const MARKUP_RESIDUE = /<\/?[A-Za-z][^>]*>|&(?:nbsp|amp|lt|gt|quot|apos|#\d+|#x[0-9A-F]+);/i;
 const SCAN_PIPELINE_VERSION = 'deterministic-anomaly-scan-v1';
 
@@ -233,39 +228,18 @@ export const createRepairContext = (text: string, candidate: TextIssueCandidate)
     };
 };
 
-const parseStrictProposal = (response: string): RepairProposal => {
-    const parsed: unknown = JSON.parse(response);
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-        throw new Error('Repair response must be a JSON object');
-    }
-    const record = parsed as Record<string, unknown>;
-    const allowedKeys = new Set(['candidateId', 'action', 'replacement', 'reasonCode']);
-    if (Object.keys(record).some((key) => !allowedKeys.has(key))) {
-        throw new Error('Repair response contains unknown fields');
-    }
-    if (typeof record.candidateId !== 'string' || typeof record.action !== 'string' || typeof record.reasonCode !== 'string') {
-        throw new Error('Repair response is missing required fields');
-    }
-    if (!REPAIR_ACTIONS.has(record.action as RepairAction) || !REPAIR_REASON_CODES.has(record.reasonCode as RepairReasonCode)) {
-        throw new Error('Repair response contains an unsupported action or reason code');
-    }
-    if (record.replacement !== undefined && typeof record.replacement !== 'string') {
-        throw new Error('Repair replacement must be a string');
-    }
-    return {
-        candidateId: record.candidateId,
-        action: record.action as RepairAction,
-        ...(record.replacement !== undefined ? { replacement: record.replacement } : {}),
-        reasonCode: record.reasonCode as RepairReasonCode,
-    };
-};
-
-export const parseRepairProposal = (response: string): RepairProposal => {
-    if (response.trim() !== response || response.includes('```')) {
-        throw new Error('Repair response must contain only JSON');
-    }
-    return parseStrictProposal(response);
-};
+export const parseRepairProposal = (
+    response: string,
+    candidate?: TextIssueCandidate,
+    repairContext?: RepairContext,
+): RepairProposal => parseRepairResponse(response, {
+    ...(candidate ? { candidate } : {}),
+    ...(repairContext ? {
+        candidateText: repairContext.candidateText,
+        leftContext: repairContext.context.slice(0, repairContext.startOffset - repairContext.contextStartOffset),
+        rightContext: repairContext.context.slice(repairContext.endOffset - repairContext.contextStartOffset),
+    } : {}),
+});
 
 export const validateRepairProposal = async (
     candidate: TextIssueCandidate,
@@ -323,7 +297,7 @@ export const applyRepairProposal = (text: string, candidate: TextIssueCandidate,
     return text.slice(0, candidate.startOffset) + replacement + text.slice(candidate.endOffset);
 };
 
-export const acceptRepairProposal = async (options: {
+const acceptRepairProposalLegacy = async (options: {
     candidate: TextIssueCandidate;
     proposal: RepairProposal;
     sourceText: string;
@@ -429,6 +403,51 @@ export const acceptRepairProposal = async (options: {
     return { nextText, revision: nextRevision, annotation };
 };
 
+void acceptRepairProposalLegacy;
+
+export const acceptRepairProposal = async (options: {
+    candidate: TextIssueCandidate;
+    proposal: RepairProposal;
+    sourceText: string;
+    sourceRevisionId: string;
+    currentRevisionId: string;
+    pipelineFingerprint: string;
+    validatorFingerprint: string;
+    modelFingerprint?: string;
+    promptFingerprint?: string;
+    acceptanceAction?: 'accept' | 'accept-all-safe';
+}): Promise<AcceptedRepairResult> => {
+    const { buildChapterRepairPlan, prepareChapterRepairBatch } = await import('./repairBatch');
+    const plan = await buildChapterRepairPlan({
+        sourceText: options.sourceText,
+        sourceUnitId: options.candidate.sourceUnitId,
+        sourceRevisionHash: options.candidate.revisionHash,
+        selections: [{
+            candidate: options.candidate,
+            proposal: options.proposal,
+            modelFingerprint: options.modelFingerprint,
+            promptFingerprint: options.promptFingerprint,
+        }],
+    });
+    if (!plan.valid) throw new Error(plan.errors[0]?.message || 'Repair proposal failed validation');
+    const prepared = await prepareChapterRepairBatch({
+        plan,
+        sourceRevisionId: options.sourceRevisionId,
+        currentRevisionId: options.currentRevisionId,
+        pipelineFingerprint: options.pipelineFingerprint,
+        validatorFingerprint: options.validatorFingerprint,
+        acceptanceAction: options.acceptanceAction || 'accept',
+        proposalState: 'accepted',
+    });
+    const annotation = prepared.annotations[0];
+    const revision = prepared.revision || await (await initDB()).content_revisions.findOne(options.currentRevisionId).exec();
+    if (!annotation || !revision) throw new Error('Repair acceptance did not create a persisted annotation');
+    const issue = await (await initDB()).text_issues.findOne(options.candidate.id).exec();
+    if (!issue) throw new Error('Repair candidate no longer exists');
+    await issue.incrementalPatch({ proposal: options.proposal, state: 'accepted', updatedAt: Date.now() });
+    return { nextText: plan.finalText, revision, annotation };
+};
+
 export const keepRepairOriginal = async (options: {
     candidate: TextIssueCandidate;
     sourceText: string;
@@ -495,7 +514,7 @@ export const keepRepairOriginal = async (options: {
     return annotation;
 };
 
-export const activateRepairRevision = async (options: {
+const activateRepairRevisionLegacy = async (options: {
     candidate: TextIssueCandidate;
     nextText: string;
     revision: ContentRevisionDocType;
@@ -610,18 +629,49 @@ export const activateRepairRevision = async (options: {
     };
 };
 
+void activateRepairRevisionLegacy;
+
+export const activateRepairRevision = async (options: {
+    candidate: TextIssueCandidate;
+    nextText: string;
+    revision: ContentRevisionDocType;
+    annotation: RepairAnnotationDocType;
+}): Promise<ActivatedRepairResult> => {
+    const { activateChapterRepairBatch, buildChapterRepairPlan } = await import('./repairBatch');
+    const db = await initDB();
+    const chapter = await db.chapters.findOne(options.candidate.sourceUnitId).exec();
+    if (!chapter) throw new Error('Repair chapter no longer exists');
+    const sourceText = chapter.content.join(' ');
+    const proposal: RepairProposal = {
+        candidateId: options.candidate.id,
+        action: options.annotation.action,
+        ...(['keep', 'delete'].includes(options.annotation.action) ? {} : { replacement: options.annotation.replacementText || '' }),
+        reasonCode: 'uncertain',
+    };
+    const plan = await buildChapterRepairPlan({
+        sourceText,
+        sourceUnitId: options.candidate.sourceUnitId,
+        sourceRevisionHash: options.revision.sourceHash,
+        selections: [{ candidate: options.candidate, proposal }],
+    });
+    if (!plan.valid || plan.finalTextHash !== options.revision.textHash && options.revision.state === 'prepared') {
+        throw new Error(plan.errors[0]?.message || 'Repair revision does not match the proposed text');
+    }
+    const prepared = await activateChapterRepairBatch({
+        plan,
+        sourceRevisionId: options.revision.parentRevisionId || options.revision.id,
+        ...(options.revision.state === 'prepared' ? { revision: options.revision } : {}),
+        annotations: [options.annotation],
+    });
+    return {
+        nextText: prepared.nextText,
+        revision: prepared.revision || { ...options.revision, state: 'active' },
+        annotation: prepared.annotations[0] || options.annotation,
+    };
+};
+
 export const buildRepairPrompt = (candidate: TextIssueCandidate, repairContext: RepairContext): string => (
-    [
-        'Return exactly one JSON object with these keys: candidateId, action, replacement, reasonCode.',
-        'Do not rewrite or repeat the context. Change only the suspicious span.',
-        'Allowed actions: keep, replace, delete, merge, split.',
-        'Use replacement only for replace, merge, or split. Use null by omitting replacement for keep or delete.',
-        `candidateId: ${candidate.id}`,
-        `suspicious text: ${JSON.stringify(repairContext.candidateText)}`,
-        `detectors: ${candidate.detectorIds.join(', ')}`,
-        `evidence: ${JSON.stringify(candidate.evidence)}`,
-        `context: ${JSON.stringify(repairContext.context)}`,
-    ].join('\n')
+    buildRepairResponsePrompt(candidate, repairContext)
 );
 
 export const requestRepairProposal = async (
@@ -630,6 +680,29 @@ export const requestRepairProposal = async (
     modelTier: ModelTier,
     signal?: AbortSignal,
 ): Promise<RepairProposal> => {
+    const context = createRepairContext(sourceText, candidate);
+    const result = await completeRepairResponse(candidate, sourceText, modelTier, signal);
+    if (result.finishReason === 'length') throw new Error('Repair model response was truncated');
+    const response = result.response;
+    const proposal = parseRepairProposal(response, candidate, context);
+    const validation = await validateRepairProposal(candidate, context.candidateText, proposal);
+    if (!validation.valid || !validation.proposal) {
+        throw new Error(validation.reason ?? 'Repair proposal failed validation');
+    }
+    return validation.proposal;
+};
+
+export interface RepairCompletionResult {
+    response: string;
+    finishReason?: string;
+}
+
+export const completeRepairResponse = async (
+    candidate: TextIssueCandidate,
+    sourceText: string,
+    modelTier: ModelTier,
+    signal?: AbortSignal,
+): Promise<RepairCompletionResult> => {
     const context = createRepairContext(sourceText, candidate);
     const prompt = buildRepairPrompt(candidate, context);
     const result = await localAIBroker.execute(
@@ -644,20 +717,16 @@ export const requestRepairProposal = async (
             messages: [
                 {
                     role: 'system',
-                    content: 'You propose bounded text repairs. Output strict JSON only.',
+                    content: REPAIR_SYSTEM_PROMPT,
                 },
                 { role: 'user', content: prompt },
             ],
             temperature: 0,
-            max_tokens: 128,
+            max_tokens: MAX_REPLACEMENT_LENGTH + 16,
         }),
     );
-    const response = result.choices[0]?.message.content;
+    const choice = result.choices[0] as { message?: { content?: string | null }; finish_reason?: string } | undefined;
+    const response = choice?.message?.content;
     if (!response) throw new Error('Repair model returned an empty response');
-    const proposal = parseRepairProposal(response);
-    const validation = await validateRepairProposal(candidate, context.candidateText, proposal);
-    if (!validation.valid || !validation.proposal) {
-        throw new Error(validation.reason ?? 'Repair proposal failed validation');
-    }
-    return validation.proposal;
+    return { response, ...(choice?.finish_reason ? { finishReason: choice.finish_reason } : {}) };
 };

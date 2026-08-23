@@ -70,6 +70,12 @@ describe('repair acceptance persistence', () => {
             severity: 'medium',
             ambiguity: 'high',
         };
+        mockDb.chapters.findOne.mockReturnValue({
+            exec: vi.fn().mockResolvedValue({
+                id: 'chapter-1',
+                content: ['The', 'th3', 'fox.'],
+            }),
+        });
 
         const result = await acceptRepairProposal({
             candidate,

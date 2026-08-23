@@ -228,6 +228,11 @@ export const Archive: React.FC<ArchiveProps> = ({ onOpenBook, onScanHandoff }) =
         try {
             const report = await scanLibraryForAnomalies();
             setStatus(`Library scan complete: ${report.candidatesFound} anchored issue${report.candidatesFound === 1 ? '' : 's'} found.`);
+            const db = await initDB();
+            const unresolvedIssues = await db.text_issues.find({ selector: { state: 'open' } }).exec();
+            const firstIssueBookId = unresolvedIssues[0]?.bookId;
+            const firstIssueBook = books.find((book) => book.id === firstIssueBookId);
+            if (firstIssueBook) setReviewBook(firstIssueBook);
         } catch (error) {
             console.error(error);
             setStatus('Library scan failed.');

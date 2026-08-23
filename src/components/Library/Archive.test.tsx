@@ -7,6 +7,8 @@ import * as dbModule from '../../core/sync/db';
 import * as pipelineModule from '../../core/ingest/pipeline';
 
 const mockRequestSetup = vi.hoisted(() => vi.fn());
+const mockScanBookForAnomalies = vi.hoisted(() => vi.fn());
+const mockScanLibraryForAnomalies = vi.hoisted(() => vi.fn());
 
 vi.mock('../../core/store/ai', () => ({
     useAIStore: (selector: (state: Record<string, unknown>) => unknown) => selector({
@@ -33,6 +35,15 @@ vi.mock('../../core/ingest/pipeline', () => ({
     processChaptersInBackground: vi.fn().mockResolvedValue(undefined),
     stopProcessing: vi.fn(),
     estimateBookDensity: vi.fn(),
+}));
+
+vi.mock('../../core/ingest/repair', () => ({
+    scanBookForAnomalies: mockScanBookForAnomalies,
+    scanLibraryForAnomalies: mockScanLibraryForAnomalies,
+}));
+
+vi.mock('../Repair/RepairReviewPanel', () => ({
+    RepairReviewPanel: ({ bookId }: { bookId: string }) => <div data-testid="repair-review-panel">Repair queue for {bookId}</div>,
 }));
 
 describe('Archive', () => {
@@ -124,10 +135,29 @@ describe('Archive', () => {
                     exec: async () => ({ remove: mockRemoveReadingState })
                 }),
                 insert: vi.fn()
+            },
+            text_issues: {
+                find: () => ({
+                    exec: async () => [{
+                        id: 'issue1',
+                        bookId: 'book1',
+                        sourceUnitId: 'chapter1',
+                        state: 'open',
+                        remove: vi.fn(),
+                    }],
+                    $: {
+                        subscribe: (cb: (docs: unknown[]) => void) => {
+                            cb([]);
+                            return { unsubscribe: vi.fn() };
+                        },
+                    },
+                }),
             }
         };
 
         vi.mocked(dbModule.initDB).mockResolvedValue(mockDB as unknown as MyDatabase);
+        mockScanBookForAnomalies.mockResolvedValue({ candidatesFound: 0 });
+        mockScanLibraryForAnomalies.mockResolvedValue({ candidatesFound: 1 });
 
         // Mock confirm
         global.confirm = vi.fn(() => true);
@@ -173,6 +203,15 @@ describe('Archive', () => {
         fireEvent.click(await screen.findByRole('button', { name: 'SCAN HANDOFF' }));
 
         expect(mockOnScanHandoff).toHaveBeenCalledOnce();
+    });
+
+    it('opens the repair queue for the first affected book after a library scan', async () => {
+        render(<Archive onOpenBook={mockOnOpenBook} onScanHandoff={mockOnScanHandoff} />);
+
+        fireEvent.click(await screen.findByRole('button', { name: 'Scan library for text anomalies' }));
+
+        await waitFor(() => expect(mockScanLibraryForAnomalies).toHaveBeenCalledOnce());
+        expect(await screen.findByTestId('repair-review-panel')).toHaveTextContent('Repair queue for book1');
     });
 
     it('does not create a visible book when its raw source cannot be saved', async () => {
