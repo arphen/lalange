@@ -1,5 +1,13 @@
 # PDF Layout And Contextual Notes Plan
 
+## Status
+
+- Partially implemented as of 2026-08-23. `pdfLayout.ts`, `pdfNotes.ts`, and
+   their tests now provide geometry-based layout and note extraction/linking
+   foundations.
+- Broader multi-column corpus validation, note presentation policy, and the
+   remaining source-map and inspection work are still future work.
+
 ## Goal
 
 Make difficult scanned scholarly PDFs readable without flattening each page into
@@ -937,7 +945,7 @@ a confidently displayed wrong note is actively misleading.
 - Representative private PDFs meet the acceptance criteria without filename,
   page-number, or quote-specific production rules.
 
-## Luna Execution Brief
+## Implementation Execution Brief
 
 Implement one phase at a time. Start with pure geometry and synthetic expected
 graphs; do not touch the reader UI until two-column body order and note regions

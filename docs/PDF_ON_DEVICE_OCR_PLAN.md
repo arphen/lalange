@@ -1,5 +1,14 @@
 # PDF Parsing And On-Device OCR Plan
 
+## Status
+
+- Partially implemented as of 2026-08-23. PDF.js extraction, local OCR through
+   `pdfOcrAdapter.ts`, cancellation, progress reporting, layout resolution, and
+   outline-derived chapter planning exist in the current source.
+- Full scanned-PDF corpus acceptance, service-worker asset validation, and
+   production-scale resumability remain open. Do not interpret the presence of
+   the adapter as proof that every scanned PDF is production-ready.
+
 ## Goal
 
 Make text-layer, scanned, image-only, and mixed PDFs readable in XYZ without
@@ -441,7 +450,7 @@ Keep browser and Node I/O adapters separate if Node requires a canvas package,
 but share production pure functions. The inspector must not reimplement
 threshold regexes. Default samples must be short and local-only.
 
-## Implementation Sequence For Luna
+## Implementation Sequence
 
 ### Phase 0: Characterize The Target And Freeze Regressions
 
@@ -668,7 +677,7 @@ committed tests.
 - Focused PDF tests, content-quality tests, EPUB corpus tests, lint, build, and
   offline Playwright coverage pass.
 
-## Luna Execution Brief
+## Implementation Execution Brief
 
 Implement one phase at a time and keep the first vertical slice narrow: one
 synthetic scanned page must become readable with a local Tesseract worker before

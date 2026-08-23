@@ -1,5 +1,14 @@
 # Common N-gram RSVP Grouping Plan
 
+## Status
+
+- Implemented and retained as a behavior contract as of 2026-08-23.
+- `grouping.ts`, the persisted Settings control, Reader integration, and tests
+  are present. The default rank limit remains `0` (off), and TTS/ingestion do
+  not use phrase grouping.
+- The implementation sequence below is historical context; future changes
+  should preserve the source-index and boundary invariants.
+
 ## Purpose
 
 Add a Pacing setting that lets the reader combine a configurable number of

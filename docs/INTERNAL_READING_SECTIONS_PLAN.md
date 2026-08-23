@@ -1,5 +1,15 @@
 # Internal Reading Sections Plan
 
+## Status
+
+- Partially implemented as of 2026-08-23. PDF outline-derived chapters now
+  land through `pdfReader.ts`, with persisted authored-structure metadata.
+- The format-independent normalizer, generated page grouping, oversized-authored
+  splitting, and existing-book reformat/migration described here are not yet
+  implemented.
+- Keep this as the generic reading-structure plan. The Gift-specific document
+  is retained only for fixture evidence and acceptance details.
+
 ## Purpose
 
 Build a deterministic internal representation of every imported book so reader

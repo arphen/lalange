@@ -9,14 +9,15 @@
 - Standalone browsers available for the next energy run: Google Chrome and
   Brave
 - Measured revision: `3d12a85-dirty`
-- Input: Luna's implementation of the Phase 1 recommendations in
+- Input: XYZ's implementation of the Phase 1 recommendations in
   `PERFORMANCE_PROFILING_AND_TTS_OPTIMIZATION_PLAN.md`
-- Scope: validate the implementation, remove the remaining low-risk runtime
-  churn, and define the next evidence gate without reducing speech quality
+- Scope: completed validation of the implementation, removal of low-risk runtime
+  churn, and definition of the next evidence gate without reducing speech quality
+- Status: completed reference record; standalone energy profiling remains open
 
 ## Executive Conclusion
 
-Luna's implementation fixed the largest confirmed application-owned hotspot.
+XYZ's implementation fixed the largest confirmed application-owned hotspot.
 The production TTS settings key went from 4,707 synchronous writes during a
 16.6-second startup and playback trace to zero writes during a longer
 48.5-second confirmation trace.
@@ -41,7 +42,7 @@ Application churn is lower, but macOS energy counters were not available in the
 current environment. The next backend decision still requires a standalone
 browser Energy Log or privileged `powermetrics` run.
 
-## Luna Implementation Audit
+## XYZ Implementation Audit
 
 ### Confirmed Complete
 
@@ -70,12 +71,12 @@ browser Energy Log or privileged `powermetrics` run.
 
 ## Production Measurements
 
-The original and post-Luna traces used the same production origin so cached
+The original and post-XYZ traces used the same production origin so cached
 model and library state could be reused. Trace lengths differ, so storage and
 logging are valid behavioral comparisons; long-task totals are not normalized
 energy comparisons.
 
-| Signal | Original baseline | After Luna | Final follow-up |
+| Signal | Original baseline | After XYZ | Final follow-up |
 | --- | ---: | ---: | ---: |
 | Trace duration | 16.6 s | 48.5 s | 21.885 s |
 | `xyz-tts-settings` writes | 4,707 | 0 | 0 |

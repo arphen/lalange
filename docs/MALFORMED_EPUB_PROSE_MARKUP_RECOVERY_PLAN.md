@@ -1,5 +1,13 @@
 # Malformed EPUB Prose Markup Recovery Plan
 
+## Status
+
+- Core recovery is implemented in `src/core/ingest/markupRecovery.ts` with
+  focused tests as of 2026-08-23.
+- Keep this document for the recovery contract and edge-case oracle. Future
+  work should extend the existing scanner and its integration coverage rather
+  than introduce another markup detector.
+
 ## Goal
 
 Recover continuous prose that an EPUB producer has accidentally serialized as

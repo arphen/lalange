@@ -7,9 +7,12 @@
   (4 performance and 4 efficiency), 10 GPU cores, 16 GB memory
 - Browser used for controlled runs: VS Code Electron 42.6 / Chromium 148
 - Measured revision: `3d12a85-dirty`
-- Intended implementation owner: Luna
+- Intended implementation owner: XYZ maintainers
+- Status: historical measurement and implementation record; standalone energy
+  profiling and backend policy decisions remain open
 - Scope of this pass: profile, identify likely causes, and define an execution
-  plan. No runtime optimization is included in this document change.
+  plan. The low-risk persistence, progress, and logging fixes described here
+  have since landed; the remaining backend/energy decisions are not complete.
 
 ## Objective
 
@@ -352,7 +355,7 @@ The current implementation already includes several important optimizations:
 
 These are constraints for the optimization, not surfaces to rewrite casually.
 
-## Execution Plan For Luna
+## Execution Plan For XYZ
 
 ### Phase 0: Land A Reproducible Profiler
 
@@ -641,7 +644,7 @@ Each item should land separately with its own measurements. Do not combine a
 backend change, scheduling change, and state-management rewrite in one result;
 that would make quality, energy, and rollback attribution ambiguous.
 
-## Luna Handoff Checklist
+## XYZ Handoff Checklist
 
 - [ ] Reproduce the baseline on the target browser and record the exact revision.
 - [ ] Add the opt-in profiler and fixed corpus before optimizing.

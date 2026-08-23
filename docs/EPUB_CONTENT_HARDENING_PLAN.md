@@ -1,5 +1,13 @@
 # EPUB Content Hardening Plan
 
+## Status
+
+- Partially implemented as of 2026-08-23. `contentQuality.ts`, `lineWrap.ts`,
+  and their regression tests now provide the quality-analysis and hard-wrap
+  foundations described here.
+- Full source-unit accounting, recurrence-aware furniture policy, and all
+  fixture acceptance criteria remain future work.
+
 ## Goal
 
 Prevent low-quality extraction output from reaching the reader without solving
@@ -346,7 +354,7 @@ It should print one JSON record per source unit with path, zone, score, decision
 issues, removed counts, and short before/after samples, followed by aggregate
 counts. It must use production functions rather than duplicate their regexes.
 
-## Implementation Sequence For Luna
+## Implementation Sequence
 
 ### Phase 1: Characterization And Quality Gate
 
@@ -478,7 +486,7 @@ With the default reference suppression setting:
 - A developer can diagnose the next bad EPUB with one inspector command instead
   of adding a regex from a screenshot.
 
-## Luna Execution Brief
+## Implementation Execution Brief
 
 Implement one phase at a time. Start by making the inspector and tests expose
 the current failures, then add the smallest production behavior needed for that

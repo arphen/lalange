@@ -1,5 +1,14 @@
 # Gift EPUB Structure Recovery Plan
 
+## Status
+
+- Future fixture-focused work as of 2026-08-23. The current PDF outline work
+  does not implement this EPUB's authored-boundary recovery contract.
+- This document is an acceptance appendix to
+  `INTERNAL_READING_SECTIONS_PLAN.md`, not a second generic structure design.
+- Keep the fixture observations and boundary oracle; verify every expected
+  result against the current ingest pipeline before treating it as achieved.
+
 ## Purpose
 
 Improve EPUB structure recovery using
@@ -176,7 +185,7 @@ examples demonstrate that ordered rules cannot express the distinctions.
 
 ## Implementation Sequence
 
-### Luna 1: Freeze the Oracle and Add Diagnostics
+### Phase 1: Freeze the Oracle and Add Diagnostics
 
 Start with tests and inspection output before changing parser behavior.
 
@@ -195,7 +204,7 @@ Start with tests and inspection output before changing parser behavior.
 Deliverable: diagnostics expose why the current parser falls back to generated
 sections, without changing parser output.
 
-### Luna 2: Extract Pure Structure-Evidence Types
+### Phase 2: Extract Pure Structure-Evidence Types
 
 Create a small module such as `src/core/ingest/structureEvidence.ts`. Keep ZIP
 I/O and section normalization outside it.
@@ -231,7 +240,7 @@ Do not expose Gift-specific page values from production APIs.
 Deliverable: unit-tested pure evidence representations and declared-TOC state
 classification.
 
-### Luna 3: Detect Leading Scan Headings
+### Phase 3: Detect Leading Scan Headings
 
 Run scan-heading detection only when the source is page-like and stronger
 structure is absent, singular, or degraded.
@@ -255,7 +264,7 @@ small and deterministic.
 Deliverable: synthetic page-spine fixtures recover coherent plain-paragraph
 headings and abstain on ambiguous examples.
 
-### Luna 4: Parse Printed Outline and Folio Evidence
+### Phase 4: Parse Printed Outline and Folio Evidence
 
 Treat printed contents recovery as corroboration, not navigation.
 
@@ -279,7 +288,7 @@ justifies exposing them as reading navigation.
 Deliverable: pure tests recover useful outline evidence from a Gift-derived
 sample and prove that malformed outline text cannot create boundaries alone.
 
-### Luna 5: Reconcile Evidence and Build Authored Groups
+### Phase 5: Reconcile Evidence and Build Authored Groups
 
 Integrate the evidence hierarchy into `buildEpubStructurePlan`.
 
@@ -301,7 +310,7 @@ the current generated fallback. Do not silently accept a partial family.
 Deliverable: the Gift plan becomes `hybrid`, preserves authored parent titles,
 and retains generated child sections where needed for reading ergonomics.
 
-### Luna 6: Strengthen the Full Gift Integration Test
+### Phase 6: Strengthen the Full Gift Integration Test
 
 Replace the weak title/count oracle in
 `src/core/ingest/structure.corpus.integration.test.ts` with structural
@@ -329,7 +338,7 @@ Keep the complete EPUB opt-in through `RUN_EPUB_CORPUS=1`.
 Deliverable: the real fixture fails for the current behavior and passes only
 after meaningful structure recovery works.
 
-### Luna 7: Protect the General Corpus and Pipeline
+### Phase 7: Protect the General Corpus and Pipeline
 
 Run the repository and Gutenberg corpus before adjusting thresholds.
 
@@ -442,7 +451,7 @@ titles, and short sentinel strings so failures identify the broken rule.
 
 ## Validation Gates
 
-Run each gate before moving to the next Luna assignment.
+Run each gate before moving to the next phase.
 
 ### Focused Evidence Tests
 
@@ -489,7 +498,7 @@ are reviewable.
 
 ## Agent Coordination Rules
 
-- Each Luna agent should start from the failing test for its assignment.
+- Each implementation agent should start from the failing test for its assignment.
 - Land evidence extraction before planner integration.
 - Do not let two agents edit `structure.ts` concurrently.
 - The diagnostics agent and pure-evidence agent may work in parallel if their
@@ -503,19 +512,19 @@ are reviewable.
 Recommended execution order:
 
 ```text
-Luna 1 diagnostics
+Phase 1 diagnostics
     |
-Luna 2 evidence types
+Phase 2 evidence types
     |
-Luna 3 scan candidates ---- Luna 4 printed outline and folio evidence
+Phase 3 scan candidates ---- Phase 4 printed outline and folio evidence
     |                         |
     +-----------+-------------+
                 |
-Luna 5 reconciliation and planner integration
+Phase 5 reconciliation and planner integration
                 |
-Luna 6 Gift acceptance suite
+Phase 6 Gift acceptance suite
                 |
-Luna 7 corpus and pipeline protection
+Phase 7 corpus and pipeline protection
 ```
 
 ## Stop Conditions
