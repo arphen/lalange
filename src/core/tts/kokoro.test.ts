@@ -4,9 +4,10 @@
  * These cover the runtime selection that happens before the model loads.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
     applyOnnxProxyPreference,
+    releaseKokoroModel,
     resolveKokoroVoiceId,
     isIOSRuntime,
     prepareKokoroTextForSpeech,
@@ -152,5 +153,28 @@ describe('applyOnnxProxyPreference', () => {
     it('tolerates an environment without the onnx backend', () => {
         expect(() => applyOnnxProxyPreference('wasm', {})).not.toThrow();
         expect(() => applyOnnxProxyPreference('wasm', null)).not.toThrow();
+    });
+});
+
+describe('releaseKokoroModel', () => {
+    it('disposes the ONNX session so the freed WASM heap can serve the next engine', async () => {
+        // Without this the weights stay resident for the life of the page, and
+        // Piper allocates on top of them instead of in their place.
+        const dispose = vi.fn(async () => undefined);
+
+        await releaseKokoroModel({ model: { dispose } });
+
+        expect(dispose).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not let a failed disposal block the engine switch', async () => {
+        const dispose = vi.fn(async () => { throw new Error('already gone'); });
+
+        await expect(releaseKokoroModel({ model: { dispose } })).resolves.toBeUndefined();
+    });
+
+    it('tolerates unloading before a model was ever loaded', async () => {
+        await expect(releaseKokoroModel(null)).resolves.toBeUndefined();
+        await expect(releaseKokoroModel({})).resolves.toBeUndefined();
     });
 });

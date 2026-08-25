@@ -357,10 +357,30 @@ export async function initKokoro(
 /**
  * Unload the TTS engine to free memory
  */
+/**
+ * Dropping the JS reference does not free the model: the ONNX session keeps the
+ * weights in the WASM heap, and WASM memory never shrinks. Unloading Kokoro to
+ * make room for Piper therefore freed nothing, and Piper allocated on top of a
+ * heap still holding 88 MB (310 MB on desktop) of Kokoro. On a phone that runs
+ * out part-way through a chapter, as a failed OrtRun mid-sentence.
+ */
+export async function releaseKokoroModel(
+    instance: { model?: { dispose?: () => Promise<unknown> } } | null,
+): Promise<void> {
+    try {
+        await instance?.model?.dispose?.();
+    } catch (error) {
+        // A model that cannot be disposed must not block the engine switch.
+        console.warn('[TTS] Could not release Kokoro model:', error);
+    }
+}
+
 export async function unloadKokoro(): Promise<void> {
     ttsLifecycleGeneration += 1;
+    const releasedInstance = ttsInstance;
     ttsInstance = null;
     currentLoadedConfig = null;
+    await releaseKokoroModel(releasedInstance);
     useTTSStore.getState().setReady(false);
     console.log('[TTS] Unloaded');
 }
