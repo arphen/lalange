@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { RealtimePacerSnapshot } from './realtimePacer';
 import {
+    FALLBACK_FLOOR_SPEED,
     FALLBACK_RECOVERY_BUFFER_SECONDS,
     FALLBACK_STABLE_AUDIO_SECONDS,
     FallbackAdvisor,
@@ -40,7 +41,7 @@ describe('FallbackAdvisor', () => {
         const result = advisor.observe(snapshot(), evidence({ measuredAudioSeconds: 2 }));
 
         expect(result.stableAudioSeconds).toBe(FALLBACK_STABLE_AUDIO_SECONDS);
-        expect(result.consecutiveLowSpeedSamples).toBe(3);
+        expect(result.lowSpeedSamplesInWindow).toBe(3);
         expect(result.eligible).toBe(true);
         expect(result.reason).toBe('eligible');
     });
@@ -133,5 +134,72 @@ describe('FallbackAdvisor', () => {
             trialFailed: true,
             reason: 'trial-failed',
         });
+    });
+});
+
+describe('FallbackAdvisor on a device that struggles in bursts', () => {
+    const sawtooth = (index: number) => {
+        const starving = index % 2 === 0;
+        return {
+            pacer: snapshot({ effectiveSpeed: starving ? 0.45 : 0.8 }),
+            evidence: evidence({
+                isBufferShrinking: starving,
+                bufferedAudioSeconds: starving ? 3 : 12,
+                measuredAudioSeconds: 3,
+            }),
+        };
+    };
+
+    it('offers the lighter voice when a device keeps falling behind and clawing back', () => {
+        // A device that cannot keep up rarely starves continuously: it starves,
+        // recovers a little, starves again. Demanding an unbroken run of bad
+        // samples meant this pattern was never offered a fallback at all.
+        const advisor = new FallbackAdvisor();
+        let eligible = false;
+
+        for (let index = 0; index < 10; index++) {
+            const { pacer, evidence: sample } = sawtooth(index);
+            if (advisor.observe(pacer, sample).eligible) eligible = true;
+        }
+
+        expect(eligible).toBe(true);
+    });
+
+    it('leaves a healthy device alone when it dips only occasionally', () => {
+        const advisor = new FallbackAdvisor();
+        let eligible = false;
+
+        for (let index = 0; index < 24; index++) {
+            const starving = index % 6 === 0;
+            const result = advisor.observe(
+                snapshot({ effectiveSpeed: starving ? 0.45 : 1 }),
+                evidence({
+                    isBufferShrinking: starving,
+                    bufferedAudioSeconds: starving ? 8 : 20,
+                    measuredAudioSeconds: 3,
+                }),
+            );
+            if (result.eligible) eligible = true;
+        }
+
+        expect(eligible).toBe(false);
+    });
+});
+
+describe('FallbackAdvisor around a momentary interruption', () => {
+    it('withholds judgement while playback is interrupted', () => {
+        // The pacer clears this state once the buffer recovers, so a single
+        // underrun must not by itself recommend changing voice.
+        const advisor = new FallbackAdvisor();
+        const interrupted = snapshot({
+            effectiveSpeed: FALLBACK_FLOOR_SPEED,
+            paceState: 'interrupted',
+            reason: 'interrupted',
+        });
+
+        const result = advisor.observe(interrupted, evidence({ measuredAudioSeconds: 12 }));
+
+        expect(result.eligible).toBe(false);
+        expect(result.reason).toBe('interrupted');
     });
 });

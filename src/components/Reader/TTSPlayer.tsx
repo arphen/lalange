@@ -239,7 +239,7 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
     const [fallbackAdvisorSnapshot, setFallbackAdvisorSnapshot] = useState<FallbackAdvisorSnapshot>(() => ({
         eligible: false,
         stableAudioSeconds: 0,
-        consecutiveLowSpeedSamples: 0,
+        lowSpeedSamplesInWindow: 0,
         underrunsInWindow: 0,
         dismissed: false,
         trialFailed: false,

@@ -122,3 +122,45 @@ describe('RealtimePacer', () => {
         expect(snapshot.paceState).toBe('measuring');
     });
 });
+
+describe('RealtimePacer recovery from an underrun', () => {
+    const healthyBuffer = { bufferedAudioSeconds: 30, isShrinking: false, nextAudioReady: true, deliveredWpm: 150 };
+
+    it('clears the interruption once the buffer is healthy again', () => {
+        // Nothing used to call recoverFromInterruption(), so one underrun latched
+        // `interrupted` for the whole session. Every recovery path is gated on it,
+        // which left speech pinned at the floor speed and could never climb back.
+        const pacer = new RealtimePacer(1);
+        pacer.observeGeneration({ generationSeconds: 0.4, audioSeconds: 2 });
+        expect(pacer.reportUnderrun().paceState).toBe('interrupted');
+
+        pacer.observeBuffer(healthyBuffer);
+        pacer.observeBuffer(healthyBuffer);
+        const recovered = pacer.observeBuffer(healthyBuffer);
+
+        expect(recovered.paceState).not.toBe('interrupted');
+    });
+
+    it('lets speed climb back to the preference after recovering', () => {
+        const pacer = new RealtimePacer(1);
+        pacer.observeGeneration({ generationSeconds: 0.4, audioSeconds: 2 });
+        pacer.reportUnderrun();
+
+        for (let index = 0; index < 3; index++) pacer.observeBuffer(healthyBuffer);
+        for (let index = 0; index < 3; index++) pacer.observeBuffer(healthyBuffer);
+
+        expect(pacer.snapshot().effectiveSpeed).toBe(1);
+    });
+
+    it('stays interrupted while the buffer is still starving', () => {
+        const pacer = new RealtimePacer(1);
+        pacer.observeGeneration({ generationSeconds: 0.4, audioSeconds: 2 });
+        pacer.reportUnderrun();
+
+        for (let index = 0; index < 5; index++) {
+            pacer.observeBuffer({ bufferedAudioSeconds: 2, isShrinking: true, nextAudioReady: false, deliveredWpm: 90 });
+        }
+
+        expect(pacer.snapshot().paceState).toBe('interrupted');
+    });
+});

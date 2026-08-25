@@ -129,6 +129,21 @@ export class RealtimePacer {
         };
         this.deliveredWpm = buffer.deliveredWpm;
 
+        // A single underrun used to latch `interrupted` for the rest of the
+        // session: every recovery path below is gated on !interrupted, so speech
+        // stayed pinned at the floor speed forever and the fallback advisor was
+        // permanently silenced. Clear it once the buffer is genuinely healthy.
+        if (
+            this.continuityMode === 'continuous'
+            && this.interrupted
+            && this.buffer.bufferedAudioSeconds > this.recoveryBufferSeconds
+            && !this.buffer.isShrinking
+        ) {
+            this.healthySamples += 1;
+            if (this.healthySamples >= 3) return this.recoverFromInterruption();
+            return this.snapshot();
+        }
+
         if (
             this.continuityMode === 'continuous'
             && !this.interrupted
