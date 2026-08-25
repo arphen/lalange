@@ -16,6 +16,7 @@ const preferredVoice: VoiceInfo = {
     languageLabel: 'American English',
     flag: 'US',
     quality: 'A',
+    weight: 'heavy',
 };
 
 const candidate = (id: string): VoiceInfo => ({

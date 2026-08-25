@@ -129,6 +129,17 @@ export const KOKORO_VOICES: KokoroVoiceInfo[] = [
     { id: 'bm_lewis', name: 'Lewis', gender: 'male', accent: 'british', quality: 'C' },
 ];
 
+/**
+ * Download size of the Kokoro weights, per dtype, from the ONNX model repo.
+ * Every Kokoro voice shares this one file: picking a second Kokoro voice costs
+ * nothing extra, whereas each Piper voice is its own separate download.
+ */
+export const KOKORO_MODEL_MB = { q8: 88, fp32: 310 } as const;
+
+export function getKokoroDownloadMB(iosRuntime = isIOSRuntime()): number {
+    return iosRuntime ? KOKORO_MODEL_MB.q8 : KOKORO_MODEL_MB.fp32;
+}
+
 export const KOKORO_DEFAULT_VOICE = 'af_heart';
 
 export function resolveKokoroVoiceId(voiceId: string | undefined): string {

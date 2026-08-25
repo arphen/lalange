@@ -1040,8 +1040,31 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
             group.push(voice);
             groups.set(voice.languageLabel, group);
         }
-        return Array.from(groups, ([label, groupVoices]) => ({ label, voices: groupVoices }));
+        // Kokoro is registered first, which buried the only voices a phone can
+        // actually keep up with at the bottom of their language. Light first.
+        return Array.from(groups, ([label, groupVoices]) => ({
+            label,
+            voices: [...groupVoices].sort((left, right) => (
+                left.weight === right.weight ? 0 : left.weight === 'light' ? -1 : 1
+            )),
+        }));
     }, []);
+    // Every Kokoro voice shares one download, so a second Kokoro voice is free
+    // once the first is cached, while each Piper voice costs its own 60 MB.
+    // Showing this beats printing a size the listener has already paid.
+    const [cachedVoiceIds, setCachedVoiceIds] = useState<Record<string, boolean>>({});
+    useEffect(() => {
+        if (!showVoiceMenu) return undefined;
+        let cancelled = false;
+        void Promise.all(listVoices().map(async (voice) => [
+            voice.id,
+            await isTTSModelCached(voice.id).catch(() => false),
+        ] as const)).then((entries) => {
+            if (!cancelled) setCachedVoiceIds(Object.fromEntries(entries));
+        });
+        return () => { cancelled = true; };
+    }, [showVoiceMenu]);
+
     const currentVoice = getVoice(effectiveVoice);
     const preferredVoiceInfo = getVoice(preferredVoice);
     const isFallbackActive = activeVoiceOverride !== null && effectiveVoice !== preferredVoice;
@@ -1226,6 +1249,10 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
 
                         {showVoiceMenu && (
                             <div className="absolute bottom-full left-0 right-0 mb-2 bg-[#05080f]/95 border border-cyan-200/15 rounded-lg shadow-2xl max-h-56 overflow-y-auto z-30">
+                                <p className="px-3 pt-2.5 pb-1 text-[10px] leading-4 text-white/45">
+                                    <span className="text-cyan-100/80">Light</span> voices generate faster than they speak on most phones.
+                                    {' '}<span className="text-amber-100/80">Heavy</span> voices sound better but need a quick device.
+                                </p>
                                 {voiceGroups.map(group => (
                                     <div key={group.label}>
                                         <div className="px-3 pt-2 pb-1 text-[10px] text-cyan-200/45 uppercase tracking-[0.16em] sticky top-0 bg-[#05080f]/95">
@@ -1243,9 +1270,22 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
                                                     v.id === effectiveVoice ? 'bg-cyan-300/20 text-cyan-100' : 'text-white/80'
                                                 }`}
                                             >
-                                                <span>{v.name}</span>
-                                                <span className="text-[10px] text-white/40">
-                                                    {v.gender === 'female' ? '♀' : '♂'}
+                                                <span className="flex min-w-0 items-center gap-1.5">
+                                                    <span className="truncate">{v.name}</span>
+                                                    <span className="text-[10px] text-white/40">
+                                                        {v.gender === 'female' ? '♀' : '♂'}
+                                                    </span>
+                                                </span>
+                                                <span className="flex shrink-0 items-center gap-1.5 text-[10px]">
+                                                    <span className={v.weight === 'light'
+                                                        ? 'border border-cyan-200/25 px-1 py-0.5 uppercase tracking-wide text-cyan-100/80'
+                                                        : 'border border-amber-200/25 px-1 py-0.5 uppercase tracking-wide text-amber-100/80'}
+                                                    >
+                                                        {v.weight}
+                                                    </span>
+                                                    <span className="w-12 text-right text-white/40">
+                                                        {cachedVoiceIds[v.id] ? 'Ready' : v.downloadMB ? `${v.downloadMB} MB` : ''}
+                                                    </span>
                                                 </span>
                                             </button>
                                         ))}
