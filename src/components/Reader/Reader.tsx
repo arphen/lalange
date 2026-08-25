@@ -2417,10 +2417,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                 className={clsx(
                 'reader-toolbar absolute top-0 left-0 right-0 z-[90] flex justify-between items-start pointer-events-none',
                 isDesktopLayout && showChapters && 'reader-toolbar--contents-open',
-                !isDesktopLayout && showChapters && 'opacity-0 pointer-events-none',
                 )}
-                aria-hidden={!isDesktopLayout && showChapters}
-                inert={!isDesktopLayout && showChapters}
                 style={{ right: isDesktopLayout && showChapters ? 'var(--reader-contents-width)' : undefined }}
             >
                 {onBack ? (
@@ -2524,12 +2521,13 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                         <button
                             type="button"
                             onClick={() => {
-                                setShowNotes(true);
+                                setShowNotes((open) => !open);
                                 setShowChapters(false);
                             }}
-                            className="reader-toolbar-button reader-focus-fade"
+                            className={clsx('reader-toolbar-button reader-focus-fade', showNotes && 'reader-toolbar-button--active')}
                             title="Open retained notes"
                             aria-label={`Notes${bookNotes.length > 0 ? ` (${bookNotes.length})` : ''}`}
+                            aria-expanded={showNotes}
                             aria-hidden={focusModeEnabled}
                             tabIndex={focusModeEnabled ? -1 : undefined}
                         >
@@ -2540,10 +2538,11 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
 
                     <button
                         type="button"
-                        onClick={() => setShowExchange(true)}
-                        className="reader-toolbar-button reader-focus-fade"
+                        onClick={() => setShowExchange((open) => !open)}
+                        className={clsx('reader-toolbar-button reader-focus-fade', showExchange && 'reader-toolbar-button--active')}
                         title="Continue on another device"
                         aria-label="Continue on another device"
+                        aria-expanded={showExchange}
                         aria-hidden={focusModeEnabled}
                         tabIndex={focusModeEnabled ? -1 : undefined}
                     >

@@ -55,6 +55,9 @@
   --inset-bottom: max(1rem, calc(var(--safe-bottom) + 0.5rem));
   --inset-left: max(1rem, calc(var(--safe-left) + 0.5rem));
 
+  /* Height of the floating reader toolbar row: inset + button + bottom padding. */
+  --reader-toolbar-height: calc(max(0.5rem, var(--safe-top)) + 3.25rem);
+
   /* --- KINETICS: THE TRADE WINDS (ALISIOS) --- */
   --ease-swell: cubic-bezier(0.4, 0.0, 0.2, 1);
   --anim-breath: 6000ms;
@@ -819,6 +822,16 @@ html {
   to { opacity: 1; transform: translateY(0); }
 }
 
+@media (max-width: 899px) {
+  .exchange-overlay {
+    top: var(--reader-toolbar-height);
+  }
+
+  .exchange-sheet {
+    height: 100%;
+  }
+}
+
 @media (max-width: 640px) {
   .exchange-sheet {
     width: 100%;
@@ -1007,12 +1020,14 @@ body.theme-day .bg-white\/10 {
   background-color: rgba(255, 255, 255, 0.55) !important;
 }
 
-body.theme-day .hover\:bg-white\/5:hover {
-  background-color: rgba(255, 255, 255, 0.52) !important;
-}
+@media (hover: hover) {
+  body.theme-day .hover\:bg-white\/5:hover {
+    background-color: rgba(255, 255, 255, 0.52) !important;
+  }
 
-body.theme-day .hover\:bg-white\/10:hover {
-  background-color: rgba(255, 255, 255, 0.68) !important;
+  body.theme-day .hover\:bg-white\/10:hover {
+    background-color: rgba(255, 255, 255, 0.68) !important;
+  }
 }
 
 body.theme-day .mica-dust-layer {
@@ -1239,11 +1254,17 @@ body.theme-ash {
     color: var(--reader-accent-green);
   }
 
-  .reader-toolbar-button:hover:not(:disabled),
   .reader-toolbar-button:focus-visible,
   .reader-toolbar-button--active {
     background: var(--reader-control-active);
     color: var(--reader-accent-green);
+  }
+
+  @media (hover: hover) {
+    .reader-toolbar-button:hover:not(:disabled) {
+      background: var(--reader-control-active);
+      color: var(--reader-accent-green);
+    }
   }
 
   .reader-toolbar-button:disabled {
@@ -2461,8 +2482,11 @@ body.theme-ash {
     width: var(--reader-contents-width);
   }
 
+  /* Below the reader's desktop breakpoint the toolbar floats over the stage, so
+     the drawer opens beneath it and the Contents trigger stays tappable. */
   @media (max-width: 899px) {
     .reader-contents-panel {
+      top: var(--reader-toolbar-height);
       width: min(100vw, 32rem);
       border-left: 1px solid var(--reader-contents-edge);
       border-top: 0;
