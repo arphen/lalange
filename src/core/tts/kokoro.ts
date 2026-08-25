@@ -226,6 +226,11 @@ async function loadKokoroLibrary(): Promise<void> {
 }
 
 /**
+ * onnxruntime-web is a single shared module — transformers.js imports it and
+ * piper-tts-web peer-depends on it — so `env.wasm.proxy` is global to both
+ * engines, not private to Kokoro. It must therefore be set for whichever engine
+ * is about to build a session, which is why initTTS clears it before Piper.
+ *
  * ONNX Runtime's WASM backend runs inference on whichever thread creates the
  * session, and transformers.js leaves it unproxied by default. On WASM that
  * means every sentence is synthesised on the main thread: the UI stops
@@ -233,13 +238,21 @@ async function loadKokoroLibrary(): Promise<void> {
  * ready. Proxying moves the session into ONNX Runtime's own worker. WebGPU does
  * not block the main thread and cannot be proxied, so it is left alone.
  */
-export function applyOnnxProxyPreference(
-    device: TTSDevice,
+export function setOnnxWasmProxy(
+    enabled: boolean,
     env: { backends?: { onnx?: { wasm?: { proxy?: boolean } } } } | null = transformersEnv,
 ): void {
     const wasmBackend = env?.backends?.onnx?.wasm;
     if (!wasmBackend) return;
-    wasmBackend.proxy = device === 'wasm';
+    wasmBackend.proxy = enabled;
+}
+
+/** Kokoro is the only engine heavy enough to need the worker. */
+export function applyOnnxProxyPreference(
+    device: TTSDevice,
+    env: { backends?: { onnx?: { wasm?: { proxy?: boolean } } } } | null = transformersEnv,
+): void {
+    setOnnxWasmProxy(device === 'wasm', env);
 }
 
 /**

@@ -19,6 +19,7 @@ import {
     unloadKokoro,
     KOKORO_DEFAULT_VOICE,
     getKokoroDownloadMB,
+    setOnnxWasmProxy,
     KOKORO_VOICES,
     type TTSDevice,
 } from './kokoro';
@@ -172,6 +173,7 @@ export async function initTTS(
         await unloadOtherEngine(engine);
 
         if (engine === 'piper') {
+            setOnnxWasmProxy(false);
             await initPiper(voice, onProgress);
             return;
         }
