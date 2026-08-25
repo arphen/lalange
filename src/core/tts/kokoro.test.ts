@@ -6,6 +6,7 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+    applyOnnxProxyPreference,
     resolveKokoroVoiceId,
     isIOSRuntime,
     prepareKokoroTextForSpeech,
@@ -126,5 +127,30 @@ describe('isIOSRuntime', () => {
             'MacIntel',
             0,
         )).toBe(false);
+    });
+});
+
+
+describe('applyOnnxProxyPreference', () => {
+    const makeEnv = () => ({ backends: { onnx: { wasm: { proxy: false } } } });
+
+    it('proxies WASM inference into a worker so synthesis cannot block the main thread', () => {
+        // Unproxied, ONNX Runtime runs the session on the calling thread: taps and
+        // the OS media controls stop responding for the whole of each sentence.
+        const env = makeEnv();
+        applyOnnxProxyPreference('wasm', env);
+        expect(env.backends.onnx.wasm.proxy).toBe(true);
+    });
+
+    it('leaves WebGPU unproxied, since it does not block and cannot be proxied', () => {
+        const env = makeEnv();
+        env.backends.onnx.wasm.proxy = true;
+        applyOnnxProxyPreference('webgpu', env);
+        expect(env.backends.onnx.wasm.proxy).toBe(false);
+    });
+
+    it('tolerates an environment without the onnx backend', () => {
+        expect(() => applyOnnxProxyPreference('wasm', {})).not.toThrow();
+        expect(() => applyOnnxProxyPreference('wasm', null)).not.toThrow();
     });
 });

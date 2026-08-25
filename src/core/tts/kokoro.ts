@@ -23,6 +23,7 @@ import { createTTSProgressReporter } from './progress';
 
 // Lazy import to avoid loading the large library until needed
 let KokoroTTS: typeof import('kokoro-js').KokoroTTS | null = null;
+let transformersEnv: typeof import('@huggingface/transformers').env | null = null;
 
 // Singleton instance
 let ttsInstance: InstanceType<typeof import('kokoro-js').KokoroTTS> | null = null;
@@ -209,7 +210,25 @@ async function loadKokoroLibrary(): Promise<void> {
         transformers.env.useBrowserCache = false;
     }
 
+    transformersEnv = transformers.env;
     KokoroTTS = module.KokoroTTS;
+}
+
+/**
+ * ONNX Runtime's WASM backend runs inference on whichever thread creates the
+ * session, and transformers.js leaves it unproxied by default. On WASM that
+ * means every sentence is synthesised on the main thread: the UI stops
+ * responding to taps and even the OS media controls go dead until the audio is
+ * ready. Proxying moves the session into ONNX Runtime's own worker. WebGPU does
+ * not block the main thread and cannot be proxied, so it is left alone.
+ */
+export function applyOnnxProxyPreference(
+    device: TTSDevice,
+    env: { backends?: { onnx?: { wasm?: { proxy?: boolean } } } } | null = transformersEnv,
+): void {
+    const wasmBackend = env?.backends?.onnx?.wasm;
+    if (!wasmBackend) return;
+    wasmBackend.proxy = device === 'wasm';
 }
 
 /**
@@ -259,6 +278,8 @@ export async function initKokoro(
             if (!KokoroTTS) {
                 throw new Error('Failed to load Kokoro library');
             }
+
+            applyOnnxProxyPreference(runtimeConfig.device);
 
             const initializingStatus = `Loading model (${runtimeConfig.dtype}, ${runtimeConfig.device})`;
             progressReporter.report(0.1, initializingStatus);
