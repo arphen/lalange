@@ -2224,7 +2224,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                     <button
                         type="button"
                         onClick={onBack}
-                        className="absolute left-4 top-4 inline-flex min-h-11 items-center gap-2 rounded border border-white/15 bg-black/30 px-3 text-sm text-white/75 transition-colors hover:bg-white/10 hover:text-white"
+                        className="absolute left-inset-left top-inset-top inline-flex min-h-11 items-center gap-2 rounded border border-white/15 bg-black/30 px-3 text-sm text-white/75 transition-colors hover:bg-white/10 hover:text-white"
                         aria-label="Back to library"
                     >
                         <ArrowLeft className="h-4 w-4" />
@@ -2415,7 +2415,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
             {/* Floating Header / Controls */}
             <div
                 className={clsx(
-                'reader-toolbar absolute top-0 left-0 right-0 z-[90] p-2 md:p-4 flex justify-between items-start pointer-events-none',
+                'reader-toolbar absolute top-0 left-0 right-0 z-[90] flex justify-between items-start pointer-events-none',
                 isDesktopLayout && showChapters && 'reader-toolbar--contents-open',
                 !isDesktopLayout && showChapters && 'opacity-0 pointer-events-none',
                 )}
@@ -2645,7 +2645,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
             {showNotes && (
                 <div
                     data-testid="reader-notes-view"
-                    className="fixed inset-0 z-[85] flex items-start justify-end bg-black/55 pt-16 backdrop-blur-sm md:pt-20"
+                    className="fixed inset-0 z-[85] flex items-start justify-end bg-black/55 pt-header backdrop-blur-sm md:pt-header-lg"
                     role="dialog"
                     aria-modal="true"
                     aria-labelledby="reader-notes-title"
@@ -2656,7 +2656,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                         onClick={() => setShowNotes(false)}
                         aria-label="Close notes"
                     />
-                    <section className="relative flex h-[calc(100%-4rem)] max-h-[48rem] w-full flex-col border-l border-white/10 bg-basalt shadow-2xl md:h-[calc(100%-5rem)] md:w-[min(38rem,92vw)]">
+                    <section className="relative flex h-[calc(100%-var(--safe-top)-4rem)] max-h-[48rem] w-full flex-col border-l border-white/10 bg-basalt shadow-2xl md:h-[calc(100%-var(--safe-top)-5rem)] md:w-[min(38rem,92vw)]">
                         <div className="flex items-start justify-between gap-4 border-b border-white/10 px-5 py-4 md:px-6">
                             <div>
                                 <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-amber-200/70">Retained PDF material</p>
@@ -2725,7 +2725,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
             <div
                 ref={readerMainStageRef}
                 className={clsx(
-                    'reader-main-stage flex-1 h-full relative flex flex-col min-w-0 pb-20 md:pb-0 transition-all duration-300',
+                    'reader-main-stage flex-1 h-full relative flex flex-col min-w-0 pb-dock md:pb-0 transition-all duration-300',
                     isDesktopLayout && showChapters && 'reader-main-stage--contents-open',
                 )}
                 aria-hidden={!isDesktopLayout && showChapters}
@@ -2941,7 +2941,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
             <div
                 data-testid="speed-controls"
                 className={clsx(
-                    'reader-speed-dock reader-focus-fade absolute inset-x-0 bottom-0 z-[70] h-20 px-4 flex items-center justify-center gap-2 md:inset-x-auto md:bottom-8 md:right-8 md:h-auto md:px-2 md:py-2 md:opacity-70 md:hover:opacity-100',
+                    'reader-speed-dock reader-focus-fade absolute inset-x-0 bottom-0 z-[70] h-dock pb-safe-bottom px-4 flex items-center justify-center gap-2 md:inset-x-auto md:bottom-8 md:right-8 md:h-auto md:px-2 md:py-2 md:opacity-70 md:hover:opacity-100',
                     isDesktopLayout && showChapters && 'reader-speed-dock--contents-open',
                 )}
                 aria-hidden={focusModeEnabled}
@@ -3164,7 +3164,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onBack }) => {
                         onClick={() => setOpenNoteId(null)}
                         aria-label="Close note"
                     />
-                    <section className="relative flex max-h-[82vh] w-full flex-col border-t border-amber-200/20 bg-basalt shadow-2xl md:h-full md:max-h-none md:w-[min(32rem,92vw)] md:border-l md:border-t-0">
+                    <section className="relative flex max-h-[82vh] w-full flex-col border-t border-amber-200/20 bg-basalt pb-safe-bottom shadow-2xl md:h-full md:max-h-none md:w-[min(32rem,92vw)] md:border-l md:border-t-0 md:pb-0">
                         <div className="flex items-start justify-between gap-4 border-b border-white/10 px-5 py-4 md:px-6">
                             <div>
                                 <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-amber-200/70">

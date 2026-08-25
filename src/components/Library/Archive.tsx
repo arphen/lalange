@@ -310,7 +310,7 @@ export const Archive: React.FC<ArchiveProps> = ({ onOpenBook, onScanHandoff }) =
                 schema={HOME_SCHEMA}
             />
             <div className="archive-main reader-scroll-surface flex-1 overflow-y-auto">
-                <div className="mx-auto flex w-full max-w-7xl flex-col gap-8 px-4 pb-8 pt-16 md:px-8 md:pt-20">
+                <div className="mx-auto flex w-full max-w-7xl flex-col gap-8 px-4 pb-8 pt-header md:px-8 md:pt-header-lg">
                     <div className="archive-hero calima-glass p-4 md:p-6">
                         <div className="mb-4 flex items-center justify-between gap-3">
                             <p className="archive-kicker">ARCHIVE SURFACE</p>

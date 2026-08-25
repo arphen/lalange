@@ -144,7 +144,7 @@ export const LocalAccessQr: React.FC = () => {
         <>
             <button
                 onClick={() => setIsOpen(true)}
-                className="fixed bottom-4 left-4 z-[75] px-3 py-2 bg-black/55 backdrop-blur-md rounded-full border border-white/10 text-white/80 hover:text-white hover:bg-white/10 transition-colors shadow-lg font-mono text-[10px] uppercase tracking-wider"
+                className="fixed bottom-inset-bottom left-inset-left z-[75] px-3 py-2 bg-black/55 backdrop-blur-md rounded-full border border-white/10 text-white/80 hover:text-white hover:bg-white/10 transition-colors shadow-lg font-mono text-[10px] uppercase tracking-wider"
                 title="Open this route on another local device"
             >
                 Local Link

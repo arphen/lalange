@@ -1094,7 +1094,7 @@ export const TTSPlayer: React.FC<TTSPlayerProps> = ({
     const isButtonActive = playbackState === 'playing' || playbackState === 'generating';
     
     // Compact player (minimized)
-    const dockClasses = `fixed bottom-28 right-4 z-[90] ${dockClassName}`;
+    const dockClasses = `fixed bottom-[calc(7rem+var(--safe-bottom))] right-inset-right z-[90] ${dockClassName}`;
 
     if (compact && !isExpanded) {
         return (

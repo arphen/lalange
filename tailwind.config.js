@@ -6,6 +6,21 @@ export default {
   ],
   theme: {
     extend: {
+      spacing: {
+        'safe-top': 'var(--safe-top)',
+        'safe-right': 'var(--safe-right)',
+        'safe-bottom': 'var(--safe-bottom)',
+        'safe-left': 'var(--safe-left)',
+        'inset-top': 'var(--inset-top)',
+        'inset-right': 'var(--inset-right)',
+        'inset-bottom': 'var(--inset-bottom)',
+        'inset-left': 'var(--inset-left)',
+        // Clears the floating hamburger/theme row above scrolling page content.
+        'header': 'calc(var(--safe-top) + 4rem)',
+        'header-lg': 'calc(var(--safe-top) + 5rem)',
+        // Reader bottom dock, grown by the home-indicator inset.
+        'dock': 'calc(5rem + var(--safe-bottom))',
+      },
       fontFamily: {
         mono: ['"Roboto Mono"', 'monospace'],
       },
