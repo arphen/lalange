@@ -23,6 +23,7 @@ import { createTTSProgressReporter } from './progress';
 
 // Lazy import to avoid loading the large library until needed
 let KokoroTTS: typeof import('kokoro-js').KokoroTTS | null = null;
+let transformersEnv: typeof import('@huggingface/transformers').env | null = null;
 
 // Singleton instance
 let ttsInstance: InstanceType<typeof import('kokoro-js').KokoroTTS> | null = null;
@@ -128,6 +129,17 @@ export const KOKORO_VOICES: KokoroVoiceInfo[] = [
     { id: 'bm_lewis', name: 'Lewis', gender: 'male', accent: 'british', quality: 'C' },
 ];
 
+/**
+ * Download size of the Kokoro weights, per dtype, from the ONNX model repo.
+ * Every Kokoro voice shares this one file: picking a second Kokoro voice costs
+ * nothing extra, whereas each Piper voice is its own separate download.
+ */
+export const KOKORO_MODEL_MB = { q8: 88, fp32: 310 } as const;
+
+export function getKokoroDownloadMB(iosRuntime = isIOSRuntime()): number {
+    return iosRuntime ? KOKORO_MODEL_MB.q8 : KOKORO_MODEL_MB.fp32;
+}
+
 export const KOKORO_DEFAULT_VOICE = 'af_heart';
 
 export function resolveKokoroVoiceId(voiceId: string | undefined): string {
@@ -209,7 +221,38 @@ async function loadKokoroLibrary(): Promise<void> {
         transformers.env.useBrowserCache = false;
     }
 
+    transformersEnv = transformers.env;
     KokoroTTS = module.KokoroTTS;
+}
+
+/**
+ * onnxruntime-web is a single shared module — transformers.js imports it and
+ * piper-tts-web peer-depends on it — so `env.wasm.proxy` is global to both
+ * engines, not private to Kokoro. It must therefore be set for whichever engine
+ * is about to build a session, which is why initTTS clears it before Piper.
+ *
+ * ONNX Runtime's WASM backend runs inference on whichever thread creates the
+ * session, and transformers.js leaves it unproxied by default. On WASM that
+ * means every sentence is synthesised on the main thread: the UI stops
+ * responding to taps and even the OS media controls go dead until the audio is
+ * ready. Proxying moves the session into ONNX Runtime's own worker. WebGPU does
+ * not block the main thread and cannot be proxied, so it is left alone.
+ */
+export function setOnnxWasmProxy(
+    enabled: boolean,
+    env: { backends?: { onnx?: { wasm?: { proxy?: boolean } } } } | null = transformersEnv,
+): void {
+    const wasmBackend = env?.backends?.onnx?.wasm;
+    if (!wasmBackend) return;
+    wasmBackend.proxy = enabled;
+}
+
+/** Kokoro is the only engine heavy enough to need the worker. */
+export function applyOnnxProxyPreference(
+    device: TTSDevice,
+    env: { backends?: { onnx?: { wasm?: { proxy?: boolean } } } } | null = transformersEnv,
+): void {
+    setOnnxWasmProxy(device === 'wasm', env);
 }
 
 /**
@@ -259,6 +302,8 @@ export async function initKokoro(
             if (!KokoroTTS) {
                 throw new Error('Failed to load Kokoro library');
             }
+
+            applyOnnxProxyPreference(runtimeConfig.device);
 
             const initializingStatus = `Loading model (${runtimeConfig.dtype}, ${runtimeConfig.device})`;
             progressReporter.report(0.1, initializingStatus);
@@ -312,10 +357,30 @@ export async function initKokoro(
 /**
  * Unload the TTS engine to free memory
  */
+/**
+ * Dropping the JS reference does not free the model: the ONNX session keeps the
+ * weights in the WASM heap, and WASM memory never shrinks. Unloading Kokoro to
+ * make room for Piper therefore freed nothing, and Piper allocated on top of a
+ * heap still holding 88 MB (310 MB on desktop) of Kokoro. On a phone that runs
+ * out part-way through a chapter, as a failed OrtRun mid-sentence.
+ */
+export async function releaseKokoroModel(
+    instance: { model?: { dispose?: () => Promise<unknown> } } | null,
+): Promise<void> {
+    try {
+        await instance?.model?.dispose?.();
+    } catch (error) {
+        // A model that cannot be disposed must not block the engine switch.
+        console.warn('[TTS] Could not release Kokoro model:', error);
+    }
+}
+
 export async function unloadKokoro(): Promise<void> {
     ttsLifecycleGeneration += 1;
+    const releasedInstance = ttsInstance;
     ttsInstance = null;
     currentLoadedConfig = null;
+    await releaseKokoroModel(releasedInstance);
     useTTSStore.getState().setReady(false);
     console.log('[TTS] Unloaded');
 }

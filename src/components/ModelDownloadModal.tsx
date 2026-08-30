@@ -104,7 +104,7 @@ export const AISetupWizard: React.FC = () => {
             role="dialog"
             aria-modal="false"
             aria-labelledby="ai-setup-title"
-            className="fixed inset-x-3 bottom-24 z-[100] max-h-[calc(100dvh-7rem)] overflow-y-auto rounded-lg border border-dune-gold/30 bg-basalt/95 shadow-2xl backdrop-blur-xl md:inset-x-auto md:bottom-6 md:right-6 md:w-[28rem]"
+            className="fixed inset-x-3 bottom-[calc(6rem+var(--safe-bottom))] z-[100] max-h-[calc(100dvh-7rem-var(--safe-top)-var(--safe-bottom))] overflow-y-auto rounded-lg border border-dune-gold/30 bg-basalt/95 shadow-2xl backdrop-blur-xl md:inset-x-auto md:bottom-6 md:right-6 md:w-[28rem]"
         >
             <div className="flex items-start gap-3 border-b border-white/10 p-4">
                 <div className="mt-0.5 rounded bg-dune-gold/15 p-2 text-dune-gold">

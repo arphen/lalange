@@ -14,6 +14,7 @@ const kokoro = vi.hoisted(() => ({
     isKokoroReady: vi.fn(() => false),
     clearKokoroCache: vi.fn(async () => undefined),
     unloadKokoro: vi.fn(async () => undefined),
+    setOnnxWasmProxy: vi.fn(),
 }));
 
 const piper = vi.hoisted(() => ({
@@ -315,5 +316,23 @@ describe('streamSpeech', () => {
         const generator = streamSpeech(sentences, { voice: SLOVENIAN_VOICE });
 
         await expect(generator.next()).rejects.toThrow('phonemizer exploded');
+    });
+});
+
+describe('ONNX worker proxying across engines', () => {
+    it('clears the proxy before Piper builds its session', async () => {
+        // onnxruntime-web is one shared module: transformers.js imports it and
+        // piper-tts-web peer-depends on it, so the proxy flag Kokoro sets also
+        // governs Piper. Leaving it on put Piper's session in the worker that
+        // had just held Kokoro's weights.
+        await initTTS('en_US-amy-low');
+
+        expect(kokoro.setOnnxWasmProxy).toHaveBeenCalledWith(false);
+    });
+
+    it('leaves the proxy alone when starting a Kokoro voice', async () => {
+        await initTTS('af_heart');
+
+        expect(kokoro.setOnnxWasmProxy).not.toHaveBeenCalled();
     });
 });

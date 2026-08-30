@@ -180,6 +180,28 @@ class TTSAudioPlayer {
     private lastBufferedAudioSeconds: number | null = null;
     private deliveredProgressSamples: Array<{ time: number; wordPosition: number }> = [];
     
+    /**
+     * An interruption can arrive while the tab is in the background, where a
+     * resume() is refused. Retry when the page comes back so returning to the
+     * app restores audio the listener never asked to stop.
+     */
+    private watchForInterruption(context: AudioContext): void {
+        const resumeIfIntended = () => {
+            if (!this.isPlaying || context !== this.audioContext) return;
+            if (context.state === 'running') return;
+            void context.resume?.().catch(() => {
+                // Backgrounded tabs may refuse; the next visibility change retries.
+            });
+        };
+
+        context.addEventListener?.('statechange', resumeIfIntended);
+        if (typeof document !== 'undefined') {
+            document.addEventListener('visibilitychange', () => {
+                if (document.visibilityState === 'visible') resumeIfIntended();
+            });
+        }
+    }
+
     private async ensureContext(): Promise<AudioContext> {
         if (!this.audioContext) {
             // Keep the output graph at the device's native rate. AudioBuffer keeps
@@ -193,9 +215,14 @@ class TTSAudioPlayer {
             this.gainNode = this.audioContext.createGain();
             this.gainNode.connect(this.audioContext.destination);
             this.decoyAudioElement = createDecoyAudioElement();
+            this.watchForInterruption(this.audioContext);
         }
 
-        if (this.audioContext.state === 'suspended' && typeof this.audioContext.resume === 'function') {
+        // WebKit parks the context in its own 'interrupted' state when the phone
+        // sleeps, a call arrives, or the app is backgrounded — not 'suspended'.
+        // Only checking for 'suspended' meant an interrupted context was never
+        // resumed, so playback stayed dead after the screen came back on.
+        if (this.audioContext.state !== 'running' && typeof this.audioContext.resume === 'function') {
             await this.audioContext.resume();
         }
 

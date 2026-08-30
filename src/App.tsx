@@ -161,7 +161,7 @@ function App() {
           {/* Floating Mobile Hamburger Menu Trigger */}
           <button
             onClick={() => setIsMobileNavOpen(true)}
-            className="fixed top-4 left-4 z-30 p-3 bg-black/40 backdrop-blur-sm rounded-full border border-white/10 text-white/70 hover:bg-white/10 hover:text-white transition-all shadow-lg active:scale-95 md:hidden"
+            className="fixed top-inset-top left-inset-left z-30 p-3 bg-black/40 backdrop-blur-sm rounded-full border border-white/10 text-white/70 hover:bg-white/10 hover:text-white transition-all shadow-lg active:scale-95 md:hidden"
             title="Open Menu"
           >
             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -193,7 +193,7 @@ function App() {
           <Route path="/library" element={
             <>
               <SeoHead title="Librarian" robots="noindex, nofollow" />
-              <div className="w-full h-full max-w-4xl pt-16 px-4 pb-4 md:p-4 flex flex-col">
+              <div className="w-full h-full max-w-4xl pt-header px-4 pb-4 md:p-4 flex flex-col">
                 <Librarian />
               </div>
             </>
@@ -201,13 +201,13 @@ function App() {
           <Route path="/settings" element={<Navigate to="/settings/pacing" replace />} />
           <Route path="/settings/:tab" element={<SettingsPanel onClose={() => navigate(-1)} />} />
           <Route path="/manual" element={
-            <div className="w-full h-full pt-16 md:pt-0">
+            <div className="w-full h-full pt-header md:pt-0">
               <Manual />
             </div>
           } />
           <Route path="/manifesto" element={<Manifesto onBack={() => navigate('/')} />} />
           <Route path="/research" element={
-            <div className="w-full h-full pt-16 md:pt-0">
+            <div className="w-full h-full pt-header md:pt-0">
               <Research />
             </div>
           } />
@@ -216,13 +216,13 @@ function App() {
       </div>
 
       {view === 'reader' && showReaderAIStatus && (
-        <div className="fixed left-3 bottom-24 z-[80] w-[min(22rem,calc(100vw-1.5rem))] md:left-6 md:bottom-6">
+        <div className="fixed left-3 bottom-[calc(6rem+var(--safe-bottom))] z-[80] w-[min(22rem,calc(100vw-1.5rem))] md:left-6 md:bottom-6">
           <AIStatusPanel variant="global" />
         </div>
       )}
 
       {view !== 'reader' && (
-        <div className="fixed top-4 right-4 z-[70]">
+        <div className="fixed top-inset-top right-inset-right z-[70]">
           <button
             type="button"
             onClick={handleThemeToggle}
@@ -242,7 +242,7 @@ function App() {
 
       {/* Made by Arphen Corner Label - Only show if not in Manifesto */}
       {view !== 'manifesto' && view !== 'reader' && (
-        <div className="fixed bottom-4 right-4 z-50">
+        <div className="fixed bottom-inset-bottom right-inset-right z-50">
           <button
             onClick={() => navigate('/manifesto')}
             className="text-[10px] font-mono text-white/30 hover:text-lacan-red transition-colors tracking-widest uppercase"

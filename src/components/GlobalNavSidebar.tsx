@@ -63,7 +63,7 @@ export function GlobalNavSidebar({ view, currentBook, onNavigate, onScanHandoff 
   const appVersion = typeof __COMMIT_HASH__ === 'string' ? __COMMIT_HASH__ : 'unknown';
 
   return (
-    <div className="h-full w-64 shrink-0 border-r border-white/10 bg-black/20 backdrop-blur-sm flex flex-col">
+    <div className="h-full w-64 shrink-0 border-r border-white/10 bg-black/20 backdrop-blur-sm flex flex-col pt-safe-top pb-safe-bottom pl-safe-left">
       <div className="p-4 border-b border-white/10">
         <div className="flex items-center justify-between gap-2">
           <BrandName className="text-lg" />

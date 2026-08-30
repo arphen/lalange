@@ -43,6 +43,21 @@
   --reader-contents-muted: rgba(255, 255, 255, 0.58);
   --reader-contents-soft: rgba(255, 255, 255, 0.08);
 
+  /* --- SAFE AREA: iOS standalone draws under the Dynamic Island / home indicator --- */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+
+  /* Where floating chrome sits: the usual gap, pushed clear of any inset. */
+  --inset-top: max(1rem, calc(var(--safe-top) + 0.5rem));
+  --inset-right: max(1rem, calc(var(--safe-right) + 0.5rem));
+  --inset-bottom: max(1rem, calc(var(--safe-bottom) + 0.5rem));
+  --inset-left: max(1rem, calc(var(--safe-left) + 0.5rem));
+
+  /* Height of the floating reader toolbar row: inset + button + bottom padding. */
+  --reader-toolbar-height: calc(max(0.5rem, var(--safe-top)) + 3.25rem);
+
   /* --- KINETICS: THE TRADE WINDS (ALISIOS) --- */
   --ease-swell: cubic-bezier(0.4, 0.0, 0.2, 1);
   --anim-breath: 6000ms;
@@ -132,8 +147,13 @@ html {
   border-bottom: 1px solid rgba(255, 255, 255, 0.1);
 }
 
+.exchange-sheet__header {
+  padding-top: max(1.15rem, var(--safe-top));
+}
+
 .exchange-sheet__footer {
   justify-content: flex-end;
+  padding-bottom: max(1.15rem, var(--safe-bottom));
   border-top: 1px solid rgba(255, 255, 255, 0.1);
   border-bottom: 0;
 }
@@ -624,7 +644,7 @@ html {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0.75rem 1rem;
+  padding: max(0.75rem, var(--safe-top)) 1rem 0.75rem;
   color: rgba(255, 255, 255, 0.5);
   background: rgba(9, 11, 10, 0.88);
   backdrop-filter: blur(12px);
@@ -800,6 +820,16 @@ html {
 @keyframes exchange-rise-in {
   from { opacity: 0; transform: translateY(1rem); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+@media (max-width: 899px) {
+  .exchange-overlay {
+    top: var(--reader-toolbar-height);
+  }
+
+  .exchange-sheet {
+    height: 100%;
+  }
 }
 
 @media (max-width: 640px) {
@@ -990,12 +1020,14 @@ body.theme-day .bg-white\/10 {
   background-color: rgba(255, 255, 255, 0.55) !important;
 }
 
-body.theme-day .hover\:bg-white\/5:hover {
-  background-color: rgba(255, 255, 255, 0.52) !important;
-}
+@media (hover: hover) {
+  body.theme-day .hover\:bg-white\/5:hover {
+    background-color: rgba(255, 255, 255, 0.52) !important;
+  }
 
-body.theme-day .hover\:bg-white\/10:hover {
-  background-color: rgba(255, 255, 255, 0.68) !important;
+  body.theme-day .hover\:bg-white\/10:hover {
+    background-color: rgba(255, 255, 255, 0.68) !important;
+  }
 }
 
 body.theme-day .mica-dust-layer {
@@ -1141,6 +1173,10 @@ body.theme-ash {
       backdrop-filter 520ms var(--ease-swell);
   }
 
+  .reader-toolbar {
+    padding: max(0.5rem, var(--safe-top)) max(0.5rem, var(--safe-right)) 0.5rem max(0.5rem, var(--safe-left));
+  }
+
   .reader-toolbar--contents-open {
     right: var(--reader-contents-width);
   }
@@ -1218,11 +1254,17 @@ body.theme-ash {
     color: var(--reader-accent-green);
   }
 
-  .reader-toolbar-button:hover:not(:disabled),
   .reader-toolbar-button:focus-visible,
   .reader-toolbar-button--active {
     background: var(--reader-control-active);
     color: var(--reader-accent-green);
+  }
+
+  @media (hover: hover) {
+    .reader-toolbar-button:hover:not(:disabled) {
+      background: var(--reader-control-active);
+      color: var(--reader-accent-green);
+    }
   }
 
   .reader-toolbar-button:disabled {
@@ -1286,7 +1328,7 @@ body.theme-ash {
 
   @media (max-width: 359px) {
     .reader-toolbar {
-      padding-inline: 0.375rem;
+      padding-inline: max(0.375rem, var(--safe-left)) max(0.375rem, var(--safe-right));
     }
 
     .reader-toolbar [data-testid="reader-toolbar-controls"] {
@@ -1301,6 +1343,10 @@ body.theme-ash {
   }
 
   @media (min-width: 768px) {
+    .reader-toolbar {
+      padding: max(1rem, var(--safe-top)) max(1rem, var(--safe-right)) 1rem max(1rem, var(--safe-left));
+    }
+
     .reader-toolbar-button {
       width: 3.5rem;
       height: 3rem;
@@ -1588,7 +1634,7 @@ body.theme-ash {
   }
 
   .reader-contents {
-    padding-bottom: max(1rem, env(safe-area-inset-bottom));
+    padding-bottom: max(1rem, var(--safe-bottom));
   }
 
   .reader-contents-backdrop {
@@ -1841,7 +1887,7 @@ body.theme-ash {
   }
 
   .reader-contents-header {
-    padding: max(0.85rem, env(safe-area-inset-top)) 1rem 0.75rem;
+    padding: max(0.85rem, var(--safe-top)) 1rem 0.75rem;
     background: var(--reader-contents-surface);
     border-bottom: 1px solid var(--reader-contents-edge);
   }
@@ -2436,8 +2482,11 @@ body.theme-ash {
     width: var(--reader-contents-width);
   }
 
+  /* Below the reader's desktop breakpoint the toolbar floats over the stage, so
+     the drawer opens beneath it and the Contents trigger stays tappable. */
   @media (max-width: 899px) {
     .reader-contents-panel {
+      top: var(--reader-toolbar-height);
       width: min(100vw, 32rem);
       border-left: 1px solid var(--reader-contents-edge);
       border-top: 0;
@@ -2594,6 +2643,8 @@ body.theme-ash {
   .archive-main {
     position: relative;
     z-index: 1;
+    padding-left: var(--safe-left);
+    padding-right: var(--safe-right);
   }
 
   .archive-hero {

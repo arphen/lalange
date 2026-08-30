@@ -770,9 +770,17 @@ describe('Reader Component', () => {
 
             const compactPanel = await screen.findByRole('dialog', { name: 'Contents' });
             expect(compactPanel).toHaveAttribute('aria-modal', 'true');
-            expect(document.querySelector('.reader-toolbar')).toHaveAttribute('aria-hidden', 'true');
-            expect(document.querySelector('.reader-toolbar')).toHaveAttribute('inert', '');
             expect(document.querySelector('.reader-main-stage')).toHaveAttribute('inert', '');
+
+            // The drawer opens beneath the toolbar rather than over it, so the
+            // trigger stays live and a second tap closes what the first opened.
+            const trigger = screen.getByTestId('toggle-chapters');
+            expect(document.querySelector('.reader-toolbar')).not.toHaveAttribute('inert');
+            expect(document.querySelector('.reader-toolbar')).not.toHaveAttribute('aria-hidden');
+            expect(trigger).toHaveClass('reader-toolbar-button--active');
+            fireEvent.click(trigger);
+            await waitFor(() => expect(trigger).toHaveAttribute('aria-expanded', 'false'));
+            expect(trigger).not.toHaveClass('reader-toolbar-button--active');
             compact.unmount();
 
             setViewport(1024);

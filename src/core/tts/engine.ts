@@ -18,6 +18,8 @@ import {
     clearKokoroCache,
     unloadKokoro,
     KOKORO_DEFAULT_VOICE,
+    getKokoroDownloadMB,
+    setOnnxWasmProxy,
     KOKORO_VOICES,
     type TTSDevice,
 } from './kokoro';
@@ -49,6 +51,14 @@ export interface VoiceInfo {
     languageLabel: string;
     flag: string;
     quality: 'A' | 'B' | 'C' | 'D';
+    /**
+     * Synthesis cost, not sound quality. Kokoro is one 82M-parameter model for
+     * every English voice and needs a fast device to generate faster than it
+     * speaks; Piper's per-voice models are small enough to keep up on a phone.
+     * Download size does not separate them — they are 88 MB and 60 MB — so this
+     * is the only thing that tells a listener which will actually work.
+     */
+    weight: 'light' | 'heavy';
     downloadMB?: number;
     description?: string;
 }
@@ -65,6 +75,8 @@ export const VOICES: VoiceInfo[] = [
         engine: 'kokoro',
         gender: voice.gender,
         quality: voice.quality,
+        weight: 'heavy',
+        downloadMB: getKokoroDownloadMB(),
         description: voice.description,
         ...KOKORO_ACCENTS[voice.accent],
     })),
@@ -74,6 +86,7 @@ export const VOICES: VoiceInfo[] = [
         engine: 'piper',
         gender: voice.gender,
         quality: 'B',
+        weight: 'light',
         downloadMB: voice.downloadMB,
         description: voice.description,
         language: voice.language,
@@ -160,6 +173,7 @@ export async function initTTS(
         await unloadOtherEngine(engine);
 
         if (engine === 'piper') {
+            setOnnxWasmProxy(false);
             await initPiper(voice, onProgress);
             return;
         }

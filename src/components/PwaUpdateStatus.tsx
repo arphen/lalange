@@ -33,7 +33,7 @@ export const PwaUpdateStatus = () => {
     };
 
     return (
-        <div className="fixed bottom-4 left-4 z-[100] max-w-sm animate-in slide-in-from-bottom-4 fade-in duration-300">
+        <div className="fixed bottom-inset-bottom left-inset-left z-[100] max-w-sm animate-in slide-in-from-bottom-4 fade-in duration-300">
             <div className="bg-black/90 backdrop-blur-xl border border-dune-gold/30 rounded-lg shadow-2xl p-4">
                 <div className="flex items-start gap-3">
                     <div className="shrink-0 w-10 h-10 bg-dune-gold/20 rounded-full flex items-center justify-center">

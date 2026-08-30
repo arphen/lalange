@@ -3,6 +3,13 @@ import type { RealtimePacerSnapshot } from './realtimePacer';
 export const FALLBACK_STABLE_AUDIO_SECONDS = 10;
 export const FALLBACK_LOW_SPEED_THRESHOLD = 0.6;
 export const FALLBACK_LOW_SPEED_SAMPLES = 3;
+/**
+ * A device that cannot keep up starves in a sawtooth: it falls behind, claws
+ * back a little, falls behind again. Requiring an unbroken run of bad samples
+ * meant a single catch-up sample reset the count, so sustained struggle never
+ * registered. Count bad samples within a recent window instead.
+ */
+export const FALLBACK_LOW_SPEED_WINDOW = 6;
 export const FALLBACK_FLOOR_SPEED = 0.5;
 export const FALLBACK_UNDERRUN_WINDOW_SECONDS = 60;
 export const FALLBACK_UNDERRUN_COUNT = 2;
@@ -37,7 +44,7 @@ export interface FallbackAdvisorEvidence {
 export interface FallbackAdvisorSnapshot {
     eligible: boolean;
     stableAudioSeconds: number;
-    consecutiveLowSpeedSamples: number;
+    lowSpeedSamplesInWindow: number;
     underrunsInWindow: number;
     dismissed: boolean;
     trialFailed: boolean;
@@ -50,7 +57,7 @@ interface ResetOptions {
 
 export class FallbackAdvisor {
     private stableAudioSeconds = 0;
-    private consecutiveLowSpeedSamples = 0;
+    private recentLowSpeedSamples: boolean[] = [];
     private underrunTimes: number[] = [];
     private dismissed = false;
     private trialFailed = false;
@@ -80,7 +87,7 @@ export class FallbackAdvisor {
             && evidence.bufferedAudioSeconds >= FALLBACK_RECOVERY_BUFFER_SECONDS
         ) {
             this.stableAudioSeconds = 0;
-            this.consecutiveLowSpeedSamples = 0;
+            this.recentLowSpeedSamples = [];
             this.underrunTimes = [];
             this.dismissed = false;
             this.limitedEpisodeActive = false;
@@ -102,14 +109,14 @@ export class FallbackAdvisor {
             && snapshot.effectiveSpeed <= FALLBACK_LOW_SPEED_THRESHOLD
             && evidence.isBufferShrinking
         ) {
-            this.consecutiveLowSpeedSamples += 1;
+            this.recordLowSpeedSample(true);
             this.limitedEpisodeActive = true;
         } else {
-            this.consecutiveLowSpeedSamples = 0;
+            this.recordLowSpeedSample(false);
         }
 
         const hasStableAudio = this.stableAudioSeconds >= FALLBACK_STABLE_AUDIO_SECONDS;
-        const sustainedLowSpeed = this.consecutiveLowSpeedSamples >= FALLBACK_LOW_SPEED_SAMPLES;
+        const sustainedLowSpeed = this.lowSpeedSampleCount() >= FALLBACK_LOW_SPEED_SAMPLES;
         const floorUnderruns = (
             snapshot.effectiveSpeed <= FALLBACK_FLOOR_SPEED
             && this.underrunTimes.length >= FALLBACK_UNDERRUN_COUNT
@@ -121,6 +128,17 @@ export class FallbackAdvisor {
         }
 
         return this.withReason('measuring');
+    }
+
+    private recordLowSpeedSample(isLowSpeed: boolean): void {
+        this.recentLowSpeedSamples.push(isLowSpeed);
+        if (this.recentLowSpeedSamples.length > FALLBACK_LOW_SPEED_WINDOW) {
+            this.recentLowSpeedSamples.shift();
+        }
+    }
+
+    private lowSpeedSampleCount(): number {
+        return this.recentLowSpeedSamples.reduce((total, isLow) => total + (isLow ? 1 : 0), 0);
     }
 
     reportUnderrun(audibleTimeSeconds?: number): FallbackAdvisorSnapshot {
@@ -148,7 +166,7 @@ export class FallbackAdvisor {
     reset(options: ResetOptions = {}): FallbackAdvisorSnapshot {
         const preserveTrialFailure = options.preserveTrialFailure ?? false;
         this.stableAudioSeconds = 0;
-        this.consecutiveLowSpeedSamples = 0;
+        this.recentLowSpeedSamples = [];
         this.underrunTimes = [];
         this.dismissed = false;
         this.trialFailed = preserveTrialFailure && this.trialFailed;
@@ -170,7 +188,7 @@ export class FallbackAdvisor {
         return Object.freeze({
             eligible,
             stableAudioSeconds: this.stableAudioSeconds,
-            consecutiveLowSpeedSamples: this.consecutiveLowSpeedSamples,
+            lowSpeedSamplesInWindow: this.lowSpeedSampleCount(),
             underrunsInWindow: this.underrunTimes.length,
             dismissed: this.dismissed,
             trialFailed: this.trialFailed,

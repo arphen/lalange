@@ -117,7 +117,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                 description="Configure XYZ reader settings, LLM models, and display preferences."
                 robots="noindex, nofollow"
             />
-            <div className="max-w-4xl mx-auto pt-16 px-4 pb-8 md:p-12">
+            <div className="max-w-4xl mx-auto pt-header px-4 pb-8 md:p-12">
                 <div className="mb-8 border-b border-white/10 pb-4 flex justify-between items-center">
                      <div>
                         <h2 className="text-xl font-bold text-dune-gold tracking-widest uppercase">

@@ -53,7 +53,7 @@ export const Manifesto: React.FC<{ onBack: () => void }> = ({ onBack }) => {
             <div className="w-full h-full min-h-0 flex flex-col lg:flex-row">
                 {/* Left: Regular reading */}
                 <div className="w-full lg:w-1/2 h-full min-h-0 overflow-hidden flex flex-col border-b lg:border-b-0 lg:border-r border-white/10 bg-basalt">
-                    <div className="p-6 md:p-8 border-b border-white/10 flex items-center justify-between">
+                    <div className="p-6 md:p-8 pt-[calc(var(--safe-top)+1.5rem)] border-b border-white/10 flex items-center justify-between">
                         <button
                             onClick={onBack}
                             className="text-sm text-white/60 hover:text-white hover:underline"

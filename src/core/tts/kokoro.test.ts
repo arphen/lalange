@@ -4,8 +4,10 @@
  * These cover the runtime selection that happens before the model loads.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
+    applyOnnxProxyPreference,
+    releaseKokoroModel,
     resolveKokoroVoiceId,
     isIOSRuntime,
     prepareKokoroTextForSpeech,
@@ -126,5 +128,53 @@ describe('isIOSRuntime', () => {
             'MacIntel',
             0,
         )).toBe(false);
+    });
+});
+
+
+describe('applyOnnxProxyPreference', () => {
+    const makeEnv = () => ({ backends: { onnx: { wasm: { proxy: false } } } });
+
+    it('proxies WASM inference into a worker so synthesis cannot block the main thread', () => {
+        // Unproxied, ONNX Runtime runs the session on the calling thread: taps and
+        // the OS media controls stop responding for the whole of each sentence.
+        const env = makeEnv();
+        applyOnnxProxyPreference('wasm', env);
+        expect(env.backends.onnx.wasm.proxy).toBe(true);
+    });
+
+    it('leaves WebGPU unproxied, since it does not block and cannot be proxied', () => {
+        const env = makeEnv();
+        env.backends.onnx.wasm.proxy = true;
+        applyOnnxProxyPreference('webgpu', env);
+        expect(env.backends.onnx.wasm.proxy).toBe(false);
+    });
+
+    it('tolerates an environment without the onnx backend', () => {
+        expect(() => applyOnnxProxyPreference('wasm', {})).not.toThrow();
+        expect(() => applyOnnxProxyPreference('wasm', null)).not.toThrow();
+    });
+});
+
+describe('releaseKokoroModel', () => {
+    it('disposes the ONNX session so the freed WASM heap can serve the next engine', async () => {
+        // Without this the weights stay resident for the life of the page, and
+        // Piper allocates on top of them instead of in their place.
+        const dispose = vi.fn(async () => undefined);
+
+        await releaseKokoroModel({ model: { dispose } });
+
+        expect(dispose).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not let a failed disposal block the engine switch', async () => {
+        const dispose = vi.fn(async () => { throw new Error('already gone'); });
+
+        await expect(releaseKokoroModel({ model: { dispose } })).resolves.toBeUndefined();
+    });
+
+    it('tolerates unloading before a model was ever loaded', async () => {
+        await expect(releaseKokoroModel(null)).resolves.toBeUndefined();
+        await expect(releaseKokoroModel({})).resolves.toBeUndefined();
     });
 });
